@@ -35,8 +35,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from agents import prompts
-from agents.deep_tools import (FAIL_PREFIXES, ToolContext, build_tools, default_build_name, seed_learn_workdir,
-                               seed_repair_workdir)
+from agents.deep_tools import (FAIL_PREFIXES, ToolContext, build_tools, candidates_for, default_build_name,
+                               is_page_candidates, is_page_integration, seed_learn_workdir, seed_repair_workdir)
+from agents.learn import yload
 from agents.interface import ThreadCancelled, ThreadedAgentService, _Thread
 from agents.scripted import NAME, work_dir
 from runner.store import Store
@@ -253,6 +254,18 @@ def _no_general_purpose_subagent(model: BaseChatModel) -> None:
             general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)))
 
 
+def is_page_thread(t: _Thread, ctx: ToolContext) -> bool:
+    """LEARN, or an integration whose source is the page inbox (its goldens carry whole pages)."""
+    if t.mode == "learn":
+        return True
+    try:
+        if ctx.spec_path.exists():
+            return is_page_integration(yload(ctx.spec_path.read_text()))
+        return bool(ctx.recording_id) and is_page_candidates(candidates_for(ctx.recording_id))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 # ---- the service ---------------------------------------------------------------------------
 
 class DeepAgentService(ThreadedAgentService):
@@ -265,6 +278,7 @@ class DeepAgentService(ThreadedAgentService):
         self.max_model_calls = max_model_calls or int(os.environ.get("PATCHWORK_AGENT_MAX_CALLS", "80"))
         self.max_nudges = max_nudges
         self.max_learn_calls = int(os.environ.get("PATCHWORK_LEARN_MAX_CALLS", "12"))
+        self.max_page_repair_calls = int(os.environ.get("PATCHWORK_PAGE_REPAIR_MAX_CALLS", "30"))
         self.retry_base_delay = retry_base_delay
         self.model_calls: dict[str, int] = {}
 
@@ -302,6 +316,10 @@ class DeepAgentService(ThreadedAgentService):
         backend = FilesystemBackend(root_dir=str(ctx.wd), virtual_mode=True)
         permissions = [FilesystemPermission(operations=["write"], paths=LEARN_WRITABLE if learn else WRITABLE, mode="allow"),
                        FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")]
+        if is_page_thread(t, ctx):
+            # Page goldens carry whole rendered pages (~100-700 KB): a live REPAIR spent its whole budget paging
+            # through /examples.yaml. The tools (add_test_case, migrate_golden_examples, save_parser) handle it.
+            permissions.insert(0, FilesystemPermission(operations=["read", "write"], paths=["/examples.yaml"], mode="deny"))
 
         def resilient() -> ResilientModelMiddleware:
             return ResilientModelMiddleware(budget, fallback, lambda m: self.emit(t, "message", agent="supervisor", text=m),
@@ -332,7 +350,9 @@ class DeepAgentService(ThreadedAgentService):
 
     def _drive(self, t: _Thread, ctx: ToolContext, first_message: str) -> dict[str, Any]:
         learn = t.mode == "learn"
-        budget = _Budget(min(self.max_model_calls, self.max_learn_calls) if learn else self.max_model_calls)
+        cap = self.max_learn_calls if learn else (self.max_page_repair_calls if t.mode == "repair" and is_page_thread(t, ctx)
+                                                  else self.max_model_calls)
+        budget = _Budget(min(self.max_model_calls, cap))
         agent = self.build_agent(t, ctx, budget)
         cfg = {"configurable": {"thread_id": t.id}, "recursion_limit": 200}
         t0 = time.monotonic()
@@ -381,6 +401,8 @@ class DeepAgentService(ThreadedAgentService):
         ctx = ToolContext(self, t, name=name, incident_id=incident_id)
         msg = prompts.REPAIR_TASK.format(incident_id=incident_id, name=name, active=Store().active_version(name),
                                          incident_type=inc["type"], summary=inc["summary"])
+        if is_page_thread(t, ctx):
+            msg += "\n" + prompts.FORM_REPAIR_HINT
         return self._drive(t, ctx, msg)
 
     def _run_learn(self, t: _Thread, page_id: str, integration: str) -> Any:

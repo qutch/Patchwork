@@ -131,3 +131,7 @@ for site {site}, save it."""
 
 LEARN_NUDGE = """No parser has been saved yet. Delegate to the learner once more: get_page, test_page_parser,
 then save_parser with the parser that passed."""
+
+FORM_REPAIR_HINT = """The sink is a FORM (sink.fields keyed by question labels). Don't read files (the golden
+examples hold whole pages). Plan: repairer -> get_incident, diff_openapi, propose_spec_patch with exactly
+diff_openapi.patch_hint, migrate_golden_examples; then builder -> compile_spec; then request_deploy."""

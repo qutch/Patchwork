@@ -162,3 +162,21 @@ def test_deep_repair_form_rename(repaired, monkeypatch):
     assert all("Employer" in g["expect"]["body"] and "Company" not in g["expect"]["body"] for g in gold)
     assert gold[0]["expect"]["body"]["Employer"] == "Palantir Technologies"
     assert replays == [], "page integrations are replayed by the control plane, not the agent"
+
+
+def test_page_goldens_are_not_readable_by_agents(repaired):
+    """A live form REPAIR spent its 80-call budget paging through /examples.yaml (whole pages): page
+    integrations deny reading it, and their repairs get a smaller call cap."""
+    from agents.deep import DeepAgentService
+    from tests.agents.fake_model import ScriptedChatModel, call, turn
+    inc = open_form_incident({"Company": "Employer"})
+    model = ScriptedChatModel([turn(call("read_file", file_path="/examples.yaml")),
+                               turn(call("read_file", file_path="/spec.yaml")), turn(text="stop")])
+    svc = DeepAgentService(model=model, max_nudges=0)
+    rid = svc.start_repair(inc)
+    wait_for(svc, rid, "failed")
+    res = [e for e in svc.events(rid) if e["type"] == "tool_result" and e["tool"] == "read_file"]
+    assert [r["ok"] for r in res] == [False, True], res
+    assert svc.max_page_repair_calls == 30
+    first = model.seen[0][-1].content
+    assert "Don't read files" in first and "patch_hint" in first

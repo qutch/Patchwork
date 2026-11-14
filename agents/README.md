@@ -7,8 +7,10 @@
 |---|---|
 | `interface.py` | the contract + `ThreadedAgentService` (event log, interrupts, resume, reset) |
 | `scripted.py` | no-LLM storyline; tests, UI dev, live-demo fallback |
-| `deep.py` | `DeepAgentService`: deepagents supervisor + 4 subagents on OpenRouter |
-| `deep_tools.py` | the tools, and every guardrail |
+| `scripted_v2.py` | the v2 scripted storylines (LEARN, TEACH page→form, form REPAIR); call the real tool functions |
+| `deep.py` | `DeepAgentService`: deepagents supervisor + 4 subagents (BUILD/REPAIR) or 1 `learner` (LEARN) on OpenRouter |
+| `deep_tools.py` | the tools, and every guardrail (`tool_functions(ctx)` = plain functions, no langchain import) |
+| `learn.py` | pure LEARN checks: page outline, evidence, corroboration, ambiguity, the D2 rule |
 | `prompts.py` | supervisor/subagent prompts (steering only; nothing safety-relevant) |
 
 ## Configuration
@@ -21,7 +23,8 @@
 | `PATCHWORK_MODEL_RPS` | `0.3` | shared client-side rate limit (18/min, under the free 20/min) |
 | `PATCHWORK_MODEL_TIMEOUT_S` | `120` | per request |
 | `PATCHWORK_AGENT_MAX_CALLS` | `80` | per-thread model-call budget; the thread fails rather than overspend |
-| `PATCHWORK_INTEGRATION_NAME` | `po_to_stockroom` | BUILD target name (REPAIR uses the incident's integration) |
+| `PATCHWORK_INTEGRATION_NAME` | `po_to_stockroom` | BUILD target name (REPAIR uses the incident's integration; page→form recordings default to `jobs_to_tracker`) |
+| `PATCHWORK_LEARN_MAX_CALLS` | `12` | LEARN's hard model-call cap (target ≤ 8) |
 
 ## Model choice (hour-0 spike, 2026-11-14)
 
@@ -97,6 +100,24 @@ unique type, plus the exact `suggested_questions`), and `migrate_golden_examples
 
 Candidates come from `workspace/recordings/<id>/candidates.json`, then `matcher.match`, then
 `fixtures/agent_candidates.json` (fixture recording only).
+
+## v2: LEARN, TEACH page→form, form REPAIR (contracts V10)
+
+- **LEARN** (`start_learn(page_id, integration)`, thread `learn-…`): supervisor (todos + `task` + read-only fs, no other
+  tools) → `learner` (`get_page`, `test_page_parser`, `ask_user`, `save_parser`, `add_test_case`; fs writes only
+  `/spec.yaml`). The learner never sees HTML: `get_page` returns `learn.page_outline` (≤ 4,000 chars, every line an
+  extractor and its value). `save_parser` re-runs every check in code, refuses unevidenced values before compiling, asks
+  ambiguity questions itself, compiles, and applies D2: auto-deploy only if policy `auto` + tests passed + evidence +
+  corroboration + no ambiguity + the patch only adds one parser; otherwise `request_deploy`. Neither agent can call
+  `request_deploy` in LEARN.
+- **TEACH page→form**: `draft_spec` turns V11 candidates into a V7/V5 spec with one taught parser + a golden from the snapshot.
+- **REPAIR on a form**: `diff_openapi` returns `patch_hint` (`move` of the renamed `sink.fields` key) and asks only when
+  the rename isn't unique; `migrate_golden_examples` carries values over; `request_deploy` always.
+- **Scripted fallback** (`scripted_v2.py`): same event types, same tool functions; `propose_parser` picks extractors with a
+  fixed preference order (JSON-LD JobPosting, a single-valued `h1`, meta, `<title>` refine), so a learn on stage works
+  with no model and the checks still decide.
+- W1/W4a seams (until merged): `ToolContext.validate_spec_text`, `compile_and_test`, `fetch_contract`, `get_page_record`.
+  Offline tests replace them with `tests/agents/jobs.py::FakeEngine` (real Store versions, real `ops.deploy`).
 
 ## Tests
 
