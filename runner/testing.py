@@ -40,6 +40,19 @@ class FakeHttp:
     def sink_writes(self) -> list[dict]:
         return [c[3] for c in self.calls if c[0] == "sink" and c[1] in ("POST", "PUT", "PATCH")]
 
+    # -- form sinks (contracts V5): the same bookkeeping as an API write to POST /form ------------
+    dry_run = False
+
+    def form_submit(self, url: str, values: dict, *, submit: str = "Submit",
+                    confirmation_text: str | None = None) -> FakeResponse:
+        self.calls.append(("sink", "POST", "/form", dict(values)))
+        if self.sink_status < 300:
+            self.rows.append(dict(values))
+        return FakeResponse(200 if self.sink_status < 300 else self.sink_status, {"ok": self.sink_status < 300})
+
+    def form_contract(self, url: str) -> dict:
+        raise RuntimeError("FakeHttp has no form contract; tests read contract/openapi.json")
+
     def request(self, target: str, method: str, path: str, *, params: dict | None = None,
                 json: Any = None) -> FakeResponse:
         self.calls.append((target, method, path, json if json is not None else params))

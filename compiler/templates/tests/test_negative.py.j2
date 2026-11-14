@@ -15,7 +15,15 @@ from .conftest import GOLDEN
 BASE = next(ex for ex in GOLDEN if "body" in ex["expect"])
 CASES = {{ negative_cases|py }}
 TEXT_FIELD = {{ spec.source.text_field|py }}
+HTML_FIELD = {{ spec.source.html_field|py }}
 ROUTE_BY = {{ spec.extract.route_by|py }}
+HAS_CATCH_ALL = {{ has_catch_all|py }}
+
+
+def _blank_page(record: dict) -> None:
+    record[TEXT_FIELD] = ""
+    if HTML_FIELD:
+        record[HTML_FIELD] = ""
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c["id"] for c in CASES])
@@ -35,7 +43,7 @@ def test_validation_rule_quarantines(integ, case):
 
 def test_empty_text_is_parse_no_match(integ):
     record = copy.deepcopy(BASE["record"])
-    record[TEXT_FIELD] = ""
+    _blank_page(record)
     http = FakeHttp()
     out = process_record(integ, record, http, MemoryStore())
     assert (out.status, out.reason) == ("quarantined", "PARSE_NO_MATCH")
@@ -43,12 +51,12 @@ def test_empty_text_is_parse_no_match(integ):
 
 
 def test_unrouted_record_is_parse_no_match(integ):
-    from importlib import import_module
-    parsers = import_module(integ.__package__ + ".parsers")
-    if any(not match for match, _, _ in parsers.ROUTES):
+    if HAS_CATCH_ALL:
         pytest.skip("spec has a catch-all parser")
     record = copy.deepcopy(BASE["record"])
     record[ROUTE_BY] = "__no_parser_for_this__"
+    if HTML_FIELD:
+        record[HTML_FIELD] = "<html><body><p>no platform marker</p></body></html>"  # no fingerprint either
     out = process_record(integ, record, FakeHttp(), MemoryStore())
     assert (out.status, out.reason) == ("quarantined", "PARSE_NO_MATCH")
 

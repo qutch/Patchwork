@@ -111,6 +111,7 @@ class Store:
                 self.db.executescript(SCHEMA)
                 self._add_column("runs", "kind", "TEXT NOT NULL DEFAULT 'run'")  # Phase 2: run | replay
                 self._add_column("runs", "pid", "INTEGER")  # runner pid: lets a restarted API spot stale runs
+                self._add_column("records", "routed_by", "TEXT")  # v2: match | fingerprint | default | NULL
                 break
             except sqlite3.OperationalError as e:
                 if "locked" not in str(e).lower() or time.monotonic() > deadline:
@@ -208,10 +209,12 @@ class Store:
 
     def add_record(self, run_id: int, outcome: Any, raw: dict) -> None:
         self.db.execute(
-            "INSERT OR REPLACE INTO records VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO records(run_id, record_id, status, reason, detail, parser, route_value,"
+            " dedupe_key, sink_body, raw, routed_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (run_id, outcome.record_id, outcome.status, outcome.reason, outcome.detail, outcome.parser,
              outcome.route_value, outcome.key,
-             json.dumps(outcome.body) if outcome.body is not None else None, json.dumps(raw)),
+             json.dumps(outcome.body) if outcome.body is not None else None, json.dumps(raw),
+             getattr(outcome, "routed_by", None)),
         )
 
     def records(self, run_id: int) -> list[dict]:

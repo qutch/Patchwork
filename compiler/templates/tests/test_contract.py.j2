@@ -14,7 +14,7 @@ from runner.contract import validate_body
 
 from .conftest import PKG, golden_cases
 
-SINK_CALL = ({{ spec.sink.call.method|py }}, {{ spec.sink.call.path|py }})
+SINK_CALL = ({{ sink_call.method|py }}, {{ sink_call.path|py }})
 
 
 def _openapi():

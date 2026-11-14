@@ -37,6 +37,7 @@ class Outcome:
     route_value: str | None = None
     key: str | None = None
     body: dict | None = None
+    routed_by: str | None = None  # v2: "match" | "fingerprint" | "default" | None (contracts V4)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,11 +54,29 @@ def _sink_status(status: int, resp_text: str) -> None:
     raise Quarantine("UNKNOWN", detail)
 
 
+def _extract(integ: Any, record: dict, out: Outcome) -> tuple[str, dict]:
+    """Route then parse. Packages compiled by the v2 templates (PIPELINE_API >= 2) expose
+    route() -> (parser_id, fn, routed_by), so routed_by is known even when the parser fails.
+    Older packages only have extract() -> (parser_id, fields) (or a 3-tuple with routed_by)."""
+    if getattr(integ, "PIPELINE_API", 1) >= 2:
+        parser_id, parse, out.routed_by = integ.route(record)
+        try:
+            return parser_id, parse(record)
+        except Quarantine as q:
+            if out.routed_by == "fingerprint":
+                q.detail = f"routed to {parser_id} by fingerprint (site {record.get(integ.ROUTE_BY)!r}): {q.detail}"
+            raise
+    res = integ.extract(record)
+    if len(res) > 2:
+        out.routed_by = res[2]
+    return res[0], res[1]
+
+
 def process_record(integ: Any, record: dict, http: Any, store: ProcessedStore) -> Outcome:
     out = Outcome(record_id=str(record.get(integ.RECORD_ID)), status="quarantined",
                   route_value=str(record.get(integ.ROUTE_BY)) if integ.ROUTE_BY else None)
     try:
-        out.parser, fields = integ.extract(record)
+        out.parser, fields = _extract(integ, record, out)
         integ.validate(fields, record, http)
         out.key = integ.dedupe_key(fields, record)
         if store.is_processed(out.key):
@@ -69,6 +88,7 @@ def process_record(integ: Any, record: dict, http: Any, store: ProcessedStore) -
         integ.verify(http, fields, record)
         store.mark(out.key)
         out.status = "success"
+        out.detail = getattr(resp, "detail", None)  # form sinks: "dry run: filled, not submitted"
     except Quarantine as q:
         out.status, out.reason, out.detail = "quarantined", q.code, q.detail
     except httpx.HTTPError as e:

@@ -1,0 +1,33 @@
+{% include "_header.j2" %}
+"""Source over HTTP, sink = a web form filled by label (contracts V5). `http` is runner.http.Http,
+which owns the run's single headless browser and the dry-run flag (a dry run fills but never
+submits; runner/forms.py enforces it), or runner.testing.FakeHttp in tests."""
+
+from runner.lib import Quarantine, render  # noqa: F401
+
+SOURCE_LIST = {{ {"method": spec.source.list.method, "path": spec.source.list.path, "params": spec.source.list.params}|py }}
+SINK_CALL = {"method": "POST", "path": "/form"}
+FORM = {{ {"url": spec.sink.url, "submit": spec.sink.submit, "confirmation_text": (spec.sink.verify.confirmation_text if spec.sink.verify else none)}|py }}
+
+
+def list_records(http, cursor: str | None) -> list[dict]:
+    params = {k: v.replace("{cursor}", cursor or "") for k, v in SOURCE_LIST["params"].items()}
+    resp = http.request("source", SOURCE_LIST["method"], SOURCE_LIST["path"], params=params or None)
+    resp.raise_for_status()
+    data = resp.json()
+    return data if isinstance(data, list) else data.get("items", [])
+
+
+def fetch_contract(http) -> dict:
+    """The form's live contract: snapshot of its questions as an OpenAPI-shaped document (V6)."""
+    return http.form_contract(FORM["url"])
+
+
+def send(http, body: dict):
+    """Open the form in a fresh page, fill each label, click submit, wait for the confirmation.
+    Returns a response-like object (status_code 200 on confirmation); failures raise Quarantine."""
+    return http.form_submit(FORM["url"], body, submit=FORM["submit"], confirmation_text=FORM["confirmation_text"])
+
+
+def verify(http, fields: dict, record: dict) -> None:
+    return None  # the confirmation page is checked inside send()
