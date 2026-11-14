@@ -824,6 +824,36 @@ sink:
   nothing. `propose_spec_patch` refuses `/sink/base_id`, `/sink/table`, `/sink/auth`. The fake takes
   `create_app(fields=REAL_BASE_FIELDS)` (no Email, like the real demo base) and `--no-email`.
 
+## V16. SQLite sink (`sink.kind: sqlite`)
+
+A label-keyed sink (V14's shape) whose destination is a table in a local database file. No server, no credential.
+
+- **Spec**: `sink: {kind: sqlite, path: <relative to the workspace>, table: <name>, fields: {<column>: <value source>}, verify: {read_back: true}}`.
+  `path` is rejected if absolute, `~`-based or containing `..`; `runner/sqlite_sink.py` resolves it under
+  `$PATCHWORK_WORKSPACE` and refuses anything (symlinks included) that leaves it. A missing file is `SINK_CONTRACT`
+  and is never created (connections use URI mode `rw`, `ro` for schema reads and dry runs). `auth` is not accepted.
+- **Contract** (`runner/sqlite_sink.fetch_contract`): from `PRAGMA table_xinfo`. One operation, `POST /rows`;
+  `info["x-patchwork-kind"] == "sqlite"`; one property per writable column (generated and BLOB columns are left out)
+  typed by SQLite affinity plus the BOOL / DATE / DATETIME names (`integer`, `number`, `boolean`, `string` with
+  `format: date | date-time`), `x-sqlite-type` = the declared type; `required` = NOT NULL without a default (the rowid
+  alias is not required). Only names, types and required flags go in, so the hash changes on a renamed or retyped
+  column or a new required column, and on nothing else (data, indexes).
+- **Write**: values are converted per column (`VALIDATION_FAILED` naming every value that does not fit), validated
+  against the contract, then one parameterised INSERT. Column and table names reach the SQL text only after being
+  read back from the PRAGMA (a body key that is not a column is refused first) and are double-quote-escaped. Read
+  back by rowid: a difference is `VERIFY_MISMATCH`. A dry run reads the schema, validates, and never INSERTs.
+- **Errors**: missing file/table/column or read-only database -> `SINK_CONTRACT`; NOT NULL / UNIQUE / CHECK /
+  FOREIGN KEY violation -> `VALIDATION_FAILED` (the record is the problem); locked database (10 s busy timeout) or
+  anything else -> `UNKNOWN`.
+- **Rename -> REPAIR**: `ALTER TABLE ... RENAME COLUMN` changes the contract hash; the run is held before any write
+  (`CONTRACT_CHANGED`), `diff_openapi` pairs the rename and proposes a `move` of `/sink/fields/<old>`, a person
+  approves, goldens are retyped and the held pages are written. `/sink/path` and `/sink/table` are fixed paths no
+  patch may touch. `sqlite` is in `LABEL_KEYED_SINKS`.
+- **Demo**: `python -m demo_apps.sqlite_tracker --init | --rename Company Employer | --rows` (default
+  `workspace/tracker.db`, table `Applications`).
+- Not yet: choosing a SQLite destination in TEACH (`POST /api/integrations/build {destination}` is Airtable-only) and
+  the web UI badge.
+
 ## V15. Generalization: integrations that are not about jobs
 
 1. **Prompts and tools are domain-neutral.** LEARN/TEACH prompts name the integration's intent and its fields (from the

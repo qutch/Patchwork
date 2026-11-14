@@ -65,6 +65,17 @@ class FakeHttp:
     def airtable_contract(self, base_id: str, table: str) -> dict:
         raise RuntimeError("FakeHttp has no Airtable contract; tests read contract/openapi.json")
 
+    # -- SQLite sinks (contracts V16): the same bookkeeping as an API write to POST /rows ---------------
+    def sqlite_submit(self, path: str, table: str, values: dict) -> FakeResponse:
+        self.calls.append(("sink", "POST", "/rows", dict(values)))
+        if self.sink_status < 300:
+            self.rows.append(dict(values))
+        return FakeResponse(200 if self.sink_status < 300 else self.sink_status,
+                            {"id": len(self.rows)} if self.sink_status < 300 else {"error": "rejected by FakeHttp"})
+
+    def sqlite_contract(self, path: str, table: str) -> dict:
+        raise RuntimeError("FakeHttp has no SQLite contract; tests read contract/openapi.json")
+
     def request(self, target: str, method: str, path: str, *, params: dict | None = None,
                 json: Any = None) -> FakeResponse:
         self.calls.append((target, method, path, json if json is not None else params))

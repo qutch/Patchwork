@@ -381,9 +381,55 @@ class AirtableSink(_Strict):
         return v
 
 
-LABEL_KEYED_SINKS = ("form", "airtable")  # sinks whose `fields` are keyed by the destination's own labels
+class SqliteVerify(_Strict):
+    read_back: bool = True
 
-Sink = Annotated[ApiSink | FormSink | AirtableSink, Field(discriminator="kind")]
+
+class SqliteSink(_Strict):
+    """v4 (contracts V16): rows inserted into a table of a local SQLite file. Keys of `fields` are COLUMN
+    NAMES (label-keyed, like a form's or an Airtable table's); values use the same vocabulary and reference
+    checks as `body`. `path` is relative to the workspace and must stay inside it (runner/sqlite_sink.py
+    enforces that again on the resolved path). A local file needs no credential, so there is no `auth`."""
+
+    kind: Literal["sqlite"]
+    path: str
+    table: str
+    fields: dict[str, ValueSource]
+    verify: SqliteVerify | None = None
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, v: str) -> str:
+        from pathlib import PurePosixPath, PureWindowsPath
+
+        if not v.strip():
+            raise ValueError("sqlite path must name a database file, relative to the workspace")
+        if PurePosixPath(v).is_absolute() or PureWindowsPath(v).is_absolute() or v.startswith(("~", "\\")):
+            raise ValueError(f"sqlite path {v!r} must be relative to the workspace, not absolute")
+        if ".." in PurePosixPath(v.replace("\\", "/")).parts:
+            raise ValueError(f"sqlite path {v!r} must not contain '..'")
+        return v
+
+    @field_validator("table")
+    @classmethod
+    def _table(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("sqlite table must be a table name")
+        return v
+
+    @field_validator("fields")
+    @classmethod
+    def _fields(cls, v: dict[str, ValueSource]) -> dict[str, ValueSource]:
+        if not v:
+            raise ValueError("sqlite sink needs at least one column")
+        if any(not name.strip() for name in v):
+            raise ValueError("sqlite column names must not be empty")
+        return v
+
+
+LABEL_KEYED_SINKS = ("form", "airtable", "sqlite")  # sinks whose `fields` are keyed by the destination's own labels
+
+Sink = Annotated[ApiSink | FormSink | AirtableSink | SqliteSink, Field(discriminator="kind")]
 
 
 class Assumption(_Strict):

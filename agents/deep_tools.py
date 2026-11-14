@@ -65,7 +65,7 @@ def learn_policy() -> str:
     return value if value in LEARN_POLICIES else "approve"  # unknown values fail safe: a person decides
 
 
-LABEL_KEYED_SINKS = ("form", "airtable")  # `sink.fields` keyed by the destination's own labels (V5, V14)
+LABEL_KEYED_SINKS = ("form", "airtable", "sqlite")  # `sink.fields` keyed by the destination's own labels (V5, V14, V16)
 SKIP_FIELD = "Skip this field"
 
 
@@ -73,8 +73,19 @@ def sink_kind(spec: dict | None) -> str:
     return ((spec or {}).get("sink") or {}).get("kind") or "api"
 
 
+def _typing_module(kind: str):
+    """The module that types values per a table's columns for this sink kind (Airtable V14, SQLite V16)."""
+    if kind == "airtable":
+        from runner import airtable
+        return airtable
+    if kind == "sqlite":
+        from runner import sqlite_sink
+        return sqlite_sink
+    return None
+
+
 def is_label_keyed(spec: dict | None) -> bool:
-    """Form and Airtable sinks share TEACH and REPAIR: fields keyed by labels, an OpenAPI-shaped contract."""
+    """Form, Airtable and SQLite sinks share TEACH and REPAIR: fields keyed by labels, an OpenAPI-shaped contract."""
     return sink_kind(spec) in LABEL_KEYED_SINKS
 
 
@@ -90,12 +101,14 @@ def sink_values_path(spec: dict) -> str:
 
 def sink_call(spec: dict) -> tuple[str, str]:
     """(method, path) of the sink call in its contract document. Form sinks are `POST /form` (V6), Airtable
-    sinks `POST /records` (V14)."""
+    sinks `POST /records` (V14), SQLite sinks `POST /rows` (V16)."""
     sink = spec.get("sink") or {}
     if sink.get("kind") == "form":
         return "post", "/form"
     if sink.get("kind") == "airtable":
         return "post", "/records"
+    if sink.get("kind") == "sqlite":
+        return "post", "/rows"
     return sink["call"]["method"], sink["call"]["path"]
 
 
@@ -226,6 +239,8 @@ class ToolContext:
             return fetch_form_contract(sink["url"])
         if sink.get("kind") == "airtable":
             return self.fetch_airtable_contract(sink["base_id"], sink["table"], (sink.get("auth") or {})["credential"])
+        if sink.get("kind") == "sqlite":
+            return ops.fetch_sqlite_contract(sink["path"], sink["table"])
         return ops.fetch_sink_openapi(sink["base_url"])
 
     def fetch_airtable_contract(self, base_id: str, table: str, credential: str) -> dict:
@@ -950,9 +965,9 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             return "REFUSED: no spec.yaml to patch"
         old = ctx.spec_dict()
         fixed = ("/name", "/sink/base_url", "/source/base_url", "/sink/url", "/sink/kind", "/source/kind",
-                 "/sink/base_id", "/sink/table", "/sink/auth", "/source/auth")
+                 "/sink/base_id", "/sink/table", "/sink/path", "/sink/auth", "/source/auth")
         if any(str(op.get(k, "")).startswith(fixed) for op in patch for k in ("path", "from")):
-            return ("REFUSED: name, kinds, base/form URLs, Airtable base/table and credentials are fixed; patch the "
+            return ("REFUSED: name, kinds, base/form URLs, Airtable base/table, SQLite file/table and credentials are fixed; patch the "
                     "mapping, parsers, rules or assumptions")
         try:
             new = jsonpatch.apply_patch(old, patch)
@@ -1099,7 +1114,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         method, path = sink_call(spec)
         values = sink_values(spec)
         is_form = is_label_keyed(spec)  # form or Airtable: label-keyed, the same repair path (V14)
-        is_airtable = sink_kind(spec) == "airtable"
+        what_gone = {"airtable": "Airtable field", "sqlite": "SQLite column"}.get(sink_kind(spec))
         if inc and inc.get("old_openapi") and inc.get("new_openapi"):
             old_doc, new_doc = inc["old_openapi"], inc["new_openapi"]
         else:
@@ -1123,8 +1138,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             unpaired_old = [r for r in d["removed"] if r not in d["likely_renames"] and r in values]
             unpaired_new = [a for a in d["added"] if a not in d["likely_renames"].values()]
             for r in unpaired_old:
-                question = (f"The Airtable field {r!r} is gone from the table. Which field replaces it?" if is_airtable
-                            else f"The form question {r!r} is gone. Which new question replaces it?")
+                question = (f"The {what_gone} {r!r} is gone from the table. Which {what_gone.split()[-1]} replaces it?"
+                            if what_gone else f"The form question {r!r} is gone. Which new question replaces it?")
                 d["suggested_questions"].append({"field": r, "question": question,
                                                  "options": unpaired_new + ["None: stop sending it"]})
             for field in d["new_required_unmapped"]:
@@ -1159,8 +1174,9 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         new_body = sink_values(new_spec)
         as_text = sink_kind(new_spec) == "form"  # values sent to a form are strings (V5)
         typed_props: dict = {}
-        if sink_kind(new_spec) == "airtable":  # Airtable values are typed per the table's fields (V14)
-            from runner.airtable import properties
+        typing = _typing_module(sink_kind(new_spec))
+        if typing is not None:  # Airtable / SQLite values are typed per the table's fields (V14, V16)
+            properties = typing.properties
             inc = Store().incident(int(ctx.incident_id)) if ctx.incident_id else None
             try:
                 doc = (inc or {}).get("new_openapi") or ctx.fetch_contract(new_spec)
@@ -1184,8 +1200,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                         if as_text and out[k] is not None:
                             out[k] = str(out[k])
                         elif typed_props and out[k] not in (None, ""):
-                            from runner.airtable import convert_values
-                            out[k] = convert_values(typed_props, {k: out[k]}, drop_empty=False)[k]
+                            out[k] = typing.convert_values(typed_props, {k: out[k]}, drop_empty=False)[k]
                     except (Quarantine, KeyError, ValueError, TypeError) as e:
                         problems.append(f"{ex['name']}.{k}: {e}")
             if out != body:
@@ -1489,14 +1504,14 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             except (KeyError, ValueError, TypeError, Quarantine) as e:
                 return f"ERROR: cannot compute {k} for the golden example: {e}"
             body[k] = str(v) if sink_kind(new) == "form" and v is not None else v
-        if sink_kind(new) == "airtable":  # typed per the active version's table snapshot, as build_body does (V14)
+        if _typing_module(sink_kind(new)) is not None:  # typed per the active version's table snapshot (V14, V16)
             try:
-                from runner.airtable import convert_body
+                convert_body = _typing_module(sink_kind(new)).convert_body
                 snap = workspace_dir() / "integrations" / ctx.name / f"v{Store().active_version(ctx.name)}" / "contract" / "openapi.json"
                 if snap.exists():
                     body = convert_body(json.loads(snap.read_text()), body, drop_empty=False)
             except (Quarantine, KeyError, ValueError) as e:
-                return f"ERROR: cannot type {list(body)} for the Airtable golden example: {e}"
+                return f"ERROR: cannot type {list(body)} for the golden example: {e}"
         ex_path = ctx.wd / "examples.yaml"
         examples = (_yload(ex_path.read_text()) if ex_path.exists() else None) or []
         ex_name = re.sub(r"[^a-z0-9]+", "_", f"learned_{p['id']}_{rec.get('id')}".lower())

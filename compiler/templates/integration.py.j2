@@ -57,7 +57,7 @@ def dedupe_key(fields: dict, record: dict) -> str:
 
 
 def build_body(fields: dict, record: dict) -> dict:
-{% if spec.sink.kind == "airtable" %}
+{% if spec.sink.kind in ("airtable", "sqlite") %}
     return adapters.typed({
 {% for key, expr in body_exprs.items() %}
         {{ key|py }}: {{ expr }},

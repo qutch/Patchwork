@@ -15,6 +15,10 @@ v3 (contracts V14): Airtable sinks (config sink.kind == "airtable") have no base
 https://api.airtable.com/v0 or $PATCHWORK_AIRTABLE_API_URL); auth headers come from
 `runner.credentials.headers(sink.auth)`; `airtable_contract` / `airtable_submit` use one
 `runner.airtable.AirtableSession` per run. A dry run validates against the live table and never POSTs.
+
+v4 (contracts V16): SQLite sinks (config sink.kind == "sqlite") have no base URL and no credential: a database
+file under the workspace. `sqlite_contract` / `sqlite_submit` use one `runner.sqlite_sink.SqliteSession` per
+run. A dry run validates against the live schema and never INSERTs.
 """
 
 from __future__ import annotations
@@ -51,11 +55,14 @@ class Http:
         self.sink_kind = config["sink"].get("kind", "api")
         self._forms: Any = None
         self._airtable: Any = None
+        self._sqlite: Any = None
         self.base = {"source": source.rstrip("/")}
         if self.sink_kind == "form":
             self.form_url = config["sink"]["url"]
         elif self.sink_kind == "airtable":  # no base URL: runner/airtable.py (sink.auth headers below)
             self._airtable_config = dict(config["sink"])
+        elif self.sink_kind == "sqlite":  # no base URL, no auth: runner/sqlite_sink.py
+            self._sqlite_config = dict(config["sink"])
         elif staging:
             sink = (os.environ.get("PATCHWORK_STAGING_BASE_URL") or config["sink"].get("staging_base_url"))
             if not sink:
@@ -122,6 +129,23 @@ class Http:
     def airtable_submit(self, base_id: str, table: str, values: dict) -> Any:
         return self.airtable.submit(values)
 
+    # -- SQLite sinks (contracts V16) ----------------------------------------------------------------
+    @property
+    def sqlite(self) -> Any:
+        if self._sqlite is None:
+            from runner.sqlite_sink import SqliteSession
+
+            cfg = self._sqlite_config
+            self._sqlite = SqliteSession(cfg["path"], cfg["table"], read_back=bool(cfg.get("read_back", True)),
+                                         dry_run=self.dry_run)
+        return self._sqlite
+
+    def sqlite_contract(self, path: str, table: str) -> dict:
+        return self.sqlite.contract(refresh=True)
+
+    def sqlite_submit(self, path: str, table: str, values: dict) -> Any:
+        return self.sqlite.submit(values)
+
     def close(self) -> None:
         try:
             self.client.close()
@@ -132,3 +156,6 @@ class Http:
             if self._airtable is not None:
                 self._airtable.close()
                 self._airtable = None
+            if self._sqlite is not None:
+                self._sqlite.close()
+                self._sqlite = None
