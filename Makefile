@@ -4,7 +4,8 @@ PY ?= .venv/bin/python
 
 setup:
 	uv venv -p 3.12 .venv
-	uv pip install -p $(PY) -r pyproject.toml --extra dev
+	uv pip install -p $(PY) -r pyproject.toml --extra dev --extra agents --extra capture
+	$(PY) -m playwright install chromium
 
 test:
 	$(PY) -m pytest -q
