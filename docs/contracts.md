@@ -225,3 +225,311 @@ so running again continues where it stopped. If the runner is still alive it is 
 (409), streams progress as usual (`total` is null), and is marked `failed` only if it exits without writing
 its own summary. `GET /api/health` reports `recovered_runs: {failed: [...], adopted: [...]}`.
 `/api/demo/reset` and shutdown kill adopted runners too.
+
+---
+
+# Part 2: v2 contracts (jobs → tracker form)
+
+Design: `docs/superpowers/specs/2026-11-14-patchwork-v2-design.md`. Plan: `docs/superpowers/plans/2026-11-14-patchwork-v2-plan.md`.
+Everything here is **additive**: Part 1 stays true for v1 (`po_to_stockroom`), and v1 behaviour and tests must not change.
+Change a v2 contract only by editing this file in the same commit, and say so in your report.
+
+## V0. Ownership, ports, environment
+
+| Workstream | Owns (write access) | Must not edit |
+|---|---|---|
+| **W1 Engine** | `spec/`, `compiler/`, `runner/`, `demo_apps/tracker_form/`, `fixtures/jobs/`, `tests/engine/`, and in `control/ops.py` only `fetch_contract` + its use in `compile_and_test` | `agents/`, `control/api/`, `web/`, `capture/` |
+| **W2 Capture + extension** | `extension/`, `capture/`, `matcher/`, `tests/capture/`, `tests/matcher/`, `tests/extension/`, `fixtures/recording_jobs/` | `runner/`, `agents/`, `control/`, `web/` |
+| **W3 Agents** | `agents/`, `tests/agents/`, `fixtures/agent_*` | `runner/`, `compiler/`, `control/`, `web/` |
+| **W4a Control plane** | `control/` (except W1's `fetch_contract`), `tests/control/` | `runner/`, `agents/`, `web/` |
+| **W4b UI** | `web/` (incl. `web/mock/`) | everything else |
+| **W5 Proof** | `bench/v2/`, `fixtures/postings/`, `scripts/smoke_v2.py`, `docs/demo-v2.md`, `tests/bench/test_v2_*.py` | everything else (v1 `bench/` files: append only) |
+
+`fixtures/pages/` (8 rendered pages + `index.json`, from spike b) is shared and read-only. Shared files (`pyproject.toml`,
+`Makefile`, `README.md`, `ROADMAP.md`, `.gitignore`): append only, small; the integrator merges them.
+
+**Never** bind, kill or reset ports **8000–8003** or **5180** (the owner's live demo). Tests use free ports
+(`tests/conftest.py::_free_port`). Dev servers: fixture tracker form `18010`, W4a control plane `38080`, W4b UI dev server
+`5181` (proxy to `38080`). Every manual run sets its own `PATCHWORK_WORKSPACE` (a temp dir), never `./workspace`.
+
+Python: `/Users/hutch/.paradev/worktrees/hack-princeton/through-plan-create-68d423de/.venv/bin/python` (shared venv; new
+worktrees have none: use this absolute path). New dependency: `selectolax==1.0.2` (import
+`from selectolax.lexbor import LexborHTMLParser`; the default `selectolax.parser` backend raises ImportError in 1.0).
+Model calls: OpenRouter free tier, **20/min and 1,000/day shared by everyone**. Default to the scripted agent and the
+offline fake model. Per-workstream live-call budget: W3 ≤ 150, everyone else 0 (the integrator owns the rest).
+Never print, log or commit `.env` or the key.
+
+## V1. Page record (the page inbox's record, the integration's source record)
+
+```json
+{"id": "pg-000012", "seq": 12,
+ "url": "https://jobs.lever.co/palantir/0ccbe620-...?lever-source=x",
+ "canonical_url": "https://jobs.lever.co/palantir/0ccbe620-...",
+ "site": "jobs.lever.co",
+ "title": "<document.title as sent>",
+ "html": "<document.documentElement.outerHTML as sent>",
+ "text": "<runner.html.visible_text(html)>",
+ "captured_at": "2026-11-14T14:02:11.123+00:00",
+ "captured_date": "2026-11-14"}
+```
+
+- `id` = `pg-` + zero-padded `seq`; `seq` is a per-workspace counter starting at 1.
+- `site` = `runner.html.site_of(url)`; `canonical_url` = `runner.html.canonical_url(url, html)`;
+  `captured_date` = the control plane's **local** date at ingest (C7: "date applied" = the hotkey press).
+- Pages are the rendered DOM from the extension, so readers are built and tested on rendered DOM (as in `fixtures/pages/`).
+
+## V2. `runner/html.py` (W1; pure, deterministic, no network, no AI; everyone imports it)
+
+```python
+def normalize_ws(s: str) -> str                      # collapse all whitespace runs to one space, strip
+def visible_text(html: str) -> str                   # body text without script/style/noscript/template/svg;
+                                                     # one line per block element, each line normalize_ws'd, empty lines dropped
+def site_of(url: str) -> str                         # lowercase host, "www." removed, no port
+def canonical_url(url: str, html: str) -> str        # <link rel=canonical> if absolute http(s); else url without fragment
+                                                     # and without utm_*, gh_src, lever-source, source, ref params
+def css_all(html: str, selector: str, attr: str | None = None) -> list[str]   # normalize_ws'd text (or attribute) per match
+def css_first(html: str, selector: str, attr: str | None = None) -> str | None
+def jsonld_objects(html: str) -> list[dict]          # every object in every ld+json script; arrays and @graph flattened
+def jsonld_get(html: str, path: str, type_: str = "JobPosting") -> Any | None  # dotted path with [n], on the first object of @type
+def fingerprint_present(html: str, selector: str) -> bool
+```
+Unparseable HTML never raises: functions return empty results.
+
+## V3. Extractors (spec `FieldExtract` additions)
+
+```yaml
+fields:
+  title:   {css: ".posting-headline h2"}
+  company: {jsonld: "hiringOrganization.name"}
+  company: {css: "title", regex: "^Job Application for .* at (.+)$"}
+  company: {css: "meta[property=\"og:site_name\"]", attr: content, regex: "^Careers at (.+)$"}
+  company: {jsonld: "name", jsonld_type: Organization}
+```
+
+- Primary method: exactly one of `regex | json_path | between | css | jsonld`. `regex` may also appear **with** `css` or
+  `jsonld` as a refine: applied to the normalised result, group 1 is the value.
+- `css` reads `record[source.html_field]`; first match; text is `normalize_ws`'d; `attr` (any attribute name) reads that
+  attribute instead. `jsonld` reads the same HTML via `jsonld_get` (`jsonld_type` default `JobPosting`).
+- Nothing matched, empty value, or the refine didn't match → `Quarantine("PARSE_NO_MATCH", "<parser>.<field>: …")`.
+- `attr` only with `css`; `jsonld_type` only with `jsonld`; `combine` only with a primary `regex`.
+- `Source.html_field: str | None = None` is new; specs using `css`/`jsonld`/`fingerprint` must set it (validator error otherwise).
+
+## V4. Routing and layout provenance (spec `Parser` additions)
+
+```yaml
+parsers:
+  - id: lever
+    match: {site: jobs.lever.co}
+    fingerprint: ".posting-headline"
+    origin: {kind: learned, at: "2026-11-14T14:02:11+00:00", thread_id: learn-3f9a2c1b0d, approved_by: auto}
+    fields: {title: {css: ".posting-headline h2"}, company: {jsonld: "hiringOrganization.name"}}
+```
+
+Route order per record: (1) the first parser whose non-empty `match` equals the record; (2) else the first parser whose
+`fingerprint` is present in the record's HTML; (3) else the first parser with empty `match` and no `fingerprint` (v1
+catch-all); (4) else `PARSE_NO_MATCH` "no parser for site=…; no fingerprint matched". A fingerprint picks the platform,
+not the reader: if the routed parser fails, the record is `PARSE_NO_MATCH` (→ learn), never retried on another parser.
+`Outcome` gains `routed_by: "match" | "fingerprint" | "default" | None` (stored in a new `records.routed_by` column).
+`origin` (`kind: taught|learned|fixture`, `at`, `thread_id`, `approved_by: auto|human|null`) is metadata only, copied into
+`manifest.json` as `parsers: [{id, match, fingerprint, origin}]`. A spec with no fingerprints routes exactly as v1.
+
+## V5. Form sink (`sink.kind: form`)
+
+```yaml
+sink:
+  kind: form
+  url: https://docs.google.com/forms/d/e/<id>/viewform
+  fields:
+    Job title:    {from: title}
+    Company:      {from: company}
+    Link:         {from: record.canonical_url}
+    Date applied: {from: record.captured_date}
+  submit: Submit
+  verify: {confirmation_text: "Your response has been recorded"}
+```
+
+- `Sink` becomes a union discriminated by `kind`: `ApiSink` (v1, unchanged) | `FormSink`. Keys of `fields` are form
+  labels; values use the same `ValueSource` vocabulary and the same reference checks as `body`.
+- Runtime (W1, `runner/forms.py`, Playwright headless Chromium, one browser per run, a fresh page per record):
+  open `url` → snapshot (V6) → resolve each label to **exactly one** control by accessible name (`normalize_ws`,
+  case-insensitive, trailing `*` / `(required)` ignored) → fill (text-like: fill; radio/select/checkbox: the option equal
+  to the value) → click the button whose accessible name is `submit` → wait up to 10 s for `confirmation_text`.
+  0 or >1 controls for a label, a missing option, or a missing submit button → `SINK_CONTRACT`; no confirmation →
+  `VERIFY_MISMATCH`; page didn't load in 15 s → `UNKNOWN`.
+- **Dry run** (`--dry-run`): open, snapshot, resolve, fill, **never click submit**; the outcome is `success` with detail
+  `"dry run: filled, not submitted"`. Form sinks have no staging URL; "dry run never submits" is the guarantee and is
+  enforced in `runner/forms.py`, not by callers.
+- `runner/forms.py` API: `snapshot_form(page) -> list[dict]` (`{label, input, required, options}`),
+  `form_contract(snapshot, *, title, url) -> dict` (V6), `fill_and_submit(page, values: dict[str, str], *, submit, confirmation_text, dry_run) -> None`,
+  `fetch_form_contract(url: str) -> dict` (sync; launches its own browser; for the compiler, control plane and agents).
+- Values sent to a form are strings (`str()` of the mapped value).
+
+## V6. Form contract document (an OpenAPI-shaped synthesised doc, so v1's contract machinery keeps working)
+
+```json
+{"openapi": "3.0.3",
+ "info": {"title": "Job tracker", "x-patchwork-kind": "form", "x-form-url": "https://docs.google.com/forms/d/e/<id>/viewform"},
+ "paths": {"/form": {"post": {"requestBody": {"content": {"application/json": {"schema": {
+   "type": "object", "additionalProperties": false,
+   "required": ["Company", "Job title"],
+   "properties": {"Job title": {"type": "string", "x-input": "text"},
+                  "Seniority": {"type": "string", "x-input": "radio", "enum": ["Junior", "Senior"]}}}}}}}}}}
+```
+
+- `x-input` ∈ `text|textarea|email|url|date|number|radio|checkbox|select`; `type` is always `string`. No volatile data
+  (no tokens, ids, timestamps): loading an unchanged form twice gives the same `runner.contract.openapi_hash`.
+- Compiled packages store it at `contract/openapi.json` as in v1; `manifest.json` has `sink_call: {method: POST, path: /form}`
+  and `contract_kind: "form"` (`"openapi"` for API sinks).
+- **Preflight** (runner, before any write): fetch the live contract in the run's browser, compare hashes; if changed, run
+  `runner.contract.validate_body` on the golden bodies; errors → block, `CONTRACT_CHANGED` incident with the same fields
+  as v1 (`contract_errors`, `sink_call`, `old_openapi`, `new_openapi`). "Company" → "Employer" yields
+  `body.Company: not accepted by destination (no such property)` and, if required,
+  `body.Employer: required by destination but missing from body`.
+- `control.ops.fetch_contract(spec) -> dict` (W1): API sinks → `GET {base}/openapi.json` (today's `fetch_sink_openapi`,
+  kept as an alias); form sinks → `runner.forms.fetch_form_contract(url)`. `compile_and_test` and the agents' tools use it.
+
+## V7. `jobs_to_tracker` source and the control URL
+
+```yaml
+source:
+  kind: api
+  base_url: patchwork://control
+  list: {method: GET, path: /api/pages, params: {since: "{cursor}"}}
+  record_id: id
+  text_field: text
+  html_field: html
+  cursor_field: seq
+dedupe: {key: [record.canonical_url]}          # C5
+validate: [{field: title, rule: required}, {field: company, rule: required}]
+```
+
+`runner/http.py` resolves `patchwork://control` to `$PATCHWORK_CONTROL_URL` (the control plane sets it for every runner it
+launches; the runner fails with a clear message if it's missing). The global `PATCHWORK_SOURCE_BASE_URL` override does
+**not** apply to `patchwork://control` and `PATCHWORK_SINK_BASE_URL` does not apply to form sinks, so v1 and v2 can run
+from one control plane. Parsers extract only page fields (`title`, `company`); link and date come from `record.*` and are
+exempt from the learn lane's evidence check (C7). `fixtures/jobs/spec.yaml` + `examples.yaml` (W1) is a **test fixture**
+built against `fixtures/pages/` and the fixture tracker form; per C8 it is never what runs on stage.
+
+## V8. Fixture tracker form (`demo_apps/tracker_form/`, W1)
+
+`create_app(labels: list[str] | None = None) -> FastAPI`; `python -m demo_apps.tracker_form --port 18010`.
+Default labels `["Job title", "Company", "Link", "Date applied"]`, all required short-answer. Markup mimics Google Forms:
+each question is `div[role=listitem]` with a `div[role=heading]` title and an `input` whose `aria-labelledby` points at it;
+a `Submit` button; after submit, a page saying `Your response has been recorded.`
+`GET /` form · `POST /submit` · `GET /admin/rows` → `[{<label>: value, "_ts": iso}]` · `POST /admin/rename {from, to}` ·
+`POST /admin/reset` (rows cleared, labels back to default).
+
+## V9. Control-plane API additions (W4a; consumed by W2's extension, W4b's UI and W5's smoke)
+
+```
+POST /api/pages {url, title, html}       header X-Patchwork-Token
+     -> 201 {id, seq, site, canonical_url, integration: str|null, run_id: int|null, queued: bool}
+     401 bad or missing token · 413 html > 5 MB · 422 bad body. CORS allows chrome-extension:// origins.
+GET  /api/pages?since=<seq>&limit=<n>    -> [page record] ascending by seq, `since` exclusive ("" = 0). No token (localhost).
+GET  /api/pages/{id}                     -> {page: <record without html>, row: <TrackerRow>}
+GET  /api/extension                      -> {token, control_url}     (setup values the UI shows)
+GET  /api/tracker?integration=jobs_to_tracker&limit=50
+     -> {rows: [TrackerRow] newest first, totals: {pages, ai_calls, code, learned_now, held, duplicate}}
+GET  /api/layouts?integration=jobs_to_tracker -> [Layout]
+POST /api/layouts/{parser_id}/revert {integration}
+     -> {version, deployed: true}   compiles active spec minus that parser, tests, deploys (no AI). 409 if tests fail or last parser.
+GET/PUT /api/settings                    adds "learn_policy": "auto"|"approve" (default "auto", D2)
+POST /api/integrations/build {recording_id, name?}   name defaults to "jobs_to_tracker" for page→form recordings
+POST /api/demo/form/rename {from, to}    proxies the fixture form ($PATCHWORK_TRACKER_FORM_URL); offline rehearsal only
+POST /api/demo/v2/save-baseline          remember jobs_to_tracker's versions + active pointer as the rehearsal baseline
+POST /api/demo/v2/reset                  restore that baseline; clear pages, jobs_to_tracker runs/records/processed/cursor/incidents
+                                         and learn threads. Never touches po_to_stockroom. (v1's /api/demo/reset is unchanged.)
+GET  /api/bench/v2                       bench/v2/results.json (W5); 404 until it exists
+```
+
+TrackerRow:
+```json
+{"page_id": "pg-000012", "seq": 12, "captured_at": "…", "site": "jobs.lever.co", "url": "…",
+ "title": "American Tech Fellowship", "company": "Palantir Technologies",
+ "status": "pending|running|success|duplicate|held|learning|failed",
+ "label": "code|learned_now|held|duplicate|null",
+ "reason": "PARSE_NO_MATCH|…|null", "detail": null,
+ "parser": "lever", "version": 3, "routed_by": "match",
+ "parser_origin": {"kind": "learned", "at": "…", "thread_id": "learn-…", "approved_by": "auto"},
+ "ai_calls": 0, "run_id": 7, "learn_thread_id": null, "incident_id": null}
+```
+`label`: success whose parser's `origin.thread_id` is this page's learn thread → `learned_now`; other success → `code`;
+quarantined or blocked → `held`; duplicate → `duplicate`. `ai_calls` = model calls of the learn thread started for this
+page (0 if none; the scripted agent reports 0 and the UI says "scripted"). `title`/`company` are the extracted values when
+available, else the page title and null.
+
+Layout: `{integration, parser_id, site, fingerprint, fields, origin, introduced_in: <version>, active: bool}` from the
+manifests of the integration's versions.
+
+**Run on arrival.** After storing a page: for each integration whose active spec has `source.base_url: patchwork://control`,
+start a run; if one is in progress, queue exactly one follow-up run. When such a run finishes: for each record
+`PARSE_NO_MATCH`, if AI is on and no learn thread is running for that `site`, `agent.start_learn(page_id, integration)`;
+if AI is off, the row stays `held`. When a learn or repair thread emits `deployed` for such an integration: replay
+quarantined records, then run once more (pages blocked by preflight were never fetched past the cursor). Repairs of
+`CONTRACT_CHANGED` still start from a person's click (as in v1).
+
+## V10. Agents (W3): LEARN mode and the TEACH/REPAIR additions
+
+```python
+class AgentService(Protocol):              # additions; v1 methods unchanged
+    def start_learn(self, page_id: str, integration: str = "jobs_to_tracker") -> str: ...   # thread id "learn-<hex>"
+    def start_build(self, recording_id: str, name: str | None = None) -> str: ...
+```
+`Mode` adds `"learn"`. New event types (added to `EVENT_TYPES`; UIs must ignore unknown types):
+```
+"evidence": ["page_id", "parser_id", "fields", "ok"]   # fields: [{name, value, ok, where: "text"|"html"|"jsonld"|null, extractor}]
+"learned":  ["integration", "parser_id", "site", "version", "deployed", "approval", "reason"]   # approval: auto|human|pending
+```
+LEARN `done.result`: `{model_calls, seconds, page_id, parser_id, site, version, deployed, approval}`.
+
+- **Evidence check (code, `agents/deep_tools.py`):** every page-extracted value must occur, after `normalize_ws` on both
+  sides, in the page's visible text, in an attribute value in the HTML, or in a JSON-LD string, and must pass the spec's
+  validation rules. `record.*` values are exempt.
+- **Ambiguity check (code):** a field is ambiguous if its css selector matches elements with different normalised values,
+  or if the learner proposed two passing extractors that disagree. Ambiguous → `ask_user` with the distinct values as options.
+- **D2 auto-use, enforced in a tool:** the learned version is deployed without asking iff `learn_policy == "auto"`, the
+  exact version passed its full suite, every evidence check passed, nothing was ambiguous in this thread, and the JSON Patch
+  from the active spec only adds one parser (`add` ops under `/extract/parsers`). Otherwise `request_deploy` (a person).
+  Either way the parser's `origin` records it (`approved_by: auto|human`).
+- Learn budget: target ≤ 8 model calls on the deep agent; the learner sees a compact page outline from a tool, never the
+  whole HTML. `ScriptedAgentService.start_learn` emits the same event sequence with no model.
+- REPAIR on a form `CONTRACT_CHANGED`: same `start_repair(incident_id)`; the fix is a JSON Patch `move` of the renamed
+  `sink.fields` key plus migrated golden examples; `request_deploy` always (a person approves).
+- TEACH from a page→form recording (`start_build(recording_id, name)`) uses V11 candidates and produces a spec shaped as V7
+  with one parser (`origin.kind: taught`).
+
+## V11. Capture (W2): page snapshots, element paths, page→form candidates, extension
+
+Recorder: every `copy` event adds `el.path` (a stable CSS path: `#id` if unique, else tag + stable classes with
+`:nth-of-type` as needed, verified unique with `querySelectorAll`) and `snapshot: "snapshots/<n>.html"` (outerHTML at copy
+time, saved in the recording dir). Allowlist entries may be bare hosts (`docs.google.com`, `jobs.lever.co`).
+
+`candidates.json` for a page→form recording (no mutating JSON request is seen):
+```json
+{"recording_id": "…", "intent": "…",
+ "source": {"kind": "page", "site": "jobs.lever.co", "url": "…", "snapshot": "snapshots/1.html"},
+ "sink": {"kind": "form", "url": "https://docs.google.com/forms/d/e/<id>/viewform",
+          "labels": ["Job title", "Company", "Link", "Date applied"], "submit": "Submit",
+          "confirmation_text": "Your response has been recorded"},
+ "mappings": [
+   {"dest_field": "Job title", "value": "American Tech Fellowship", "kind": "css", "css": ".posting-headline h2",
+    "attr": null, "regex": null, "copied": true, "alternatives": [{"jsonld": "title"}]},
+   {"dest_field": "Link", "value": "https://jobs.lever.co/…", "kind": "record", "from": "record.canonical_url"},
+   {"dest_field": "Date applied", "value": "2026-11-14", "kind": "record", "from": "record.captured_date"}],
+ "unexplained": []}
+```
+Fixture recording for everyone: `fixtures/recording_jobs/` (`recording.json`, `candidates.json`, `snapshots/`), recording
+id `fixture-jobs` in the control plane, recorded against `fixtures/pages/lever-1.html` and the fixture tracker form.
+
+Extension (`extension/`, Chrome MV3): command `send-page` (default `Alt+Shift+P`); takes the active tab's URL,
+`document.title` and `document.documentElement.outerHTML` via `chrome.scripting`, `POST {controlUrl}/api/pages` with
+`X-Patchwork-Token`; options in `chrome.storage.local`: `controlUrl` (default `http://127.0.0.1:8000`), `token`. Badge:
+`…` sending, `✓` code, `AI` learned now, `!` held or failed (polls `GET /api/pages/{id}` up to 30 s).
+
+## V12. Proof (W5)
+
+`fixtures/postings/answer_key.json`: `[{file, platform, site, url, fetched_at, title, company}]`, pages as
+`fixtures/postings/<platform>/<n>.html.gz` (rendered DOM). `bench/v2/results.json`:
+`{postings: [{n, file, site, label, ai_calls, seconds, correct}], series: {patchwork_cumulative_ai_calls: [...],
+browser_agent_cumulative_ai_calls: [...]}, numbers: [{name, value, unit, kind, source}]}` with `kind` ∈
+`measured | measured (earlier run) | estimate | extrapolated | not measured` as in v1.
