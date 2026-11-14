@@ -12,6 +12,7 @@ from runner.lib import (  # noqa: F401
     extract_jsonld,
     extract_product,
     extract_regex,
+    match_rank,
     refine_regex,
 )
 {% if has_fingerprints %}
@@ -84,11 +85,13 @@ DEFAULTS = [
 
 
 def route(record: dict):
-    """-> (parser_id, parse_fn, routed_by). Order (contracts V4): site match, fingerprint, catch-all.
+    """-> (parser_id, parse_fn, routed_by). Order (contracts V4): exact site match, platform wildcard match,
+    fingerprint, catch-all.
     A fingerprint picks the platform, not the reader: the caller never retries another parser."""
-    for match, parser_id, fn in ROUTES:
-        if match and all(str(record.get(k)) == v for k, v in match.items()):
-            return parser_id, fn, "match"
+    for rank in (2, 1):  # an exact match first, then a platform wildcard (`*.myworkdayjobs.com`)
+        for match, parser_id, fn in ROUTES:
+            if match and match_rank(match, record) == rank:
+                return parser_id, fn, "match"
     html = record.get(HTML_FIELD)
     html = html if isinstance(html, str) else ""
     for selector, parser_id, fn in FINGERPRINTS:
@@ -103,8 +106,9 @@ def route(record: dict):
 
 def route(record: dict):
     """-> (parser_id, parse_fn, routed_by). No fingerprints in this spec: routes exactly as v1."""
-    for match, parser_id, fn in ROUTES:
-        if all(str(record.get(k)) == v for k, v in match.items()):
-            return parser_id, fn, ("match" if match else "default")
+    for rank in (2, 1):  # with no wildcard in the spec, only rank 2 occurs: routes exactly as v1
+        for match, parser_id, fn in ROUTES:
+            if match_rank(match, record) == rank:
+                return parser_id, fn, ("match" if match else "default")
     raise Quarantine("PARSE_NO_MATCH", f"no parser for {ROUTE_BY}={record.get(ROUTE_BY)!r}")
 {% endif %}

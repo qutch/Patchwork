@@ -343,6 +343,18 @@ not the reader: if the routed parser fails, the record is `PARSE_NO_MATCH` (→ 
 `origin` (`kind: taught|learned|fixture`, `at`, `thread_id`, `approved_by: auto|human|null`) is metadata only, copied into
 `manifest.json` as `parsers: [{id, match, fingerprint, origin}]`. A spec with no fingerprints routes exactly as v1.
 
+**Platform wildcards** (added after the stage rehearsal). Multi-tenant job platforms give each company its own host
+(`visa.wd5.myworkdayjobs.com`, `tmobile.wd1.myworkdayjobs.com`) for one layout. A `match` value `*.<domain>` (at least two
+labels, e.g. `site: "*.myworkdayjobs.com"`) covers every host ending in `.<domain>` (`runner.lib.match_rank`: 2 exact,
+1 wildcard, 0 none). Step (1) above becomes: the first parser whose `match` equals the record exactly, else the first
+whose wildcard covers it, so a company's own parser beats its platform's whatever their order. The platforms are
+`runner.html.TENANT_PLATFORMS` (`platform_of(site)` → `*.<domain>` or None). LEARN decides the scope in code
+(`save_parser`): a parser for a tenant's page gets the platform match only if it also passes the evidence checks on
+every other stored page of that platform (at most 5, newest first) and the platform has no parser yet; otherwise it is
+saved for that host. An explicit wildcard `match` that fails that check is `REFUSED`. One learn runs per platform at a
+time (`control/page_hooks.py`); held pages of other tenants are replayed after it deploys. Separately, a regex whose
+group 1 is fixed text (`About Us (Visa) is`) fails evidence in every LEARN check: it writes a constant, not a reading.
+
 ## V5. Form sink (`sink.kind: form`)
 
 ```yaml

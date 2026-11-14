@@ -151,6 +151,14 @@ class Parser(_Strict):
     origin: Origin | None = None
     fields: dict[str, FieldExtract]
 
+    @field_validator("match")
+    @classmethod
+    def _match(cls, v: dict[str, str]) -> dict[str, str]:
+        for k, val in v.items():
+            if "*" in val and not re.fullmatch(r"\*(\.[A-Za-z0-9-]+){2,}", val):
+                raise ValueError(f"match {k}: a wildcard must be '*.<domain>' (e.g. '*.myworkdayjobs.com'), got {val!r}")
+        return v
+
     @field_validator("fingerprint")
     @classmethod
     def _fingerprint(cls, v: str | None) -> str | None:

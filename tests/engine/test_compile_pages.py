@@ -188,3 +188,47 @@ def test_store_keeps_routed_by(workspace):
     store.add_record(run_id, Outcome(record_id="pg-1", status="quarantined", reason="PARSE_NO_MATCH",
                                      parser=None, routed_by="fingerprint"), {"id": "pg-1"})
     assert store.records(run_id)[0]["routed_by"] == "fingerprint"
+
+
+def test_platform_wildcard_routes_every_tenant_and_exact_host_wins(tmp_path):
+    """`site: "*.myworkdayjobs.com"` reads every Workday tenant with one parser; a company's own exact-host parser
+    beats it even when listed after it; a look-alike host is not a tenant."""
+    import yaml
+
+    from tests.workday_pages import WORKDAY_READERS, workday_page
+    raw = yaml.safe_load((JOBS / "spec.yaml").read_text())
+    raw["extract"]["parsers"] += [
+        {"id": "workday", "match": {"site": "*.myworkdayjobs.com"},
+         "fields": {k: {**v, "cast": "str"} for k, v in WORKDAY_READERS.items()}},
+        {"id": "visa", "match": {"site": "visa.wd5.myworkdayjobs.com"},
+         "fields": {"title": {"jsonld": "title", "jsonld_type": "JobPosting", "cast": "str"},
+                    "company": {"css": 'meta[property="og:description"]', "attr": "content",
+                                "regex": r"^About Us (\w+) is", "cast": "str"}}}]
+    (tmp_path / "spec.yaml").write_text(yaml.safe_dump(raw, sort_keys=False))
+    result = compile_spec(load_spec(tmp_path / "spec.yaml"), version=1, out_root=tmp_path / "out",
+                          examples=load_examples(JOBS / "examples.yaml"))
+    integ = load_integration(result.path)
+    parsers = importlib.import_module(integ.__package__ + ".parsers")
+    for tenant, company in (("tmobile", "T-Mobile USA, Inc."), ("nvidia", "NVIDIA")):
+        rec = workday_page(tenant, seq=1)
+        assert parsers.route(rec)[0::2] == ("workday", "match")
+        out = process_record(integ, rec, FakeHttp(), MemoryStore())
+        assert (out.status, out.parser, out.body["Company"]) == ("success", "workday", company), out.detail
+    visa = workday_page("visa", seq=2)
+    assert parsers.route(visa)[0::2] == ("visa", "match")
+    assert process_record(integ, visa, FakeHttp(), MemoryStore()).body["Company"] == "Visa"
+    fake = page_record(3, "https://evilmyworkdayjobs.com/job/1", "<html><body><h1>x</h1></body></html>",
+                       captured_at="2026-11-14T10:00:00+00:00")
+    assert process_record(integ, fake, FakeHttp(), MemoryStore()).reason == "PARSE_NO_MATCH"
+
+
+def test_wildcard_match_must_name_a_domain(tmp_path):
+    import yaml
+
+    from spec import SpecError
+    raw = yaml.safe_load((JOBS / "spec.yaml").read_text())
+    for bad in ("*", "*.com", "jobs.*.com", "*myworkdayjobs.com"):
+        raw["extract"]["parsers"][0]["match"] = {"site": bad}
+        (tmp_path / "spec.yaml").write_text(yaml.safe_dump(raw, sort_keys=False))
+        with pytest.raises(SpecError, match="wildcard"):
+            load_spec(tmp_path / "spec.yaml")

@@ -15,6 +15,7 @@ import yaml
 
 from control import ops
 from runner.html import fingerprint_present
+from runner.lib import match_rank
 from runner.store import Store
 
 
@@ -27,12 +28,14 @@ class LayoutError(Exception):
 
 
 def _route(parsers: list[dict[str, Any]], record: dict[str, Any], html_field: str | None) -> dict | None:
-    """V4 route order: first non-empty `match` equal to the record, else first `fingerprint` present
+    """V4 route order: first non-empty `match` equal to the record, else the first whose `*.suffix` wildcard
+    covers it, else first `fingerprint` present
     in its HTML, else the first catch-all (no match, no fingerprint)."""
-    for p in parsers:
-        m = p.get("match") or {}
-        if m and all(record.get(k) == v for k, v in m.items()):
-            return p
+    for rank in (2, 1):  # exact match, then platform wildcard (runner.lib.match_rank)
+        for p in parsers:
+            m = p.get("match") or {}
+            if m and match_rank(m, record) == rank:
+                return p
     html = record.get(html_field) if html_field else None
     if isinstance(html, str):
         for p in parsers:

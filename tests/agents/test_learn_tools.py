@@ -24,7 +24,7 @@ class Harness:
         from agents.interface import _Thread
         from agents.scripted import ScriptedAgentService
         self.engine = FakeEngine().install(monkeypatch)
-        rec = page(page_name, seq=7)
+        rec = page(page_name, seq=7) if isinstance(page_name, str) else page_name
         if html_patch:
             from agents.learn import make_page_record
             rec = make_page_record(rec["url"], html_patch(rec["html"]), seq=7, captured_at=rec["captured_at"])
@@ -283,3 +283,53 @@ def test_learn_with_the_real_engine(workspace, monkeypatch):
         out = tools["save_parser"](parser={"id": "greenhouse", "fields": READERS["greenhouse"]})
         assert out.startswith("deployed v2 automatically"), out
         assert Store().active_version(NAME) == 2
+
+
+# ---- multi-tenant platforms (Workday: one layout, a host per company) ------------------------------
+
+def test_workday_tenant_learns_the_platform(workspace, monkeypatch):
+    """A parser that also reads the other stored Workday pages is saved for *.myworkdayjobs.com, so the next
+    company on Workday is read by code instead of starting another learn."""
+    from tests.workday_pages import WORKDAY_READERS, workday_page
+    h = Harness(monkeypatch, workday_page("tmobile", seq=7))
+    h.engine.add_page(workday_page("nvidia", seq=8))
+    assert "platform: tmobile.wd1.myworkdayjobs.com is one company on *.myworkdayjobs.com" in h.tools["get_page"]()
+    out = h.tools["save_parser"](parser={"id": "workday", "fields": WORKDAY_READERS})
+    assert out.startswith("deployed v2 automatically") and "platform *.myworkdayjobs.com" in out, out
+    assert learned_parser(active_spec(), "workday")["match"] == {"site": "*.myworkdayjobs.com"}
+
+
+def test_parser_that_misses_other_tenants_stays_company_specific(workspace, monkeypatch):
+    """Visa leaves hiringOrganization empty, so its reader cuts the company out of the description: that
+    reader does not read T-Mobile's page, so it is saved for Visa's host only, never for the whole platform."""
+    from tests.workday_pages import workday_page
+    h = Harness(monkeypatch, workday_page("visa", seq=7))
+    h.engine.add_page(workday_page("tmobile", seq=8))
+    visa = {"title": {"jsonld": "title", "jsonld_type": "JobPosting"},
+            "company": {"css": 'meta[property="og:description"]', "attr": "content", "regex": r"^About Us (\w+) is"}}
+    out = h.tools["save_parser"](parser={"id": "visa", "fields": visa})
+    assert out.startswith("deployed v2 automatically") and "for visa.wd5.myworkdayjobs.com only" in out, out
+    assert learned_parser(active_spec(), "visa")["match"] == {"site": "visa.wd5.myworkdayjobs.com"}
+
+
+def test_platform_match_asked_for_must_read_every_tenant(workspace, monkeypatch):
+    from tests.workday_pages import workday_page
+    h = Harness(monkeypatch, workday_page("visa", seq=7))
+    h.engine.add_page(workday_page("tmobile", seq=8))
+    visa = {"title": {"jsonld": "title", "jsonld_type": "JobPosting"},
+            "company": {"css": 'meta[property="og:description"]', "attr": "content", "regex": r"^About Us (\w+) is"}}
+    out = h.tools["save_parser"](parser={"id": "visa", "match": {"site": "*.myworkdayjobs.com"}, "fields": visa})
+    assert out.startswith("REFUSED: a platform match must read every stored page") and "tmobile" in out, out
+    assert Store().active_version(NAME) == 1
+
+
+def test_regex_that_hard_codes_the_value_is_refused(workspace, monkeypatch):
+    """`About Us (Visa) is` captures a fixed word: it would write Visa for every page. A code check, not the prompt."""
+    from tests.workday_pages import workday_page
+    h = Harness(monkeypatch, workday_page("visa", seq=7))
+    fixed = {"title": {"jsonld": "title", "jsonld_type": "JobPosting"},
+             "company": {"css": 'meta[property="og:description"]', "attr": "content", "regex": "About Us (Visa) is"}}
+    out = h.tools["test_page_parser"](parser={"id": "visa", "fields": fixed})
+    assert out.startswith("FAILED") and "fixed text 'Visa'" in out, out
+    assert h.tools["save_parser"](parser={"id": "visa", "fields": fixed}).startswith("REFUSED: evidence check failed")
+    assert Store().active_version(NAME) == 1

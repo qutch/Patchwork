@@ -38,8 +38,9 @@ from agents.scripted import FIXTURES, NAME, load_recording, work_dir
 from compiler.compile import CompileError, Example
 from control import ops
 from runner.contract import request_schema
-from runner.html import fingerprint_present
-from runner.lib import Quarantine, T, cast, extract_between, extract_json_path, extract_product, extract_regex
+from runner.html import fingerprint_present, platform_of
+from runner.lib import (Quarantine, T, cast, extract_between, extract_json_path, extract_product, extract_regex,
+                        match_rank)
 from runner.store import Store, workspace_dir
 from spec import SpecError, parse_spec, validate_spec
 
@@ -185,6 +186,16 @@ class ToolContext:
         if rec is None:
             raise KeyError(f"page {page_id} not found")
         return rec
+
+    def platform_pages(self, platform: str, exclude: str | None = None, limit: int = 5) -> list[dict]:
+        """The newest stored pages from other tenants' hosts of `platform` (`*.myworkdayjobs.com`), at most `limit`."""
+        try:
+            from control.pages import PageInbox  # type: ignore[import-not-found]  # W4a
+            pages = PageInbox().list(limit=1000)
+        except Exception:  # noqa: BLE001
+            return []
+        out = [p for p in reversed(pages) if p.get("id") != exclude and match_rank({"site": platform}, p) == 1]
+        return out[:limit]
 
     def learn_policy(self) -> str:
         return learn_policy()
@@ -466,7 +477,7 @@ def run_parser(parser: dict, text_field: str, record: dict, html_field: str | No
 
 
 def _matches(match: dict, record: dict) -> bool:
-    return all(str(record.get(k)) == str(v) for k, v in (match or {}).items())
+    return match_rank({k: str(v) for k, v in (match or {}).items()}, record) > 0
 
 
 def eval_value(vs: dict, fields: dict, record: dict) -> Any:
@@ -1091,6 +1102,12 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             return {"error": out["error"], "fields": out.get("fields", {})}
         ev = learn.evidence(rec, out, spec.get("validate") or [], parser=parser, html_field=html_field,
                             text_field=text_field)
+        for item in ev:  # a value written into the regex is not read from the page (`About Us (Visa)`)
+            fixed = learn.literal_capture(str(((parser.get("fields") or {}).get(item["name"]) or {}).get("regex") or ""))
+            if fixed is not None:
+                item["ok"] = False
+                item["detail"] = (f"the regex captures the fixed text {fixed!r}: it would write {fixed!r} for every "
+                                  "page. Read the value from the page instead (a JSON-LD field, a heading, a meta tag)")
         for item in ev:
             item["corroborated"] = learn.corroborated(rec, item["value"], html_field)
         amb = learn.ambiguity(rec, parser, html_field)
@@ -1116,8 +1133,11 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         rules = [f"{r['field']}: {r['rule']}" for r in spec.get("validate") or []]
         known = [f"{p['id']} ({(p.get('match') or {}).get('site', p.get('match'))})"
                  for p in (spec.get("extract") or {}).get("parsers") or []]
+        plat = platform_of(rec.get("site") or "")
+        hint = (f"\nplatform: {rec.get('site')} is one company on {plat}; every company there uses this layout, so pick "
+                "readers that work for any of them (never a company name written into a regex)") if plat else ""
         return (learn.page_outline(rec) + f"\n\nfields to extract (exactly these): {', '.join(wanted) or '?'}"
-                f"\nvalidation: {', '.join(rules) or 'none'}\nexisting parsers: {', '.join(known) or 'none'}")
+                f"\nvalidation: {', '.join(rules) or 'none'}\nexisting parsers: {', '.join(known) or 'none'}{hint}")
 
     def test_page_parser(parser: dict) -> str:
         """Test a candidate parser on the page: {"id": "<site_name>", "fields": {"title": {"css": "h1"},
@@ -1185,8 +1205,9 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         if p["id"] in {x["id"] for x in existing}:
             return f"REFUSED: parser id {p['id']!r} already exists; pick a new id (e.g. {p['id']}_2)"
         route_key = (active.get("extract") or {}).get("route_by") or "site"
-        p["match"] = p.get("match") or {route_key: rec.get(route_key, site)}
-        if any(str(rec.get(k)) != str(v) for k, v in p["match"].items()):
+        asked_match = bool(p.get("match"))
+        p["match"] = {k: str(v) for k, v in (p.get("match") or {route_key: rec.get(route_key, site)}).items()}
+        if match_rank(p["match"], rec) == 0:
             return f"REFUSED: match {p['match']} does not route this page ({route_key}={rec.get(route_key)!r})"
         if p.get("fingerprint") and not fingerprint_present(rec.get(_fields_of(active)[0]) or "", p["fingerprint"]):
             return f"REFUSED: fingerprint {p['fingerprint']!r} is not on this page"
@@ -1201,6 +1222,28 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         if not checks["evidence_ok"]:
             bad = [f"{i['name']}={i['value']!r} ({i.get('detail')})" for i in checks["evidence"] if not i["ok"]]
             return f"REFUSED: evidence check failed, nothing compiled: {'; '.join(bad)}"
+        # Platform or company? A tenant of a multi-tenant platform (visa.wd5.myworkdayjobs.com) gets the platform
+        # match (*.myworkdayjobs.com) only if the parser also reads every other stored page from that platform;
+        # otherwise it is saved for this company's host and the platform waits for a parser that generalises.
+        plat = platform_of(site) if route_key == "site" else None
+        wildcard = any("*" in v for v in p["match"].values())
+        scope_note = ""
+        if plat and (wildcard or not asked_match):
+            taken = any(match_rank({"site": plat}, {"site": (x.get("match") or {}).get("site", "")}) == 2 for x in existing)
+            others = [] if taken else ctx.platform_pages(plat, exclude=rec.get("id"))
+            failing = []
+            for o in others:
+                c = _check(p, o, active)
+                if "error" in c or not c.get("evidence_ok"):
+                    failing.append(f"{o.get('site')} ({c.get('error') or '; '.join(str(i.get('detail')) for i in c.get('evidence', []) if not i['ok'])})")
+            if wildcard and (taken or failing):
+                return ("REFUSED: a platform match must read every stored page from " + plat + ": " +
+                        ("a parser for the platform already exists" if taken else "; ".join(failing[:3])))
+            if not taken and not failing:
+                p["match"] = {route_key: plat}
+                scope_note = f" (platform {plat}: also read {len(others)} other stored page(s) from it)"
+            elif failing:
+                scope_note = f" (for {site} only: it does not read {len(failing)} other page(s) from {plat})"
         values = checks["fields"]
         ambiguous = {f: v for f, v in {**ctx.ambiguous, **checks["ambiguous"]}.items() if f in p["fields"]}
         for field, options in ambiguous.items():  # V10: ambiguous -> ask with the distinct values
@@ -1271,8 +1314,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             ctx.svc.emit(ctx.t, "learned", **base, deployed=True, approval="auto",
                          reason="every check passed (evidence, corroboration, no ambiguity, one parser added, tests)")
             ctx.svc.emit(ctx.t, "deployed", name=ctx.name, version=version, previous_version=result["previous_version"])
-            return (f"deployed v{version} automatically: parser {p['id']} for {site} passed every check. "
-                    "Done: report the result in one sentence.")
+            return (f"deployed v{version} automatically: parser {p['id']} for {p['match'].get(route_key, site)}{scope_note} "
+                    "passed every check. Done: report the result in one sentence.")
         why = "; ".join(reasons)
         ctx.svc.emit(ctx.t, "learned", **base, deployed=False, approval="pending", reason=why)
         summary = f"Learned parser {p['id']} for {site} ({reason or 'new layout'}). A person decides because: {why}."

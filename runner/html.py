@@ -58,6 +58,24 @@ def site_of(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+# Job platforms that give each company its own subdomain (acme.wd5.myworkdayjobs.com, acme.bamboohr.com): every
+# tenant serves the same layout, so a parser can match the platform (`site: "*.myworkdayjobs.com"`) instead of one
+# company's host. Platforms with the company in the path (jobs.lever.co/acme) need nothing: the host is the platform.
+TENANT_PLATFORMS = ("myworkdayjobs.com", "myworkdaysite.com", "icims.com", "taleo.net", "bamboohr.com",
+                    "recruitee.com", "breezy.hr", "teamtailor.com", "pinpointhq.com", "applytojob.com",
+                    "jobs.personio.de", "jobs.personio.com")
+
+
+def platform_of(site: str) -> str | None:
+    """`visa.wd5.myworkdayjobs.com` -> `*.myworkdayjobs.com` (the wildcard a platform parser matches); a host
+    that is not a tenant of a known multi-tenant platform -> None."""
+    host = (site or "").lower()
+    for suffix in TENANT_PLATFORMS:
+        if host.endswith("." + suffix):
+            return "*." + suffix
+    return None
+
+
 def _clean_url(url: str) -> str:
     parts = urlsplit(url)
     query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not _DROP_PARAMS.match(k)])

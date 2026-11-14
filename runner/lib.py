@@ -104,6 +104,23 @@ def refine_regex(value: str, pattern: re.Pattern[str], where: str) -> str:
     return " ".join(m.group(1).split())
 
 
+def match_rank(match: dict, record: dict) -> int:
+    """How a parser's `match` fits a record (contracts V4): 2 = every value equal (an exact match; an empty match
+    is a catch-all and also 2, as in v1), 1 = equal or covered by a `*.suffix` wildcard (a platform parser, e.g.
+    `site: "*.myworkdayjobs.com"` for every Workday tenant), 0 = no match. Routers take the first rank-2 parser,
+    then the first rank-1 one, so a company-specific parser beats its platform's."""
+    rank = 2
+    for k, v in match.items():
+        got, want = str(record.get(k)), str(v)
+        if got == want:
+            continue
+        if want.startswith("*.") and got.endswith(want[1:]):
+            rank = 1
+            continue
+        return 0
+    return rank
+
+
 def cast(value: Any, to: str, where: str) -> Any:
     if to == "str":
         return value if isinstance(value, str) else str(value)

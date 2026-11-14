@@ -288,6 +288,32 @@ def _check_rules(name: str, value: Any, validate: list[dict]) -> str | None:
     return None
 
 
+def literal_capture(pattern: str) -> str | None:
+    """The fixed text a regex's group 1 captures when that group has no wildcard, class or repeat in it
+    (`About Us (Visa) is` -> "Visa"): such a reader writes the company in instead of reading it from the page.
+    None when group 1 reads variable text (or the pattern does not parse)."""
+    try:
+        import re._parser as sre  # Python 3.11+
+        tree = sre.parse(pattern)
+    except Exception:  # noqa: BLE001
+        return None
+
+    def group1(items):
+        for op, av in items:
+            if op is sre.SUBPATTERN and av[0] == 1:
+                return av[3]
+            if op is sre.SUBPATTERN:
+                found = group1(av[3])
+                if found is not None:
+                    return found
+        return None
+
+    body = group1(list(tree))
+    if not body or any(op is not sre.LITERAL for op, _ in body):
+        return None
+    return "".join(chr(av) for _, av in body)
+
+
 def evidence(record: dict, fields: dict, validate: list[dict], parser: dict | None = None,
              html_field: str = "html", text_field: str = "text") -> list[dict]:
     """V10 evidence items: {name, value, ok, where: text|jsonld|html|None, extractor}. A value is

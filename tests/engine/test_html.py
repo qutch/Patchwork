@@ -114,3 +114,17 @@ def test_canonical_http_upgraded_on_same_https_host():
     assert canonical_url("https://example.com/jobs/1", other_host) == "http://mirror.example.org/jobs/1"
     plain = '<html><head><link rel="canonical" href="http://example.com/jobs/1"></head></html>'
     assert canonical_url("http://example.com/jobs/1", plain) == "http://example.com/jobs/1"
+
+
+def test_platform_of_and_match_rank():
+    from runner.html import platform_of
+    from runner.lib import match_rank
+    assert platform_of("visa.wd5.myworkdayjobs.com") == "*.myworkdayjobs.com"
+    assert platform_of("acme.bamboohr.com") == "*.bamboohr.com"
+    assert platform_of("jobs.lever.co") is None and platform_of("myworkdayjobs.com") is None
+    rec = {"site": "visa.wd5.myworkdayjobs.com"}
+    assert match_rank({"site": "visa.wd5.myworkdayjobs.com"}, rec) == 2
+    assert match_rank({"site": "*.myworkdayjobs.com"}, rec) == 1
+    assert match_rank({"site": "*.myworkdayjobs.com"}, {"site": "evilmyworkdayjobs.com"}) == 0
+    assert match_rank({"site": "jobs.lever.co"}, rec) == 0
+    assert match_rank({}, rec) == 2  # a catch-all, as in v1

@@ -120,6 +120,12 @@ class FakeEngine:
         monkeypatch.setattr(ToolContext, "compile_and_test", lambda self, path: engine.compile(path))
         monkeypatch.setattr(ToolContext, "fetch_contract", lambda self, spec: engine.contract)
         monkeypatch.setattr(ToolContext, "get_page_record", lambda self, pid: engine.page(pid))
+
+        def platform_pages(self, platform, exclude=None, limit=5):
+            from runner.lib import match_rank
+            return [p for p in reversed(list(engine.pages.values()))
+                    if p["id"] != exclude and match_rank({"site": platform}, p) == 1][:limit]
+        monkeypatch.setattr(ToolContext, "platform_pages", platform_pages)
         return self
 
     def add_page(self, rec: dict) -> dict:

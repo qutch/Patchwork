@@ -18,6 +18,7 @@ import time
 from typing import Any, Callable
 
 from control.autorun import AutoRunner, is_page_integration, is_page_spec, version_spec
+from runner.html import platform_of
 from runner.store import Store
 
 log = logging.getLogger("patchwork.pages")
@@ -112,7 +113,9 @@ class PageHooks:
                 if page is None:
                     continue
                 site = page["site"]
-                if self._site_active(agent, learns, site):
+                if self._site_active(agent, learns, site) or any(  # one learn per platform at a time
+                        self._site_active(agent, learns, s) for s in {x["site"] for x in learns.values()}
+                        if platform_of(site) and platform_of(s) == platform_of(site)):
                     continue
                 try:
                     tid = agent.start_learn(pid, name)
