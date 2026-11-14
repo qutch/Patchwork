@@ -14,6 +14,16 @@ pipeline, the document inbox, and the deep agent learning each new sender's layo
   this file orders them for you.
 - `docs/contracts.md` V13 (credentials) and V16 (your SQLite sink, as a style reference).
 
+## Owner decisions (2026-11-14)
+
+1. **One "Invoice Lines" table** (invoice fields repeated on each line, grouped by invoice number) is fine for the demo.
+2. **Layouts with no total to check** (support tickets, event registrations) always need a person's approval before
+   they go live. Only layouts with a passing declared check (e.g. line items sum to the total) deploy on their own.
+3. **A folder of `.eml` files is enough for the demo.** Live email (task 3) stays optional and comes after tasks 6-7.
+4. **Table sources are lowest priority** (task 5, cut first).
+5. **2-3 real invoice PDFs are OK for rehearsal only.** Keep them outside the repo (never commit real personal or
+   company data) and put made-up look-alikes in `fixtures/`.
+
 ## Rules (same as the rest of the project)
 
 - **No AI, no network:** everything you write is plain code (`runner/` is AI-free and must stay that way). No
@@ -174,7 +184,7 @@ only after tasks 1-4, 6 and 7 are done, and only if time remains. Nothing else d
 ## Order and timing
 
 1. **Now:** task 1, then task 2. These unblock the most work: G4, G8, G9 and the demo.
-2. **Then:** task 3 if live email matters for the demo (the owner decides).
+2. **Then:** nothing optional before tasks 6 and 7. Task 3 (live email) only after them, if the owner asks.
 3. **When the lead says G2–G4 have landed:** tasks 6 and 7.
 4. **Last, optional:** task 5. It is the first thing to cut.
 5. **After each task:** a PR to `main`; the lead merges, usually within 30 minutes.
