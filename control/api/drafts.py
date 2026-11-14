@@ -6,9 +6,9 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel
 
-from control import drafts
+from control import destinations, drafts
 from runner.store import Store
 
 router = APIRouter(prefix="/api", tags=["drafts"])
@@ -44,6 +44,40 @@ def new_integration(body: NewIntegration) -> dict[str, Any]:
 @router.get("/integrations/{name}/draft")
 def get_draft(name: str) -> dict[str, Any]:
     return require_draft(name).model_dump()
+
+
+@router.put("/integrations/{name}/destination")
+def put_destination(name: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Check a destination (Airtable, form, API operation, SQLite) and save it on the draft. Returns the check:
+    `{kind, title, fields, operations?}`. 422 says what to do next."""
+    draft = require_draft(name)
+    if draft.state != "draft":
+        raise HTTPException(409, f"{name} is already {draft.state}: its destination can no longer change")
+    try:
+        dest = destinations.normalize(body)
+        result = destinations.check(dest)
+    except destinations.DestinationError as e:
+        raise HTTPException(422, str(e)) from None
+    drafts.update(name, destination=dest)
+    return result
+
+
+@router.get("/destinations/airtable/tables")
+def airtable_tables(base_id: str, credential: str = "AIRTABLE_TOKEN") -> list[dict[str, str]]:
+    """The tables of an Airtable base (the base URL or id), read with the named credential."""
+    try:
+        return destinations.airtable_tables(base_id, credential)
+    except destinations.DestinationError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@router.get("/destinations/api/operations")
+def api_operations(base_url: str, credential: str | None = None) -> list[dict[str, Any]]:
+    """The write operations (POST, PUT, PATCH) of an API, with their flattened body fields."""
+    try:
+        return destinations.api_operations(base_url, credential or None)
+    except destinations.DestinationError as e:
+        raise HTTPException(422, str(e)) from None
 
 
 @router.delete("/integrations/{name}")
