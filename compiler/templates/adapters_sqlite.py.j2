@@ -1,0 +1,41 @@
+{% include "_header.j2" %}
+"""Source over HTTP, sink = a table of a local SQLite file (contracts V16). `http` is runner.http.Http, which holds the
+run's dry-run flag (a dry run validates against the live schema and never INSERTs; runner/sqlite_sink.py
+enforces it), or runner.testing.FakeHttp in tests."""
+
+from runner.lib import Quarantine, render  # noqa: F401
+
+SOURCE_LIST = {{ {"method": spec.source.list.method, "path": spec.source.list.path, "params": spec.source.list.params}|py }}
+SINK_CALL = {"method": "POST", "path": "/rows"}
+FIELD_TYPES = {{ sqlite_types|py }}  # from contract/openapi.json at compile time
+SQLITE = {{ {"path": spec.sink.path, "table": spec.sink.table, "read_back": (spec.sink.verify.read_back if spec.sink.verify else false)}|py }}
+
+
+def list_records(http, cursor: str | None) -> list[dict]:
+    params = {k: v.replace("{cursor}", cursor or "") for k, v in SOURCE_LIST["params"].items()}
+    resp = http.request("source", SOURCE_LIST["method"], SOURCE_LIST["path"], params=params or None)
+    resp.raise_for_status()
+    data = resp.json()
+    return data if isinstance(data, list) else data.get("items", [])
+
+
+def typed(body: dict) -> dict:
+    """Values typed per the table's columns (integer, number, boolean, date -> YYYY-MM-DD); a value that
+    does not fit is VALIDATION_FAILED before anything is written."""
+    from runner.sqlite_sink import convert_values
+    return convert_values(FIELD_TYPES, body, drop_empty=False)
+
+
+def fetch_contract(http) -> dict:
+    """The table's live contract: its writable columns (PRAGMA table_xinfo) as an OpenAPI-shaped document (V16)."""
+    return http.sqlite_contract(SQLITE["path"], SQLITE["table"])
+
+
+def send(http, body: dict):
+    """Type the values per the table's columns, insert one row, read it back (sink.verify.read_back).
+    Returns a response-like object (status_code 200); failures raise Quarantine."""
+    return http.sqlite_submit(SQLITE["path"], SQLITE["table"], body)
+
+
+def verify(http, fields: dict, record: dict) -> None:
+    return None  # the row is read back inside send()

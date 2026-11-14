@@ -215,7 +215,7 @@ class ScriptedV2Mixin:
                  {"content": "Request deploy", "status": "pending"}]
         self.emit(t, "todos", todos=todos)
         kind = (ctx.spec_dict().get("sink") or {}).get("kind", "form")
-        dest = "Airtable table" if kind == "airtable" else "form"
+        dest = {"airtable": "Airtable table", "sqlite": "SQLite table"}.get(kind, "form")
         self.emit(t, "subagent_start", name="repairer", task=f"Incident #{inc['id']}: {inc['type']} ({kind})")
         self._call(t, "repairer", fns, "get_incident", incident_id=inc["id"])
         d = json.loads(self._call(t, "repairer", fns, "diff_openapi"))
@@ -235,7 +235,7 @@ class ScriptedV2Mixin:
         if not patch:
             raise RuntimeError("diff_openapi found nothing to patch")
         renames = ", ".join(f"{op['from'].rsplit('/', 1)[-1]} → {op['path'].rsplit('/', 1)[-1]}" for op in patch if op["op"] == "move")
-        what = "a field" if kind == "airtable" else "a question"
+        what = {"airtable": "a field", "sqlite": "a column"}.get(kind, "a question")
         self.emit(t, "message", agent="repairer", text=f"The {dest} renamed {what} ({renames or 'see patch'}). Patching sink.fields.")
         todos[0]["status"], todos[1]["status"] = "completed", "in_progress"
         self.emit(t, "todos", todos=todos)

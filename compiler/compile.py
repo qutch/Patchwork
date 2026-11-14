@@ -20,10 +20,11 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from runner.contract import openapi_hash, validate_body
 from spec import spec_hash, spec_to_dict
-from spec.models import RECORD_PREFIX, AirtableSink, FormSink, Spec, ValueSource
+from spec.models import RECORD_PREFIX, AirtableSink, FormSink, Spec, SqliteSink, ValueSource
 
 COMPILER_VERSION = "0.2.0"
 FORM_SINK_CALL = {"method": "POST", "path": "/form"}  # contracts V6: the form contract's one operation
+SQLITE_SINK_CALL = {"method": "POST", "path": "/rows"}  # contracts V16: the SQLite contract's one operation
 AIRTABLE_SINK_CALL = {"method": "POST", "path": "/records"}  # contracts V14: the Airtable contract's one operation
 TEMPLATES = Path(__file__).parent / "templates"
 QUARANTINE_EXPECTS = {"PARSE_NO_MATCH", "VALIDATION_FAILED", "NOT_FOUND", "SINK_CONTRACT", "AUTH",
@@ -152,7 +153,8 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
 
     is_form = isinstance(spec.sink, FormSink)
     is_airtable = isinstance(spec.sink, AirtableSink)
-    sink_call = (FORM_SINK_CALL if is_form else AIRTABLE_SINK_CALL if is_airtable
+    is_sqlite = isinstance(spec.sink, SqliteSink)
+    sink_call = (FORM_SINK_CALL if is_form else AIRTABLE_SINK_CALL if is_airtable else SQLITE_SINK_CALL if is_sqlite
                  else {"method": spec.sink.call.method, "path": spec.sink.call.path})
     contract_errors: list[str] = []
     if sink_openapi is not None:
@@ -175,6 +177,7 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
         "has_fingerprints": any(p.fingerprint for p in spec.extract.parsers),
         "has_catch_all": any(not p.match and not p.fingerprint for p in spec.extract.parsers),
         "airtable_types": _airtable_types(spec, sink_openapi) if is_airtable else {},
+        "sqlite_types": _sqlite_types(spec, sink_openapi) if is_sqlite else {},
     }
 
     tmp = out.with_name(out.name + ".tmp")
@@ -187,7 +190,7 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
         "integration.py": env.get_template("integration.py.j2").render(**ctx),
         "parsers.py": env.get_template("parsers.py.j2").render(**ctx),
         "adapters.py": env.get_template("adapters_form.py.j2" if is_form else "adapters_airtable.py.j2" if is_airtable
-                                        else "adapters.py.j2").render(**ctx),
+                                        else "adapters_sqlite.py.j2" if is_sqlite else "adapters.py.j2").render(**ctx),
         "transforms.py": transforms_src or env.get_template("transforms.py.j2").render(**ctx),
         "tests/__init__.py": "",
         "tests/conftest.py": env.get_template("tests/conftest.py.j2").render(**ctx),
@@ -212,6 +215,7 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
         "source": {"base_url": spec.source.base_url},
         "sink": ({"kind": "form", "url": spec.sink.url} if is_form else
                  _airtable_config(spec.sink) if is_airtable else
+                 _sqlite_config(spec.sink) if is_sqlite else
                  {"base_url": spec.sink.base_url, "staging_base_url": spec.sink.staging_base_url}),
         "credentials": {},  # env var names only, never values
     }
@@ -230,7 +234,7 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
     manifest = {
         "name": spec.name, "version": version, "spec_hash": ctx["spec_hash"], "openapi_hash": oa_hash,
         "sink_call": sink_call,
-        "contract_kind": "form" if is_form else "airtable" if is_airtable else "openapi",
+        "contract_kind": "form" if is_form else "airtable" if is_airtable else "sqlite" if is_sqlite else "openapi",
         "parsers": [{"id": p.id, "match": dict(p.match), "fingerprint": p.fingerprint,
                      "origin": p.origin.model_dump(mode="json") if p.origin else None}
                     for p in spec.extract.parsers],
@@ -253,6 +257,21 @@ def _airtable_types(spec: Spec, sink_openapi: dict | None) -> dict[str, dict]:
         return field_types(sink_openapi, list(spec.sink_values()))
     except (KeyError, TypeError):  # not a V14 document: send() still types against the live contract
         return {}
+
+
+def _sqlite_types(spec: Spec, sink_openapi: dict | None) -> dict[str, dict]:
+    """The typing facts of the mapped SQLite columns, from the contract snapshot (see _airtable_types)."""
+    from runner.sqlite_sink import field_types
+    try:
+        return field_types(sink_openapi, list(spec.sink_values()))
+    except (KeyError, TypeError):  # not a V16 document: send() still types against the live schema
+        return {}
+
+
+def _sqlite_config(sink: SqliteSink) -> dict[str, Any]:
+    """config.yaml's sink block for SQLite: which file (relative to the workspace) and table; no credential."""
+    return {"kind": "sqlite", "path": sink.path, "table": sink.table,
+            "read_back": bool(sink.verify.read_back) if sink.verify else False}
 
 
 def _airtable_config(sink: AirtableSink) -> dict[str, Any]:

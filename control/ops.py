@@ -115,7 +115,20 @@ def fetch_contract(spec: Any) -> dict[str, Any]:
         auth = get("auth")
         credential = auth.get("credential") if isinstance(auth, dict) else getattr(auth, "credential", None)
         return fetch_airtable_contract(get("base_id"), get("table"), credential, headers=sink_auth_headers(spec))
+    if get("kind") == "sqlite":  # contracts V16: the table's columns, read from the file under the workspace
+        return fetch_sqlite_contract(get("path"), get("table"))
     return fetch_sink_openapi(get("base_url"), headers=sink_auth_headers(spec))
+
+
+def fetch_sqlite_contract(path: str, table: str) -> dict[str, Any]:
+    """The SQLite table's V16 contract (PRAGMA table_xinfo, read-only). Errors read like the Airtable ones."""
+    from runner import sqlite_sink
+    from runner.lib import Quarantine
+
+    try:
+        return sqlite_sink.fetch_contract(path, table)
+    except Quarantine as q:
+        raise RuntimeError(f"{q.code}: {q.detail}") from None
 
 
 def fetch_airtable_contract(base_id: str, table: str, credential: str,
