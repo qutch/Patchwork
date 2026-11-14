@@ -32,13 +32,45 @@ X_INPUTS = ("text", "textarea", "email", "url", "date", "number", "radio", "chec
 _CONTROL = ("input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select, [role=textbox], "
             "[role=radiogroup], [role=listbox], [role=combobox], [role=checkbox], [role=radio]")
 _QUESTION = "[role=listitem]:has([role=heading])"
+# A Google question, or any plain control: whichever shows first means the form has rendered.
+_FIRST_FIELD = (f"{_QUESTION}, input:not([type=hidden]):not([type=submit]):not([type=button])"
+                ":not([type=reset]), select, textarea")
 _REQUIRED_SUFFIX = re.compile(r"\s*(?:\*|\(required\)|required question)\s*$", re.I)
 
-# One pass over the page: every question (listitem with a heading and a control) as
-# {label, input, required, options}. Labels drop the [aria-label="Required question"] marker.
-_SNAPSHOT_JS = r"""
-() => {
+# Helpers shared by the snapshot and the alert reader. A control's label follows its accessible name:
+# aria-labelledby, then aria-label, then <label for> / a wrapping <label>. Radio and checkbox groups are
+# labelled by their fieldset's <legend>.
+_HELPERS_JS = r"""
   const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+  const stripReq = s => s.replace(/\s*(?:\*|\(required\))\s*$/i, '');
+  const cleanLabel = el => {
+    const c = el.cloneNode(true);
+    c.querySelectorAll('input, select, textarea, button').forEach(x => x.remove());
+    return stripReq(norm(c.textContent));
+  };
+  const ctlLabel = e => {
+    const by = e.getAttribute('aria-labelledby');
+    if (by) {
+      const t = norm(by.split(/\s+/).map(id => (document.getElementById(id) || {}).textContent || '').join(' '));
+      if (t) return stripReq(t);
+    }
+    const al = norm(e.getAttribute('aria-label'));
+    if (al) return al;
+    for (const l of (e.labels || [])) { const t = cleanLabel(l); if (t) return t; }
+    return '';
+  };
+  const legendOf = e => {
+    const fs = e.closest('fieldset');
+    const lg = fs && fs.querySelector(':scope > legend');
+    return lg ? cleanLabel(lg) : '';
+  };
+  const fieldLabel = e => (e.type === 'radio' || e.type === 'checkbox') ? (legendOf(e) || ctlLabel(e)) : ctlLabel(e);
+"""
+
+# One pass over the page: every question as {label, input, required, options}. Google Forms questions
+# (role=listitem with a role=heading) are read first and drop the [aria-label="Required question"]
+# marker; a page with none of those is read as plain HTML.
+_SNAPSHOT_JS = "() => {" + _HELPERS_JS + r"""
   const out = [];
   for (const li of document.querySelectorAll('[role=listitem]')) {
     const h = li.querySelector('[role=heading]');
@@ -70,8 +102,48 @@ _SNAPSHOT_JS = r"""
                         || li.querySelector('[required], [aria-required="true"]'));
     out.push({label, input, required, options: [...new Set(options.filter(Boolean))]});
   }
+
+  if (out.length) return out;
+  const seen = new Set();
+  const CTL = 'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]), textarea, select';
+  for (const e of document.querySelectorAll(CTL)) {
+    if (e.disabled || seen.has(e)) continue;
+    const grouped = e.type === 'radio' || e.type === 'checkbox';
+    if (grouped) {
+      const fs = e.closest('fieldset');
+      const label = legendOf(e);
+      if (!fs || !label) continue;  // nothing to address a loose radio or checkbox by
+      const mates = [...fs.querySelectorAll(CTL)].filter(x => x.type === e.type && x.closest('fieldset') === fs);
+      mates.forEach(x => seen.add(x));
+      const options = mates.map(x => ctlLabel(x) || norm(x.value));
+      const required = mates.some(x => x.required || x.getAttribute('aria-required') === 'true')
+                       || fs.getAttribute('aria-required') === 'true';
+      out.push({label, input: e.type, required, options: [...new Set(options.filter(Boolean))]});
+      continue;
+    }
+    const label = ctlLabel(e);
+    if (!label) continue;
+    let input, options = [];
+    if (e.tagName === 'SELECT') {
+      input = 'select';
+      options = [...e.options].filter(o => o.value !== '').map(o => norm(o.textContent)).filter(Boolean);
+    } else if (e.tagName === 'TEXTAREA') input = 'textarea';
+    else {
+      const t = (e.getAttribute('type') || 'text').toLowerCase();
+      input = ['email', 'url', 'date', 'number'].includes(t) ? t : 'text';
+    }
+    const star = [...(e.labels || [])].some(l => /\\*\\s*$/.test(norm(l.textContent)));
+    const required = e.required || e.getAttribute('aria-required') === 'true' || star;
+    out.push({label, input, required, options: [...new Set(options)]});
+  }
   return out;
 }
+"""
+
+_FIELDSET = "fieldset:has(> legend)"
+_LEGENDS_JS = r"""
+fs => fs.map(f => { const c = f.querySelector(':scope > legend').cloneNode(true);
+  return (c.textContent || '').replace(/\s+/g, ' ').trim(); })
 """
 
 _ITEM_LABELS_JS = r"""
@@ -101,10 +173,10 @@ class FormResult:
 # ---- page-level API (contracts V5) ---------------------------------------------------------------
 
 def open_form(page: Any, url: str, *, timeout_ms: int = LOAD_TIMEOUT_MS) -> None:
-    """Load the form and wait for its first question. Not loading in time -> UNKNOWN."""
+    """Load the form and wait for its first question or field. Not loading in time -> UNKNOWN."""
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-        page.locator(_QUESTION).first.wait_for(state="attached", timeout=timeout_ms)
+        page.locator(_FIRST_FIELD).first.wait_for(state="attached", timeout=timeout_ms)
     except Exception as e:  # noqa: BLE001 - playwright raises its own Error/TimeoutError types
         raise Quarantine("UNKNOWN", f"form {url} did not load in {timeout_ms // 1000} s: "
                                     f"{str(e).splitlines()[0][:200]}") from None
@@ -188,9 +260,18 @@ def resolve_control(page: Any, label: str) -> tuple[str, Any]:
                 raise Quarantine("SINK_CONTRACT", f"form label {label!r} is ambiguous: a control is named "
                                                   "that way and a different question has that title")
         return _kind_of(by_name), by_name
-    if len(hits) != 1:
-        what = "no question" if not hits else f"{len(hits)} questions"
-        raise Quarantine("SINK_CONTRACT", f"form label {label!r} matches {what} (form has: {item_labels})")
+    if len(hits) > 1:
+        raise Quarantine("SINK_CONTRACT", f"form label {label!r} matches {len(hits)} questions "
+                                          f"(form has: {item_labels})")
+    if not hits:  # plain HTML: a fieldset's <legend> names its radio or checkbox group
+        fieldsets = page.locator(_FIELDSET)
+        legends = fieldsets.evaluate_all(_LEGENDS_JS)
+        lhits = [i for i, text in enumerate(legends) if _norm(text) == target]
+        if len(lhits) == 1:
+            return _item_control(fieldsets.nth(lhits[0]), label)
+        what = "no question" if not lhits else f"{len(lhits)} fieldsets"
+        raise Quarantine("SINK_CONTRACT", f"form label {label!r} matches {what} "
+                                          f"(form has: {item_labels + legends})")
     return _item_control(page.locator(_QUESTION).nth(hits[0]), label)
 
 
@@ -235,9 +316,29 @@ def _fill_control(page: Any, label: str, kind: str, loc: Any, value: str) -> Non
             raise Quarantine("SINK_CONTRACT", f"form question {label!r} did not accept {value!r} (shows {got!r})")
 
 
+_ALERTS_JS = "() => {" + _HELPERS_JS + r"""
+  const out = [];
+  const add = t => { t = (t || '').trim(); if (t && !out.includes(t)) out.push(t); };
+  document.querySelectorAll('[role=alert]').forEach(a => add(a.innerText || a.textContent));
+  const ids = (e, attr) => (e.getAttribute(attr) || '').split(/\s+/).filter(Boolean)
+    .map(id => norm((document.getElementById(id) || {}).textContent)).filter(Boolean).join(' ');
+  document.querySelectorAll('input, select, textarea').forEach(e => {
+    const name = fieldLabel(e);
+    const bad = e.matches(':invalid') ? e.validationMessage : '';
+    const flagged = e.getAttribute('aria-invalid') === 'true'
+      ? (ids(e, 'aria-errormessage') || ids(e, 'aria-describedby') || 'invalid') : '';
+    const msg = bad || flagged;
+    if (msg) add(name ? name + ': ' + msg : msg);
+  });
+  return out;
+}
+"""
+
+
 def _alerts(page: Any) -> list[str]:
+    """Errors the page is showing: role=alert text, HTML5 validation messages and aria-invalid fields."""
     try:
-        return [a.strip() for a in page.locator("[role=alert]").all_inner_texts() if a.strip()]
+        return [a for a in page.evaluate(_ALERTS_JS) if a]
     except Exception:  # noqa: BLE001
         return []
 
