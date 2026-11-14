@@ -564,6 +564,12 @@ id `fixture-jobs` in the control plane, recorded against `fixtures/pages/lever-1
   Playwright in the script, never bound), so `sink.url` is stable; point it at your own form in tests.
   The copied company comes from Lever's footer link (`css` + `regex: "^(.+?) Home Page$"`, alternative
   `{"jsonld": "hiringOrganization.name"}`). Regenerate with `scripts/make_recording_jobs.py`.
+- Extension: badge `dup` for `label: duplicate` (V9), and `!` also for wrong token / unreachable control plane / non-web
+  tab (the button's tooltip says which). Host permissions are `http://127.0.0.1/*` and `http://localhost/*` (any port).
+  The options page also has "Get token from Patchwork", which reads `GET {controlUrl}/api/extension`. The service
+  worker is a classic script, so `sendActiveTab(tab?)` is a global that tests call through
+  `context.service_workers[0].evaluate`. It resolves to `{ok, id, state: "code"|"learned_now"|"held"|"duplicate"|null, row}`
+  or `{ok: false, error}`.
 
 Extension (`extension/`, Chrome MV3): command `send-page` (default `Alt+Shift+P`); takes the active tab's URL,
 `document.title` and `document.documentElement.outerHTML` via `chrome.scripting`, `POST {controlUrl}/api/pages` with
