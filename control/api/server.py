@@ -86,6 +86,21 @@ def agent_kind(svc: Any | None) -> str:
 PAGE_INTEGRATION = "jobs_to_tracker"
 
 
+def page_build_name(recording_id: str, recording: dict[str, Any] | None = None) -> str:
+    """Default name of a page→form BUILD (V15 item 6): `fixture-jobs` → jobs_to_tracker; any other recording →
+    a slug of its intent (`Track product prices` → `track_product_prices`), jobs_to_tracker if it has none."""
+    if recording_id == recordings.FIXTURE_JOBS_ID:
+        return PAGE_INTEGRATION
+    from agents.deep_tools import intent_slug
+    cands = None
+    try:
+        cands = recordings._candidates(recording_id)
+    except (OSError, ValueError):
+        pass
+    intent = ((cands or {}).get("intent") if isinstance(cands, dict) else None) or (recording or {}).get("intent") or ""
+    return intent_slug(str(intent)) or PAGE_INTEGRATION
+
+
 def _accepts_name(fn) -> bool:
     """V10 `start_build(recording_id, name=None)`; agents from before W3 take only the recording id."""
     import inspect
@@ -188,8 +203,8 @@ def retarget_recording_form(recording_id: str, form_url: str) -> None:
 @api.post("/integrations/build")
 def build(body: BuildRequest, request: Request) -> dict[str, str]:
     require_ai(request)
-    recordings.load_recording(body.recording_id)  # 404 unknown, 409 still recording
-    name = body.name or (PAGE_INTEGRATION if recordings.is_page_form(body.recording_id) else None)
+    rec = recordings.load_recording(body.recording_id)  # 404 unknown, 409 still recording
+    name = body.name or (page_build_name(body.recording_id, rec) if recordings.is_page_form(body.recording_id) else None)
     if body.form_url is not None:
         retarget_recording_form(body.recording_id, body.form_url)
     svc = agent_service(request)

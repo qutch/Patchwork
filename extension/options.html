@@ -10,7 +10,7 @@
     h1 { font-size: 18px; margin: 0 0 4px; }
     p { color: var(--muted); margin: 0 0 20px; }
     label { display: block; font-weight: 600; margin: 16px 0 4px; }
-    input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
+    input, select { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
     .row { display: flex; gap: 8px; margin-top: 20px; }
     button { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; font: inherit; cursor: pointer; }
     button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -20,16 +20,19 @@
 </head>
 <body>
   <h1>Patchwork</h1>
-  <p>Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> (or click the toolbar button) on a job posting to send that page to Patchwork. Nothing is sent otherwise.</p>
+  <p>Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> (or use the toolbar button's popup) on a page to send it to Patchwork. Nothing is sent otherwise.</p>
   <label for="controlUrl">Patchwork address</label>
   <input id="controlUrl" type="url" placeholder="http://127.0.0.1:8000" autocomplete="off">
   <label for="token">Extension token</label>
   <input id="token" type="text" placeholder="paste it from Patchwork's setup panel" autocomplete="off" spellcheck="false">
+  <label for="integration">Send pages to</label>
+  <select id="integration"><option value="">Patchwork's default integration</option></select>
   <div class="row">
     <button id="save" class="primary">Save</button>
     <button id="fetch" title="Read the token from Patchwork at the address above">Get token from Patchwork</button>
   </div>
   <div id="status" role="status"></div>
+  <script src="integrations.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

@@ -47,7 +47,7 @@ def value(src: dict, rec: dict) -> str:
         return rec.get("title") or ""
     if ref == "company":
         return f"Company at {rec.get('site')}"
-    return ""
+    return f"{ref} at {rec.get('site')}" if ref else ""
 
 
 def main() -> None:
@@ -93,8 +93,10 @@ def main() -> None:
         base = os.environ.get("PATCHWORK_CONTROL_URL")
         if not base:
             finish("failed", "PATCHWORK_CONTROL_URL is not set")
-        resp = httpx.get(base.rstrip("/") + "/api/pages", params={"since": store.get_cursor(a.name, scope) or ""},
-                         timeout=10)
+        cursor = store.get_cursor(a.name, scope) or ""
+        params = {k: str(v).replace("{cursor}", cursor)  # like the compiled adapter: the spec's list params
+                  for k, v in ((spec["source"].get("list") or {}).get("params") or {"since": "{cursor}"}).items()}
+        resp = httpx.get(base.rstrip("/") + "/api/pages", params=params, timeout=10)
         resp.raise_for_status()
         records = resp.json()
     if a.limit is not None:

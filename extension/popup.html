@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Patchwork</title>
+  <style>
+    :root { color-scheme: light dark; --fg: #111827; --muted: #6b7280; --bg: #ffffff; --line: #d1d5db; --accent: #4f46e5; }
+    @media (prefers-color-scheme: dark) { :root { --fg: #f3f4f6; --muted: #9ca3af; --bg: #111827; --line: #374151; --accent: #818cf8; } }
+    body { font: 13px/1.45 system-ui, sans-serif; color: var(--fg); background: var(--bg); width: 300px; margin: 0; padding: 12px 14px; }
+    h1 { font-size: 14px; margin: 0 0 8px; }
+    label { display: block; font-weight: 600; margin: 0 0 4px; }
+    select { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
+    button { width: 100%; margin-top: 10px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+    #status { margin-top: 8px; min-height: 1.4em; color: var(--muted); }
+    a { color: var(--accent); }
+    kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <h1>Patchwork</h1>
+  <label for="integration">Send pages to</label>
+  <select id="integration"><option value="">Patchwork's default integration</option></select>
+  <button id="send">Send this page</button>
+  <div id="status" role="status">Or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>. <a href="#" id="options">Options</a></div>
+  <script src="integrations.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

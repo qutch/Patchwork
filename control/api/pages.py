@@ -1,5 +1,10 @@
-"""Page inbox endpoints (docs/contracts.md V9): the extension posts pages here, the jobs_to_tracker
-integration reads them back as its source, and the UI reads the tracker and the learned layouts.
+"""Page inbox endpoints (docs/contracts.md V9, V15): the extension posts pages here, the page
+integrations read them back as their source, and the UI reads the tracker and the learned layouts.
+
+A page goes to one integration (V15): the one the extension sent (`integration`), else the default page
+integration (the first one, `jobs_to_tracker` when present). `GET /api/pages?integration=X` is X's source:
+X's pages, plus untagged pages when X is the default; without `integration` it is the default's (so specs
+compiled before V15 see exactly what they saw). Runs, learns and tracker rows follow the page's integration.
 
 `POST /api/pages` needs the extension token (X-Patchwork-Token), takes at most 5 MB of HTML, and is
 the only route (with `GET /api/pages/{id}`, which the extension polls) open to chrome-extension://
@@ -53,15 +58,18 @@ async def _read_capped(request: Request) -> bytes:
     return b"".join(chunks)
 
 
-def _parse_page(raw: bytes) -> tuple[str, str, str]:
+def _parse_page(raw: bytes) -> tuple[str, str, str, str | None]:
     """422 messages name the problem, never the values (no page HTML in errors or logs)."""
     try:
         body = json.loads(raw)
     except ValueError:
-        raise HTTPException(422, "body must be JSON: {url, title, html}") from None
+        raise HTTPException(422, "body must be JSON: {url, title, html, integration?}") from None
     if not isinstance(body, dict):
-        raise HTTPException(422, "body must be a JSON object: {url, title, html}")
+        raise HTTPException(422, "body must be a JSON object: {url, title, html, integration?}")
     url, title, html = body.get("url"), body.get("title", ""), body.get("html")
+    integration = body.get("integration")
+    if integration is not None and not isinstance(integration, str):
+        raise HTTPException(422, "integration must be a string (an integration name) or omitted")
     if not isinstance(url, str) or not url.strip():
         raise HTTPException(422, "url is required (a string)")
     if not isinstance(html, str):
@@ -72,7 +80,7 @@ def _parse_page(raw: bytes) -> tuple[str, str, str]:
         raise HTTPException(422, "title must be a string")
     if len(html.encode("utf-8", "surrogatepass")) > MAX_HTML_BYTES:
         raise HTTPException(413, f"page too large: the limit is {MAX_HTML_BYTES // (1024 * 1024)} MB of HTML")
-    return url.strip(), title, html
+    return url.strip(), title, html, (integration or "").strip() or None
 
 
 def _check_token(request: Request) -> None:
@@ -84,20 +92,23 @@ def _check_token(request: Request) -> None:
 @router.post("/pages", status_code=201)
 async def post_page(request: Request) -> JSONResponse:
     _check_token(request)
-    url, title, html = _parse_page(await _read_capped(request))
+    url, title, html, integration = _parse_page(await _read_capped(request))
     state = request.app.state
-    page = await run_in_threadpool(state.inbox.add, url, title, html)
+    names = await run_in_threadpool(autorun.page_integrations)
+    if integration is not None and integration not in names:
+        raise HTTPException(422, f"integration {integration!r} is not a page integration"
+                                 f" (known: {', '.join(names) or 'none yet'})")
+    page = await run_in_threadpool(state.inbox.add, url, title, html, integration)
     out: dict[str, Any] = {"id": page["id"], "seq": page["seq"], "site": page["site"],
                            "canonical_url": page["canonical_url"], "integration": None, "run_id": None,
                            "queued": False}
-    names = await run_in_threadpool(autorun.page_integrations)
-    for i, name in enumerate(names):
+    name = integration or (names[0] if names else None)  # V15: only the page's integration runs
+    if name is not None:
         try:
             started = await run_in_threadpool(state.auto.request, name)
         except Exception as e:  # noqa: BLE001 - the page is stored either way; the next press retries
             started = {"run_id": None, "queued": False, "run_error": f"runner failed to start: {e}"[:500]}
-        if i == 0:
-            out.update(integration=name, **started)
+        out.update(integration=name, **started)
     return JSONResponse(out, status_code=201)
 
 
@@ -111,9 +122,12 @@ def _since(since: str | None) -> int:
 
 
 @router.get("/pages")
-def list_pages(request: Request, since: str | None = None, limit: int = Query(100, ge=1, le=1000)) -> list[dict]:
-    """The jobs_to_tracker source (V7). No token: localhost only, and the runner has none."""
-    return request.app.state.inbox.list(since=_since(since), limit=limit)
+def list_pages(request: Request, since: str | None = None, limit: int = Query(100, ge=1, le=1000),
+               integration: str | None = None) -> list[dict]:
+    """A page integration's source (V7, V15): `integration`'s pages (+ untagged ones for the default
+    integration); without `integration`, the default integration's. No token: localhost only."""
+    return request.app.state.inbox.list(since=_since(since), limit=limit,
+                                        **autorun.page_filter((integration or "").strip() or None))
 
 
 @router.get("/pages/{page_id}")
@@ -122,14 +136,20 @@ def get_page(page_id: str, request: Request, integration: str | None = None) -> 
     page = state.inbox.get(page_id)
     if page is None:
         raise HTTPException(404, f"page {page_id} not found")
-    name = integration or (autorun.page_integrations() or [DEFAULT_INTEGRATION])[0]
+    name = integration or autorun.integration_of_page(page) or DEFAULT_INTEGRATION
     row = tracker.page_row(Store(), state.inbox, current_agent(state), name, page_id)
     return {"page": {k: v for k, v in page.items() if k != "html"}, "row": row}
 
 
 @router.get("/extension")
-def extension(request: Request) -> dict[str, str]:
-    return {"token": extension_token(), "control_url": control_url(request)}
+def extension(request: Request) -> dict[str, Any]:
+    """Setup values for the extension (V9) and its integration dropdown (V15): the page integrations
+    `[{name, intent}]` (default first) and `default_integration` (null until there is one)."""
+    store = Store()
+    names = autorun.page_integrations(store)
+    return {"token": extension_token(), "control_url": control_url(request),
+            "integrations": [{"name": n, "intent": autorun.integration_intent(n, store)} for n in names],
+            "default_integration": names[0] if names else None}
 
 
 # ---- tracker and learned layouts ----------------------------------------------------------------
@@ -151,9 +171,11 @@ def get_layouts(integration: str = DEFAULT_INTEGRATION) -> list[dict[str, Any]]:
 
 
 @router.post("/layouts/{parser_id}/revert")
-def revert_layout(parser_id: str, body: RevertBody) -> dict[str, Any]:
-    """Compile the active spec minus that parser, test, deploy (no AI). 409 if tests fail or it is the last parser."""
+def revert_layout(parser_id: str, body: RevertBody | None = None, integration: str | None = None) -> dict[str, Any]:
+    """Compile the active spec minus that parser, test, deploy (no AI). 409 if tests fail or it is the last parser.
+    The integration comes from `?integration=` (V15), else the body's, else jobs_to_tracker."""
+    name = (integration or "").strip() or (body or RevertBody()).integration
     try:
-        return layouts.revert_parser(body.integration, parser_id)
+        return layouts.revert_parser(name, parser_id)
     except layouts.LayoutError as e:
         raise HTTPException(e.status, str(e)) from None

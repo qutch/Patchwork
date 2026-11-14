@@ -190,8 +190,9 @@ class ToolContext:
     def platform_pages(self, platform: str, exclude: str | None = None, limit: int = 5) -> list[dict]:
         """The newest stored pages from other tenants' hosts of `platform` (`*.myworkdayjobs.com`), at most `limit`."""
         try:
+            from control.autorun import page_filter  # type: ignore[import-not-found]  # W4a
             from control.pages import PageInbox  # type: ignore[import-not-found]  # W4a
-            pages = PageInbox().list(limit=1000)
+            pages = PageInbox().list(limit=1000, **page_filter(self.name))  # V15: this integration's pages only
         except Exception:  # noqa: BLE001
             return []
         out = [p for p in reversed(pages) if p.get("id") != exclude and match_rank({"site": platform}, p) == 1]
@@ -231,13 +232,43 @@ def is_page_candidates(c: dict) -> bool:
     return (c.get("source") or {}).get("kind") == "page" and (c.get("sink") or {}).get("kind") == "form"
 
 
+def intent_slug(intent: str, max_len: int = 40) -> str:
+    """`Track product prices` -> `track_product_prices` (an integration name, contracts V15 item 6): lowercase
+    words joined by `_`, at most `max_len` characters (cut at a word), starting with a letter. "" if no words."""
+    words = re.findall(r"[a-z0-9]+", (intent or "").lower())
+    out = ""
+    for w in words:
+        nxt = f"{out}_{w}" if out else w
+        if len(nxt) > max_len:
+            break
+        out = nxt
+    if not out and words:
+        out = words[0][:max_len]
+    if out and not out[0].isalpha():
+        out = ("p_" + out)[:max_len].rstrip("_")
+    return out
+
+
 def default_build_name(recording_id: str, fallback: str) -> str:
-    """BUILD without a name: page->form recordings build `jobs_to_tracker` (V9), others the v1 default."""
+    """BUILD without a name (contracts V9, V15 item 6): the fixture job recording builds `jobs_to_tracker`; any
+    other page->form recording builds a slug of its intent (`Track product prices` -> `track_product_prices`);
+    other recordings the v1 default."""
     from agents.interface import DEFAULT_PAGE_INTEGRATION
     try:
-        return DEFAULT_PAGE_INTEGRATION if is_page_candidates(candidates_for(recording_id)) else fallback
+        c = candidates_for(recording_id)
     except Exception:  # noqa: BLE001 - no candidates yet: the interpreter will report it
         return fallback
+    if not is_page_candidates(c):
+        return fallback
+    if recording_id == JOBS_RECORDING:
+        return DEFAULT_PAGE_INTEGRATION
+    intent = c.get("intent") or ""
+    if not intent:
+        try:
+            intent = load_recording(recording_id).get("intent") or ""
+        except Exception:  # noqa: BLE001
+            intent = ""
+    return intent_slug(intent) or DEFAULT_PAGE_INTEGRATION
 
 
 def snapshot_html(recording_id: str, snapshot: str) -> str:
@@ -312,6 +343,8 @@ def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str) -> tuple[d
             if f is None:
                 problems.append(f"{label}: no selector or alternative to read it from the page")
                 continue
+            if f.get("jsonld") is not None and not f.get("jsonld_type"):  # V15: readers carry their @type
+                f = learn.with_jsonld_types({"fields": {"f": f}}, html)["fields"]["f"]
             fname = _field_name(label)
             fields[fname] = f
             form_fields[label] = {"from": fname}
@@ -322,14 +355,14 @@ def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str) -> tuple[d
         assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "inferred",
                             "text": f"{u['dest_field']} is always {u['value']!r} (not found on the page)"})
     assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "inferred",
-                        "text": "the posting's canonical URL identifies it; pressing the hotkey twice is a duplicate"})
+                        "text": "the page's canonical URL identifies it; pressing the hotkey twice is a duplicate"})
     parser = {"id": site_parser_id(site), "match": {"site": site},
               "origin": {"kind": "taught", "at": now(), "thread_id": thread_id, "approved_by": None},
               "fields": fields}
     spec = {
         "spec_version": 1, "name": name, "intent": c.get("intent") or "",
         "source": {"kind": "api", "base_url": CONTROL_SOURCE,
-                   "list": {"method": "GET", "path": "/api/pages", "params": {"since": "{cursor}"}},
+                   "list": {"method": "GET", "path": "/api/pages", "params": {"since": "{cursor}", "integration": name}},
                    "record_id": "id", "text_field": "text", "html_field": "html", "cursor_field": "seq"},
         "extract": {"route_by": "site", "parsers": [parser]},
         "validate": [{"field": f, "rule": "required"} for f in fields],
@@ -350,6 +383,10 @@ def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str) -> tuple[d
             body[label] = str(by_label[label]["value"])
     examples = [{"name": f"taught_{parser['id']}_1", "record": rec, "expect": {"body": body}}]
     return spec, examples, problems
+
+
+def normalize_intent(intent: Any) -> str:
+    return " ".join(str(intent or "").split())[:200]
 
 
 def summarize_recording(rec: dict) -> str:
@@ -1094,6 +1131,10 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         src = spec.get("source") or {}
         return src.get("html_field") or "html", src.get("text_field") or "text"
 
+    def _typed(parser: dict, rec: dict, spec: dict) -> dict:
+        """V15: every jsonld reader carries an explicit jsonld_type, filled from this page when missing."""
+        return learn.with_jsonld_types(parser, rec.get(_fields_of(spec)[0]) or "")
+
     def _check(parser: dict, rec: dict, spec: dict) -> dict:
         """Run a candidate and every LEARN check on one page. Pure, apart from the evidence event."""
         html_field, text_field = _fields_of(spec)
@@ -1130,28 +1171,34 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             return f"ERROR: {e}"
         spec = _page_spec()
         wanted = _fields_wanted(spec)
-        rules = [f"{r['field']}: {r['rule']}" for r in spec.get("validate") or []]
-        known = [f"{p['id']} ({(p.get('match') or {}).get('site', p.get('match'))})"
-                 for p in (spec.get("extract") or {}).get("parsers") or []]
+        rules = [learn.rule_label(r) for r in spec.get("validate") or []]
+        parsers = (spec.get("extract") or {}).get("parsers") or []
+        known = [f"{p['id']} ({(p.get('match') or {}).get('site', p.get('match'))})" for p in parsers]
+        readers = learn.known_readers(spec)
         plat = platform_of(rec.get("site") or "")
         hint = (f"\nplatform: {rec.get('site')} is one company on {plat}; every company there uses this layout, so pick "
                 "readers that work for any of them (never a company name written into a regex)") if plat else ""
-        return (learn.page_outline(rec) + f"\n\nfields to extract (exactly these): {', '.join(wanted) or '?'}"
-                f"\nvalidation: {', '.join(rules) or 'none'}\nexisting parsers: {', '.join(known) or 'none'}{hint}")
+        intent = normalize_intent(spec.get("intent"))
+        return (learn.page_outline(rec, prefer_types=learn.integration_jsonld_types(spec))
+                + f"\n\nintegration: {ctx.name}" + (f" ({intent})" if intent else "")
+                + f"\nfields to extract (exactly these): {', '.join(wanted) or '?'}"
+                f"\nvalidation: {', '.join(rules) or 'none'}\nexisting parsers: {', '.join(known) or 'none'}"
+                + (f"\nhow existing parsers read them: {readers}" if readers else "") + hint)
 
     def test_page_parser(parser: dict) -> str:
-        """Test a candidate parser on the page: {"id": "<site_name>", "fields": {"title": {"css": "h1"},
-        "company": {"jsonld": "hiringOrganization.name"}}}. Extractors: {css, attr?, regex?} | {jsonld,
-        jsonld_type?, regex?} (regex = refine, group 1). Returns each value with its evidence (where it
-        occurs on the page), whether the page title/meta/JSON-LD corroborate it, and ambiguous selectors."""
+        """Test a candidate parser on the page: {"id": "<site_name>", "fields": {"<field>": {"css": "h1"},
+        "<other field>": {"jsonld": "<path>", "jsonld_type": "<@type>"}}}, one entry per field get_page lists.
+        Extractors: {css, attr?, regex?} | {jsonld, jsonld_type, regex?} (regex = refine, group 1). Returns each
+        value with its evidence (where it occurs on the page), whether the page title/meta/JSON-LD corroborate
+        it, and ambiguous selectors."""
         try:
             rec = _page()
         except KeyError as e:
             return f"ERROR: {e}"
         if not isinstance(parser, dict):
             return "ERROR: parser must be an object with `fields`"
-        parser = {"id": "candidate", **parser}
         spec = _page_spec()
+        parser = _typed({"id": "candidate", **parser}, rec, spec)
         checks = _check(parser, rec, spec)
         if "error" in checks:
             return f"FAILED: {checks['error']}" + (f"; these worked: {json.dumps(checks['fields'])}" if checks["fields"] else "")
@@ -1195,7 +1242,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             return f"REFUSED: {ctx.name} has no active version to add a parser to (teach it first)"
         if not isinstance(parser, dict) or not isinstance(parser.get("fields"), dict):
             return "REFUSED: parser must be an object with `fields`"
-        p = json.loads(json.dumps(parser))
+        p = _typed(parser, rec, active)  # V15: an explicit jsonld_type on every jsonld reader
         site = rec.get("site") or ""
         p.setdefault("id", re.sub(r"[^a-z0-9]+", "_", site.split(".")[-2] if "." in site else site or "learned").strip("_") or "learned")
         p["id"] = str(p["id"])

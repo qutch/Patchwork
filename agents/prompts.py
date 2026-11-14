@@ -14,7 +14,8 @@ Spec rules (closed vocabulary, the compiler rejects anything else):
   Every parser must extract the SAME field names (the sink body, dedupe and rules reference them).
 - sink.body values: {from: <field>} | {from: record.<raw field>} | {const: v} | {transform: lookup|int|float|strip|upper|lower|date|multiply, from: ..., args: {...}}.
   lookup: {transform: lookup, from: record.sender_domain, args: {table: {"acme.com": "BOS", ...}}} (keys are exact values).
-- validate rules: positive_int | required | regex | one_of | exists. Never invent new keys."""
+- validate rules: positive_int | required | regex | one_of | exists | number (min?, max?) | date (YYYY-MM-DD) |
+  url (absolute http/https). Never invent new keys."""
 
 SUPERVISOR = f"""You are the Patchwork supervisor. You turn a user's recorded demonstration into a versioned
 integration (BUILD) or repair one after an incident (REPAIR). The generated integration runs with zero AI.
@@ -93,6 +94,17 @@ Ask (ask_user, the suggested_questions word for word) only if diff_openapi retur
 BUILD_TASK = """MODE: BUILD. Recording id: {recording_id}. Integration name: {name}.
 Build the integration from this recording, then request deploy of the version whose tests pass."""
 
+
+def build_task(*, recording_id: str, name: str, intent: str = "", fields: list[str] | None = None) -> str:
+    """BUILD_TASK plus the recording's intent and destination fields (V15: TEACH names them, not a domain)."""
+    msg = BUILD_TASK.format(recording_id=recording_id, name=name)
+    intent = " ".join(str(intent or "").split())[:200]
+    if intent:
+        msg += f"\nThe user's intent: {intent}."
+    if fields:
+        msg += f" Destination fields: {', '.join(fields)}."
+    return msg
+
 REPAIR_TASK = """MODE: REPAIR. Incident #{incident_id} on integration {name} (active version v{active}).
 Incident: {incident_type}: {summary}
 spec.yaml and examples.yaml in the working directory are the active version's. Repair it, compile the
@@ -101,21 +113,26 @@ next version, and request deploy once its tests pass."""
 NUDGE = """You have not called request_deploy yet. If a compiled version passed its tests, call
 request_deploy(version, summary) now. Otherwise delegate what is missing (builder to compile and test)."""
 
-# ---- LEARN (contracts V10): one page, one parser, <= 8 model calls --------------------------------
+# ---- LEARN (contracts V10, V15): one page, one parser, <= 8 model calls --------------------------------
+# The prompts name the integration's own intent and fields (from its spec), so a product, paper or recipe
+# integration is never told about job titles. A job integration (fields title + company, or JobPosting
+# readers) keeps the job-specific examples it was tuned with.
 
-LEARN_SUPERVISOR = """You are the Patchwork supervisor in LEARN mode. A job page arrived whose layout no parser
+LEARN_SUPERVISOR = """You are the Patchwork supervisor in LEARN mode. A page arrived whose layout no parser
 reads. Keep it short: call write_todos once with 3 todos, then delegate to the learner with the `task` tool
 (subagent_type "learner"), passing the page id, the site and the integration name. When the learner reports
 back, reply with one sentence: the parser saved and whether it was deployed automatically or is waiting for a
 person. You have no other tools; the code decides about deploying (never claim a deploy the learner did not
 report)."""
 
-LEARNER = """You are the learner. Write ONE parser that reads the job title and company from this page.
+# The job integration's learner prompt (the live job runs were tuned on this wording).
+JOB_LEARNER = """You are the learner. Write ONE parser that reads the job title and company from this page.
 Call tools, don't describe them, and use as few calls as possible:
 1. get_page() — an outline of the page: each line shows an extractor and the value it reads.
 2. Pick one extractor per field from the outline. Prefer, in order: a JSON-LD JobPosting field
-   ({"jsonld": "title"}, {"jsonld": "hiringOrganization.name"}), a heading selector that reads ONE value
-   (lines without "(N values)"), a meta tag ({"css": "meta[property=\\"og:site_name\\"]", "attr": "content"}).
+   ({"jsonld": "title", "jsonld_type": "JobPosting"}, {"jsonld": "hiringOrganization.name", "jsonld_type": "JobPosting"}),
+   a heading selector that reads ONE value (lines without "(N values)"), a meta tag
+   ({"css": "meta[property=\\"og:site_name\\"]", "attr": "content"}).
    Add "regex" with one capture group to cut a value out of a longer one, e.g. company from the title
    {"css": "head title", "regex": "^Job Application for .* at (.+)$"} or {"css": "meta[property=\\"og:site_name\\"]",
    "attr": "content", "regex": "^Careers at (.+)$"}. Never use cookie banners, buttons or navigation text.
@@ -125,12 +142,81 @@ Call tools, don't describe them, and use as few calls as possible:
    ambiguous, fix only that field and test again (at most twice).
 5. Reply with one sentence: parser id, the two values, and what save_parser said."""
 
+GENERIC_LEARNER = """You are the learner for the integration {name}{intent_part}. Write ONE parser that reads
+{field_list} from this page.
+Call tools, don't describe them, and use as few calls as possible:
+1. get_page() — an outline of the page: each line shows an extractor and the value it reads, and the JSON-LD
+   types on the page.
+2. Pick one extractor per field from the outline. Prefer, in order: a JSON-LD field of the page's main object
+   with its type spelled out ({jsonld_example}), a heading selector that reads ONE value (lines without
+   "(N values)"), a meta tag ({{"css": "meta[property=\\"og:title\\"]", "attr": "content"}}).
+   Add "regex" with one capture group to cut a value out of a longer one, e.g.
+   {{"css": "head title", "regex": "^(.+?) [|-] "}}. Never use cookie banners, buttons or navigation text.
+3. test_page_parser(parser={{"id": "<short site name>", "fields": {{{fields_skeleton}}}}}).
+4. If it says OK, call save_parser with the SAME parser right away (it checks everything again, compiles,
+   and either deploys or asks a person; that is not your decision). If it FAILED or a selector is
+   ambiguous, fix only that field and test again (at most twice).
+5. Reply with one sentence: parser id, the values it read, and what save_parser said."""
+
+# Kept for importers: the job integration's prompt.
+LEARNER = JOB_LEARNER
+
 LEARN_TASK = """MODE: LEARN. Integration {name} (active version v{active}). Page {page_id} from site {site}
 was held: no parser reads its layout. Delegate to the learner: read page {page_id}, write and test one parser
 for site {site}, save it."""
 
 LEARN_NUDGE = """No parser has been saved yet. Delegate to the learner once more: get_page, test_page_parser,
 then save_parser with the parser that passed."""
+
+
+def _spec_parts(spec: dict | None) -> tuple[list[str], list[str]]:
+    from agents.learn import integration_fields, integration_jsonld_types
+    return integration_fields(spec), integration_jsonld_types(spec)
+
+
+def _intent(spec: dict | None) -> str:
+    return " ".join(str((spec or {}).get("intent") or "").split())[:200]
+
+
+def is_job_integration(spec: dict | None) -> bool:
+    """A job-posting integration: it reads JobPosting JSON-LD, or its fields are exactly title + company."""
+    fields, types = _spec_parts(spec)
+    return "JobPosting" in types or set(fields) == {"title", "company"}
+
+
+def learner_prompt(spec: dict | None, name: str = "") -> str:
+    """The learner's system prompt for this integration (V15 item 1)."""
+    if is_job_integration(spec):
+        return JOB_LEARNER
+    fields, types = _spec_parts(spec)
+    intent = _intent(spec)
+    jtype = types[0] if types else "<@type from get_page>"
+    example_field = fields[0] if fields else "name"
+    return GENERIC_LEARNER.format(
+        name=name or (spec or {}).get("name") or "?",
+        intent_part=f' ("{intent}")' if intent else "",
+        field_list=(", ".join(f"`{f}`" for f in fields) + " (every one of them, nothing else)") if fields
+        else "the fields get_page lists",
+        jsonld_example='{"jsonld": "%s", "jsonld_type": "%s"}' % (example_field, jtype),
+        fields_skeleton=", ".join(f'"{f}": {{...}}' for f in fields) or '"<field>": {...}')
+
+
+def learn_task(*, page_id: str, name: str, site: str, active: int | None, spec: dict | None = None) -> str:
+    msg = LEARN_TASK.format(page_id=page_id, name=name, site=site, active=active)
+    fields, _ = _spec_parts(spec)
+    intent = _intent(spec)
+    if intent:
+        msg += f"\nThe integration's intent: {intent}."
+    if fields:
+        msg += f" Fields every parser reads: {', '.join(fields)}."
+    return msg
+
+
+def learner_description(spec: dict | None) -> str:
+    fields, _ = _spec_parts(spec)
+    what = f" reading {', '.join(fields)}" if fields else ""
+    return f"One page whose layout no parser reads -> a tested parser (css/jsonld){what}, saved for its site."
+
 
 FORM_REPAIR_HINT = """The sink is a FORM (sink.fields keyed by question labels). Don't read files (the golden
 examples hold whole pages). Plan: repairer -> get_incident, diff_openapi, propose_spec_patch with exactly

@@ -836,3 +836,35 @@ sink:
    check (`agents/learn.py _check_rules`), with generated negative tests.
 6. **Default build name** for a page recording: `fixture-jobs` → `jobs_to_tracker` (unchanged); any other recording →
    a slug of its intent (`Track product prices` → `track_product_prices`) unless `name` is given.
+
+**Details fixed while building B1 (additive; nothing above was removed or renamed):**
+- Page records (`GET /api/pages`, `GET /api/pages/{id}`) carry `integration` (null = untagged). `pages.db` gains the
+  nullable column on first open. `POST /api/pages` answers `integration` = the page's integration (the one sent, else
+  the default; null while there is no page integration) and starts a run only for that integration. An `integration`
+  that is not a page integration → 422 (`""` = untagged); a non-string → 422.
+- `GET /api/extension`: `integrations` are the page integrations in `page_integrations()` order (jobs first) with the
+  active spec's `intent`; `default_integration` is null while there is none.
+- `GET /api/pages?integration=X` for an unknown X → `[]`. A learn is never started for a page of another integration
+  (also guarded in `PageHooks.maybe_learn`, for specs compiled without the param).
+- Tracker: `fields` values come from the sink mapping's `{from: <field>}` entries (sink-typed, e.g. strings for a
+  form), null when not written yet or mapped only through a transform; `field_names` = the active spec's parser fields.
+  The `VALIDATION_FAILED` `detail` is `<field>: <problem>` (e.g. `price: -3 is below the minimum 0`).
+- Demo: `?integration=` wins over the body's `integration` on save-baseline; `POST /api/layouts/{id}/revert` also takes
+  `?integration=`. jobs_to_tracker's baseline stays in `$WS/v2_baseline/`; others are in
+  `$WS/v2_baseline/integrations/<name>/`. A reset clears only that integration's pages (untagged ones too for the
+  default) and its learn links.
+- Rules: `number` accepts what `cast: float` accepts (commas removed), never booleans/NaN/inf; `min`/`max` are
+  inclusive and only allowed on `number` (`min > max` is a spec error). `date` accepts a date object or a
+  `YYYY-MM-DD` string of a real day. `url` needs `http`/`https`, a host and no whitespace. Generated negative tests:
+  `<f>_not_a_number`, `<f>_below_min`, `<f>_above_max`, `<f>_not_iso`, `<f>_not_a_day`, `<f>_relative`, `<f>_not_http`.
+- LEARN: `get_page` adds `json-ld types on this page: …`, the integration's intent, the rules (`price: number (min 0)`)
+  and how existing parsers read each field; JSON-LD numbers count as leaves/evidence/corroboration. A `jsonld` reader
+  without a type is typed from the page before testing (JobPosting first when the path resolves there, else the first
+  type whose first object has the path). The job integration (JobPosting readers, or fields title+company) keeps its
+  job learner prompt; any other gets `prompts.learner_prompt(spec)`. The scripted learner tries, for fields other
+  than title/company, the integration's own readers, then the path on every JSON-LD type of the page.
+- Build name: `deep_tools.intent_slug` (≤ 40 chars, cut at a word, `p_` prefix if it starts with a digit); a page
+  recording with no intent still gets `jobs_to_tracker`.
+- Extension: `default_popup: popup.html` ("Send pages to" list + "Send this page", which messages the worker's
+  `sendActiveTab()`); the toolbar click no longer sends directly. The choice is `integration` in
+  `chrome.storage.local` (absent = default); the options page has the same list.

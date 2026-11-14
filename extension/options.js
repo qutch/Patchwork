@@ -1,31 +1,45 @@
-// Options: controlUrl + token in chrome.storage.local (docs/contracts.md V11).
-const DEFAULTS = { controlUrl: 'http://127.0.0.1:8000', token: '' };
+// Options: controlUrl + token + the integration pages go to, in chrome.storage.local (contracts V11, V15).
+// Helpers (pwFetchSetup, pwFillSelect, pwSaveIntegration, pwCleanUrl) come from integrations.js.
 const $ = id => document.getElementById(id);
 const say = text => { $('status').textContent = text; };
-const clean = url => String(url || '').trim().replace(/\/+$/, '') || DEFAULTS.controlUrl;
+
+let listed = { integrations: [], defaultIntegration: null };
+
+async function refreshIntegrations(controlUrl, chosen) {
+  try {
+    const setup = await pwFetchSetup(controlUrl);
+    listed = { integrations: setup.integrations, defaultIntegration: setup.defaultIntegration };
+  } catch (e) { /* Patchwork not reachable: keep what we have */ }
+  pwFillSelect($('integration'), listed.integrations, listed.defaultIntegration, chosen);
+}
 
 async function load() {
-  const o = await chrome.storage.local.get(DEFAULTS);
-  $('controlUrl').value = o.controlUrl || DEFAULTS.controlUrl;
+  const o = await chrome.storage.local.get(PW_DEFAULTS);
+  $('controlUrl').value = o.controlUrl || PW_DEFAULTS.controlUrl;
   $('token').value = o.token || '';
+  pwFillSelect($('integration'), [], null, o.integration || '');
+  // Ask Patchwork for its integrations only once it is set up (a token saved), never on a first open.
+  if (o.token) await refreshIntegrations($('controlUrl').value, o.integration || '');
 }
 
 async function save() {
-  const controlUrl = clean($('controlUrl').value);
+  const controlUrl = pwCleanUrl($('controlUrl').value);
   const token = $('token').value.trim();
   await chrome.storage.local.set({ controlUrl, token });
+  await pwSaveIntegration($('integration').value);
   $('controlUrl').value = controlUrl;
   say(token ? 'Saved.' : 'Saved. Add the token before sending pages.');
 }
 
-// GET /api/extension -> {token, control_url} (V9): the same values Patchwork's setup panel shows.
+// GET /api/extension -> {token, control_url, integrations, default_integration} (V9, V15): the same values
+// Patchwork's setup panel shows.
 async function fetchToken() {
-  const controlUrl = clean($('controlUrl').value);
+  const controlUrl = pwCleanUrl($('controlUrl').value);
   try {
-    const r = await fetch(`${controlUrl}/api/extension`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const body = await r.json();
-    $('token').value = body.token || '';
+    const setup = await pwFetchSetup(controlUrl);
+    $('token').value = setup.token;
+    listed = { integrations: setup.integrations, defaultIntegration: setup.defaultIntegration };
+    pwFillSelect($('integration'), listed.integrations, listed.defaultIntegration, $('integration').value);
     await save();
     say('Connected to Patchwork. Token saved.');
   } catch (e) {

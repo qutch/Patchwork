@@ -72,8 +72,9 @@ WRITABLE = ["/spec.yaml", "/examples.yaml", "/transforms.py"]
 # neither agent gets request_deploy. Target <= 8 model calls per learn.
 LEARN_SUPERVISOR_TOOLS: list[str] = []
 LEARN_SUBAGENTS: dict[str, tuple[str, str, list[str]]] = {
-    "learner": ("One job page whose layout no parser reads -> a tested parser (css/jsonld) saved for its site.",
-                prompts.LEARNER, ["get_page", "test_page_parser", "ask_user", "save_parser", "add_test_case"]),
+    "learner": (prompts.learner_description(None),
+                prompts.LEARNER,  # replaced per integration in build_agent (prompts.learner_prompt, V15)
+                ["get_page", "test_page_parser", "ask_user", "save_parser", "add_test_case"]),
 }
 LEARN_WRITABLE = ["/spec.yaml"]
 
@@ -355,6 +356,11 @@ class DeepAgentService(ThreadedAgentService):
             return FilesystemMiddleware(backend=backend, tools=FS_TOOLS, permissions=permissions)
 
         subagents = []
+        if learn:  # V15: the learner is told this integration's intent and fields, never a fixed domain
+            spec = ctx.spec_dict() if ctx.spec_path.exists() else {}
+            subagent_defs = {**subagent_defs, "learner": (prompts.learner_description(spec),
+                                                          prompts.learner_prompt(spec, ctx.name),
+                                                          subagent_defs["learner"][2])}
         for sname, (desc, prompt, tool_names) in subagent_defs.items():
             subagents.append({
                 "name": sname, "description": desc, "system_prompt": prompt,
@@ -416,7 +422,17 @@ class DeepAgentService(ThreadedAgentService):
         name = t.integration or default_build_name(recording_id, self.name)
         ctx = ToolContext(self, t, name=name, recording_id=recording_id)
         work_dir(name)
-        return self._drive(t, ctx, prompts.BUILD_TASK.format(recording_id=recording_id, name=name))
+        intent, fields = "", []
+        try:
+            c = candidates_for(recording_id)
+            if not is_page_candidates(c):  # v1 recordings keep their prompt
+                raise ValueError("not a page recording")
+            intent = c.get("intent") or ""
+            fields = [str(m.get("dest_field")) for m in c.get("mappings") or [] if m.get("dest_field")]
+        except Exception:  # noqa: BLE001 - the interpreter reports missing candidates itself
+            pass
+        return self._drive(t, ctx, prompts.build_task(recording_id=recording_id, name=name, intent=intent,
+                                                      fields=fields))
 
     def _run_repair(self, t: _Thread, incident_id: int) -> Any:
         inc = Store().incident(incident_id)
@@ -438,6 +454,7 @@ class DeepAgentService(ThreadedAgentService):
             site = ctx.get_page_record(page_id).get("site") or "?"
         except KeyError as e:
             raise KeyError(f"page {page_id} not found: {e}") from None
-        msg = prompts.LEARN_TASK.format(page_id=page_id, name=integration, site=site,
-                                        active=Store().active_version(integration))
+        msg = prompts.learn_task(page_id=page_id, name=integration, site=site,
+                                 active=Store().active_version(integration),
+                                 spec=ctx.spec_dict() if ctx.spec_path.exists() else {})
         return self._drive(t, ctx, msg)

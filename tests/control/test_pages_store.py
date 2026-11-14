@@ -8,7 +8,8 @@ from control.pages import PageInbox
 from runner.html import visible_text
 
 PAGES = Path(__file__).resolve().parents[2] / "fixtures" / "pages"
-V1_KEYS = {"id", "seq", "url", "canonical_url", "site", "title", "html", "text", "captured_at", "captured_date"}
+V1_KEYS = {"id", "seq", "url", "canonical_url", "site", "title", "html", "text", "captured_at", "captured_date",
+           "integration"}  # V15: the integration the page was sent to (None = untagged)
 
 
 def test_add_builds_v1_record(workspace):

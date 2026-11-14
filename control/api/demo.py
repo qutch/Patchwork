@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -180,30 +181,41 @@ async def form_rename(body: FormRename) -> JSONResponse:
     return await _proxy("tracker_form", "POST", "/admin/rename", {"from": body.from_, "to": body.to})
 
 
-def _baseline_dir() -> Path:
+def _baseline_dir(name: str = V2_INTEGRATION) -> Path:
+    """jobs_to_tracker's baseline stays where it always was; other integrations get their own (V15)."""
     from runner.store import workspace_dir
-    return workspace_dir() / "v2_baseline"
+    root = workspace_dir() / "v2_baseline"
+    return root if name == V2_INTEGRATION else root / "integrations" / name
 
 
-def _read_baseline() -> dict[str, Any] | None:
+def _read_baseline(name: str = V2_INTEGRATION) -> dict[str, Any] | None:
     try:
-        return json.loads((_baseline_dir() / "baseline.json").read_text())
+        baseline = json.loads((_baseline_dir(name) / "baseline.json").read_text())
     except (OSError, ValueError):
         return None
+    return baseline if isinstance(baseline, dict) and baseline.get("integration") == name else None
+
+
+def _target(integration: str | None, body: V2Target | None) -> str:
+    """`?integration=` (V15) wins over the body's `integration`; default jobs_to_tracker."""
+    name = (integration or "").strip() or (body.integration if body is not None else "") or V2_INTEGRATION
+    if not re.match(r"^[a-z][a-z0-9_]*$", name):
+        raise HTTPException(422, f"integration {name!r} is not an integration name")
+    return name
 
 
 @router.post("/demo/v2/save-baseline")
-def save_baseline(body: V2Target | None = None) -> dict[str, Any]:
+def save_baseline(body: V2Target | None = None, integration: str | None = None) -> dict[str, Any]:
     """Remember the integration's versions, active pointer and agent work dir as the rehearsal baseline."""
     import shutil
     from datetime import datetime, timezone
 
-    name = (body or V2Target()).integration
+    name = _target(integration, body)
     store = Store()
     active = store.active_version(name)
     if active is None:
         raise HTTPException(409 if store.versions(name) else 404, f"{name} has no active version to save as the baseline")
-    bdir = _baseline_dir()
+    bdir = _baseline_dir(name)
     work = ops.version_dir(name, 0).parent / "work"
     if (bdir / "work").exists():
         shutil.rmtree(bdir / "work")
@@ -278,16 +290,20 @@ def _reset_integration_rows(name: str, keep_versions: list[int], active: int) ->
 
 
 @router.post("/demo/v2/reset")
-async def v2_reset(request: Request) -> dict[str, Any]:
-    """Restore the saved baseline of jobs_to_tracker: stop its runs, cancel its learn (and repair)
-    threads, clear pages and its runs/records/processed/cursor/incidents, drop newer versions, put the
-    active pointer and the agent's work dir back. Never touches po_to_stockroom (v1's reset is unchanged)."""
+async def v2_reset(request: Request, integration: str | None = None) -> dict[str, Any]:
+    """Restore the saved baseline of `?integration=` (default jobs_to_tracker): stop its runs, cancel its learn
+    (and repair) threads, clear its pages (its own, plus untagged ones for the default page integration) and its
+    runs/records/processed/cursor/incidents, drop newer versions, put the active pointer and the agent's work
+    dir back. Other integrations are never touched (v1's reset is unchanged)."""
     import shutil
 
-    baseline = _read_baseline()
+    from control.autorun import page_filter
+
+    name = _target(integration, None)
+    baseline = _read_baseline(name)
     if baseline is None:
-        raise HTTPException(409, "no v2 baseline saved yet: POST /api/demo/v2/save-baseline first")
-    name = baseline["integration"]
+        raise HTTPException(409, f"no v2 baseline saved yet for {name}: POST /api/demo/v2/save-baseline"
+                                 + ("" if name == V2_INTEGRATION else f"?integration={name}") + " first")
     state = request.app.state
     state.auto.forget(name)
     stopped = await run_in_threadpool(state.runs.stop, name)
@@ -301,11 +317,11 @@ async def v2_reset(request: Request) -> dict[str, Any]:
     cancelled = await run_in_threadpool(cancel_threads, svc, thread_ids)
     state.auto.forget(name)  # anything a cancelled thread queued on its way out
     removed = await run_in_threadpool(_reset_integration_rows, name, baseline["versions"], baseline["active_version"])
-    removed["pages"] = state.inbox.clear()
+    removed["pages"] = state.inbox.clear(**page_filter(name))
     work = ops.version_dir(name, 0).parent / "work"
-    if baseline.get("has_work") and (_baseline_dir() / "work").is_dir():
+    if baseline.get("has_work") and (_baseline_dir(name) / "work").is_dir():
         shutil.rmtree(work, ignore_errors=True)
-        shutil.copytree(_baseline_dir() / "work", work)
+        shutil.copytree(_baseline_dir(name) / "work", work)
     out: dict[str, Any] = {"ok": True, "integration": name, "active_version": baseline["active_version"],
                            "removed": removed, "stopped_runs": stopped, "cancelled_threads": cancelled}
     if os.environ.get("PATCHWORK_TRACKER_FORM_URL"):  # the offline fixture form: rows and labels back to default
