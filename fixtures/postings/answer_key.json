@@ -1,0 +1,1605 @@
+[
+  {
+    "file": "lever/1.html.gz",
+    "platform": "lever",
+    "board": "palantir",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/palantir/6ed76ce8-4156-4b60-b120-403538bd66cd",
+    "requested_url": "https://jobs.lever.co/palantir/6ed76ce8-4156-4b60-b120-403538bd66cd",
+    "fetched_at": "2026-11-14T17:12:39+00:00",
+    "document_title": "Palantir Technologies - Administrative Business Partner",
+    "title": "Administrative Business Partner",
+    "company": "Palantir Technologies",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "lever/2.html.gz",
+    "platform": "lever",
+    "board": "palantir",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/palantir/a49d4181-a289-435a-b581-7f5af0497c8e",
+    "requested_url": "https://jobs.lever.co/palantir/a49d4181-a289-435a-b581-7f5af0497c8e",
+    "fetched_at": "2026-11-14T17:12:41+00:00",
+    "document_title": "Palantir Technologies - Deployment Strategist, Internship - US Government",
+    "title": "Deployment Strategist, Internship - US Government",
+    "company": "Palantir Technologies",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "lever/3.html.gz",
+    "platform": "lever",
+    "board": "palantir",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/palantir/57a3f928-e7d3-4037-8196-b38e2f867152",
+    "requested_url": "https://jobs.lever.co/palantir/57a3f928-e7d3-4037-8196-b38e2f867152",
+    "fetched_at": "2026-11-14T17:12:42+00:00",
+    "document_title": "Palantir Technologies - Forward Deployed Software Engineer - UK Government",
+    "title": "Forward Deployed Software Engineer - UK Government",
+    "company": "Palantir Technologies",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "lever/4.html.gz",
+    "platform": "lever",
+    "board": "palantir",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/palantir/7fa0ceca-c30e-48de-9b27-f98469c374f3",
+    "requested_url": "https://jobs.lever.co/palantir/7fa0ceca-c30e-48de-9b27-f98469c374f3",
+    "fetched_at": "2026-11-14T17:12:45+00:00",
+    "document_title": "Palantir Technologies - Meritocracy Fellowship",
+    "title": "Meritocracy Fellowship",
+    "company": "Palantir Technologies",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "lever/5.html.gz",
+    "platform": "lever",
+    "board": "palantir",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/palantir/2cd25c0b-088d-4a5c-9b96-1165a33fe652",
+    "requested_url": "https://jobs.lever.co/palantir/2cd25c0b-088d-4a5c-9b96-1165a33fe652",
+    "fetched_at": "2026-11-14T17:12:47+00:00",
+    "document_title": "Palantir Technologies - Senior Backend Software Engineer - Infrastructure",
+    "title": "Senior Backend Software Engineer - Infrastructure",
+    "company": "Palantir Technologies",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "lever/6.html.gz",
+    "platform": "lever",
+    "board": "palantir",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/palantir/3531977a-9b2f-40a0-a486-4eeb38e75fc1",
+    "requested_url": "https://jobs.lever.co/palantir/3531977a-9b2f-40a0-a486-4eeb38e75fc1",
+    "fetched_at": "2026-11-14T17:12:48+00:00",
+    "document_title": "Palantir Technologies - Software Engineer, Internship",
+    "title": "Software Engineer, Internship",
+    "company": "Palantir Technologies",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "lever/7.html.gz",
+    "platform": "lever",
+    "board": "spotify",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/spotify/2a55d6c9-c564-443a-be3e-a3851db5a93b",
+    "requested_url": "https://jobs.lever.co/spotify/2a55d6c9-c564-443a-be3e-a3851db5a93b",
+    "fetched_at": "2026-11-14T17:12:49+00:00",
+    "document_title": "Spotify - Account Executive - Commercial, Spotify Technology",
+    "title": "Account Executive - Commercial, Spotify Technology",
+    "company": "Spotify",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "lever/8.html.gz",
+    "platform": "lever",
+    "board": "spotify",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/spotify/ffe7380b-8c91-4201-bf60-25273493a1d8",
+    "requested_url": "https://jobs.lever.co/spotify/ffe7380b-8c91-4201-bf60-25273493a1d8",
+    "fetched_at": "2026-11-14T17:12:50+00:00",
+    "document_title": "Spotify - Content Marketing Manager Indonesia",
+    "title": "Content Marketing Manager Indonesia",
+    "company": "Spotify",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "lever/9.html.gz",
+    "platform": "lever",
+    "board": "spotify",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/spotify/01b41b49-7d43-4933-9ba7-06ebe0a2a749",
+    "requested_url": "https://jobs.lever.co/spotify/01b41b49-7d43-4933-9ba7-06ebe0a2a749",
+    "fetched_at": "2026-11-14T17:12:52+00:00",
+    "document_title": "Spotify - Head of Measurement & Advertising Effectiveness",
+    "title": "Head of Measurement & Advertising Effectiveness",
+    "company": "Spotify",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "resolved by reading the page: JSON-LD title is HTML-escaped ('&amp;'); the visible h2, <title>, og:title and the listing API all say '&'",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: JSON-LD title is 'Head of Measurement &amp; Advertising Effectiveness', not the visible title",
+      "title: JSON-LD title is HTML-escaped ('&amp;'); the visible h2, <title>, og:title and the listing API all say '&'"
+    ]
+  },
+  {
+    "file": "lever/10.html.gz",
+    "platform": "lever",
+    "board": "spotify",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/spotify/a9d581f9-1361-4227-b230-94a0d6ffdef4",
+    "requested_url": "https://jobs.lever.co/spotify/a9d581f9-1361-4227-b230-94a0d6ffdef4",
+    "fetched_at": "2026-11-14T17:12:53+00:00",
+    "document_title": "Spotify - Product Designer",
+    "title": "Product Designer",
+    "company": "Spotify",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "lever/11.html.gz",
+    "platform": "lever",
+    "board": "spotify",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/spotify/babebec3-0061-4c39-a4ad-c51a54d23567",
+    "requested_url": "https://jobs.lever.co/spotify/babebec3-0061-4c39-a4ad-c51a54d23567",
+    "fetched_at": "2026-11-14T17:12:58+00:00",
+    "document_title": "Spotify - Senior Data Scientist, Artist-First AI Music lab",
+    "title": "Senior Data Scientist, Artist-First AI Music lab",
+    "company": "Spotify",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "lever/12.html.gz",
+    "platform": "lever",
+    "board": "spotify",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/spotify/ee45924c-894c-4ea0-9c93-c5221894063f",
+    "requested_url": "https://jobs.lever.co/spotify/ee45924c-894c-4ea0-9c93-c5221894063f",
+    "fetched_at": "2026-11-14T17:12:59+00:00",
+    "document_title": "Spotify - Senior Product Manager - User Platform",
+    "title": "Senior Product Manager - User Platform",
+    "company": "Spotify",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/1.html.gz",
+    "platform": "greenhouse",
+    "board": "discord",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/discord/jobs/8927168002",
+    "requested_url": "https://job-boards.greenhouse.io/discord/jobs/8927168002",
+    "fetched_at": "2026-11-14T17:13:01+00:00",
+    "document_title": "Job Application for Account Executive, Mobile Gaming at Discord",
+    "title": "Account Executive, Mobile Gaming",
+    "company": "Discord",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/2.html.gz",
+    "platform": "greenhouse",
+    "board": "discord",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/discord/jobs/8904389002",
+    "requested_url": "https://job-boards.greenhouse.io/discord/jobs/8904389002",
+    "fetched_at": "2026-11-14T17:13:03+00:00",
+    "document_title": "Job Application for Public Affairs Advisor at Discord",
+    "title": "Public Affairs Advisor",
+    "company": "Discord",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/3.html.gz",
+    "platform": "greenhouse",
+    "board": "discord",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/discord/jobs/8731898002",
+    "requested_url": "https://job-boards.greenhouse.io/discord/jobs/8731898002",
+    "fetched_at": "2026-11-14T17:13:04+00:00",
+    "document_title": "Job Application for Senior Product Designer, Consumer Revenue at Discord",
+    "title": "Senior Product Designer, Consumer Revenue",
+    "company": "Discord",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/4.html.gz",
+    "platform": "greenhouse",
+    "board": "discord",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/discord/jobs/8675185002",
+    "requested_url": "https://job-boards.greenhouse.io/discord/jobs/8675185002",
+    "fetched_at": "2026-11-14T17:13:05+00:00",
+    "document_title": "Job Application for Staff Software Engineer, Enterprise Platform at Discord",
+    "title": "Staff Software Engineer, Enterprise Platform",
+    "company": "Discord",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/5.html.gz",
+    "platform": "greenhouse",
+    "board": "anthropic",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/anthropic/jobs/5456619008",
+    "requested_url": "https://job-boards.greenhouse.io/anthropic/jobs/5456619008",
+    "fetched_at": "2026-11-14T17:13:07+00:00",
+    "document_title": "Job Application for 3P Revenue Accounting & Reporting at Anthropic",
+    "title": "3P Revenue Accounting & Reporting",
+    "company": "Anthropic",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/6.html.gz",
+    "platform": "greenhouse",
+    "board": "anthropic",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/anthropic/jobs/5457708008",
+    "requested_url": "https://job-boards.greenhouse.io/anthropic/jobs/5457708008",
+    "fetched_at": "2026-11-14T17:13:08+00:00",
+    "document_title": "Job Application for Engineering Manager, Finance Engineering at Anthropic",
+    "title": "Engineering Manager, Finance Engineering",
+    "company": "Anthropic",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/7.html.gz",
+    "platform": "greenhouse",
+    "board": "anthropic",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/anthropic/jobs/5453322008",
+    "requested_url": "https://job-boards.greenhouse.io/anthropic/jobs/5453322008",
+    "fetched_at": "2026-11-14T17:13:10+00:00",
+    "document_title": "Job Application for Partner Support Operations Lead at Anthropic",
+    "title": "Partner Support Operations Lead",
+    "company": "Anthropic",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/8.html.gz",
+    "platform": "greenhouse",
+    "board": "anthropic",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/anthropic/jobs/5449229008",
+    "requested_url": "https://job-boards.greenhouse.io/anthropic/jobs/5449229008",
+    "fetched_at": "2026-11-14T17:13:11+00:00",
+    "document_title": "Job Application for Staff Forward Deployed Engineer at Anthropic",
+    "title": "Staff Forward Deployed Engineer",
+    "company": "Anthropic",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/9.html.gz",
+    "platform": "greenhouse",
+    "board": "figma",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/figma/jobs/5426468004",
+    "requested_url": "https://job-boards.greenhouse.io/figma/jobs/5426468004",
+    "fetched_at": "2026-11-14T17:13:12+00:00",
+    "document_title": "Job Application for Account Executive, Enterprise at Figma",
+    "title": "Account Executive, Enterprise",
+    "company": "Figma",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/10.html.gz",
+    "platform": "greenhouse",
+    "board": "figma",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/figma/jobs/6104028004",
+    "requested_url": "https://job-boards.greenhouse.io/figma/jobs/6104028004",
+    "fetched_at": "2026-11-14T17:13:14+00:00",
+    "document_title": "Job Application for Customer Success Manager (São Paulo, Brazil) at Figma",
+    "title": "Customer Success Manager (São Paulo, Brazil)",
+    "company": "Figma",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/11.html.gz",
+    "platform": "greenhouse",
+    "board": "figma",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/figma/jobs/6166608004",
+    "requested_url": "https://job-boards.greenhouse.io/figma/jobs/6166608004",
+    "fetched_at": "2026-11-14T17:13:16+00:00",
+    "document_title": "Job Application for Manager, SMB Sales at Figma",
+    "title": "Manager, SMB Sales",
+    "company": "Figma",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse/12.html.gz",
+    "platform": "greenhouse",
+    "board": "figma",
+    "site": "job-boards.greenhouse.io",
+    "url": "https://job-boards.greenhouse.io/figma/jobs/5829751004",
+    "requested_url": "https://job-boards.greenhouse.io/figma/jobs/5829751004",
+    "fetched_at": "2026-11-14T17:13:19+00:00",
+    "document_title": "Job Application for Security Engineer at Figma",
+    "title": "Security Engineer",
+    "company": "Figma",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/1.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/8365363/?gh_jid=8365363",
+    "requested_url": "https://careers.airbnb.com/positions/8365363?gh_jid=8365363",
+    "fetched_at": "2026-11-14T17:13:23+00:00",
+    "document_title": "Account Executive (Hotels) - Careers at Airbnb",
+    "title": "Account Executive (Hotels)",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/2.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/8327789/?gh_jid=8327789",
+    "requested_url": "https://careers.airbnb.com/positions/8327789?gh_jid=8327789",
+    "fetched_at": "2026-11-14T17:13:26+00:00",
+    "document_title": "Emergency Response Manager, APAC - Careers at Airbnb",
+    "title": "Emergency Response Manager, APAC",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/3.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/7716341/?gh_jid=7716341",
+    "requested_url": "https://careers.airbnb.com/positions/7716341?gh_jid=7716341",
+    "fetched_at": "2026-11-14T17:13:28+00:00",
+    "document_title": "Machine Learning Engineer, Assistance Engineering - Careers at Airbnb",
+    "title": "Machine Learning Engineer, Assistance Engineering",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/4.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/8350117/?gh_jid=8350117",
+    "requested_url": "https://careers.airbnb.com/positions/8350117?gh_jid=8350117",
+    "fetched_at": "2026-11-14T17:13:31+00:00",
+    "document_title": "Market Manager, Spain & Portugal - Careers at Airbnb",
+    "title": "Market Manager, Spain & Portugal",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/5.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/8304183/?gh_jid=8304183",
+    "requested_url": "https://careers.airbnb.com/positions/8304183?gh_jid=8304183",
+    "fetched_at": "2026-11-14T17:13:33+00:00",
+    "document_title": "Product Manager, LATAM (São Paulo, Brazil) - Careers at Airbnb",
+    "title": "Product Manager, LATAM (São Paulo, Brazil)",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/6.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/8081180/?gh_jid=8081180",
+    "requested_url": "https://careers.airbnb.com/positions/8081180?gh_jid=8081180",
+    "fetched_at": "2026-11-14T17:13:36+00:00",
+    "document_title": "Senior Analyst, Advanced Analytics - Gurugram - Careers at Airbnb",
+    "title": "Senior Analyst, Advanced Analytics - Gurugram",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/7.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/8214375/?gh_jid=8214375",
+    "requested_url": "https://careers.airbnb.com/positions/8214375?gh_jid=8214375",
+    "fetched_at": "2026-11-14T17:13:39+00:00",
+    "document_title": "Senior Executive IT Support Engineer, Tech Foundations - Careers at Airbnb",
+    "title": "Senior Executive IT Support Engineer, Tech Foundations",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/8.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/8290025/?gh_jid=8290025",
+    "requested_url": "https://careers.airbnb.com/positions/8290025?gh_jid=8290025",
+    "fetched_at": "2026-11-14T17:13:42+00:00",
+    "document_title": "Senior Manager, Content & Knowledge Architecture - Careers at Airbnb",
+    "title": "Senior Manager, Content & Knowledge Architecture",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/9.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/8356141/?gh_jid=8356141",
+    "requested_url": "https://careers.airbnb.com/positions/8356141?gh_jid=8356141",
+    "fetched_at": "2026-11-14T17:13:44+00:00",
+    "document_title": "Senior Program Manager, Design - Careers at Airbnb",
+    "title": "Senior Program Manager, Design",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/10.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/7107054/?gh_jid=7107054",
+    "requested_url": "https://careers.airbnb.com/positions/7107054?gh_jid=7107054",
+    "fetched_at": "2026-11-14T17:13:46+00:00",
+    "document_title": "Senior Staff Data Scientist, Guest & Host Marketplace AI - Careers at Airbnb",
+    "title": "Senior Staff Data Scientist, Guest & Host Marketplace AI",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/11.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/8107161/?gh_jid=8107161",
+    "requested_url": "https://careers.airbnb.com/positions/8107161?gh_jid=8107161",
+    "fetched_at": "2026-11-14T17:13:51+00:00",
+    "document_title": "Spécialiste principal(e), Soutien Premium - Careers at Airbnb",
+    "title": "Spécialiste principal(e), Soutien Premium",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "greenhouse_branded/12.html.gz",
+    "platform": "greenhouse_branded",
+    "board": "airbnb",
+    "site": "careers.airbnb.com",
+    "url": "https://careers.airbnb.com/positions/7528577/?gh_jid=7528577",
+    "requested_url": "https://careers.airbnb.com/positions/7528577?gh_jid=7528577",
+    "fetched_at": "2026-11-14T17:13:53+00:00",
+    "document_title": "Staff Software Engineer, Guest & Host - Careers at Airbnb",
+    "title": "Staff Software Engineer, Guest & Host",
+    "company": "Airbnb",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "ashby/1.html.gz",
+    "platform": "ashby",
+    "board": "ramp",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+    "requested_url": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+    "fetched_at": "2026-11-14T17:13:55+00:00",
+    "document_title": "Software Engineer, Security, Cloud @ Ramp",
+    "title": "Software Engineer, Security, Cloud",
+    "company": "Ramp",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['About Ramp', 'About the Role']"
+    ]
+  },
+  {
+    "file": "ashby/2.html.gz",
+    "platform": "ashby",
+    "board": "ramp",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/ramp/5598f7b8-4ae2-4105-a2b4-2d0f55c54c40",
+    "requested_url": "https://jobs.ashbyhq.com/ramp/5598f7b8-4ae2-4105-a2b4-2d0f55c54c40",
+    "fetched_at": "2026-11-14T17:13:59+00:00",
+    "document_title": "Software Engineer, Backend, Credit @ Ramp",
+    "title": "Software Engineer, Backend, Credit",
+    "company": "Ramp",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['About Ramp', 'About the Role']"
+    ]
+  },
+  {
+    "file": "ashby/3.html.gz",
+    "platform": "ashby",
+    "board": "ramp",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/ramp/971abc99-f20b-43f0-91d6-90bcbfa2c8d9",
+    "requested_url": "https://jobs.ashbyhq.com/ramp/971abc99-f20b-43f0-91d6-90bcbfa2c8d9",
+    "fetched_at": "2026-11-14T17:14:03+00:00",
+    "document_title": "Solutions Consultant, Post Sales, Enterprise @ Ramp",
+    "title": "Solutions Consultant, Post Sales, Enterprise",
+    "company": "Ramp",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['About Ramp', 'About the Role']"
+    ]
+  },
+  {
+    "file": "ashby/4.html.gz",
+    "platform": "ashby",
+    "board": "ramp",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/ramp/96250bac-465c-4524-bc7c-ba0f0b05310f",
+    "requested_url": "https://jobs.ashbyhq.com/ramp/96250bac-465c-4524-bc7c-ba0f0b05310f",
+    "fetched_at": "2026-11-14T17:14:06+00:00",
+    "document_title": "Senior Manager, Account Manager, Enterprise @ Ramp",
+    "title": "Senior Manager, Account Manager, Enterprise",
+    "company": "Ramp",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['About Ramp', 'About the Role']"
+    ]
+  },
+  {
+    "file": "ashby/5.html.gz",
+    "platform": "ashby",
+    "board": "openai",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/openai/8fb1615c-34bf-47c4-a1d1-b7b2f836bbd3",
+    "requested_url": "https://jobs.ashbyhq.com/openai/8fb1615c-34bf-47c4-a1d1-b7b2f836bbd3",
+    "fetched_at": "2026-11-14T17:14:09+00:00",
+    "document_title": "Technical Program Manager, Compute Infrastructure @ OpenAI",
+    "title": "Technical Program Manager, Compute Infrastructure",
+    "company": "OpenAI",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "ashby/6.html.gz",
+    "platform": "ashby",
+    "board": "openai",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/openai/05a8cae8-81bd-4f7b-bc48-41ef1bd67e5d",
+    "requested_url": "https://jobs.ashbyhq.com/openai/05a8cae8-81bd-4f7b-bc48-41ef1bd67e5d",
+    "fetched_at": "2026-11-14T17:14:12+00:00",
+    "document_title": "Product Manager, Integrity @ OpenAI",
+    "title": "Product Manager, Integrity",
+    "company": "OpenAI",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "ashby/7.html.gz",
+    "platform": "ashby",
+    "board": "openai",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/openai/ccd3c68b-5860-40b5-9aff-e99da9aa669c",
+    "requested_url": "https://jobs.ashbyhq.com/openai/ccd3c68b-5860-40b5-9aff-e99da9aa669c",
+    "fetched_at": "2026-11-14T17:14:14+00:00",
+    "document_title": "Hardware Finance Sr. Manager @ OpenAI",
+    "title": "Hardware Finance Sr. Manager",
+    "company": "OpenAI",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "ashby/8.html.gz",
+    "platform": "ashby",
+    "board": "openai",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/openai/5e5e7ff9-f733-418d-9188-75c988142a17",
+    "requested_url": "https://jobs.ashbyhq.com/openai/5e5e7ff9-f733-418d-9188-75c988142a17",
+    "fetched_at": "2026-11-14T17:14:16+00:00",
+    "document_title": "Payroll Initiatives Lead @ OpenAI",
+    "title": "Payroll Initiatives Lead",
+    "company": "OpenAI",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": []
+  },
+  {
+    "file": "ashby/9.html.gz",
+    "platform": "ashby",
+    "board": "notion",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/notion/1fc309c8-da20-4ff2-84c7-8b863ece2b0a",
+    "requested_url": "https://jobs.ashbyhq.com/notion/1fc309c8-da20-4ff2-84c7-8b863ece2b0a",
+    "fetched_at": "2026-11-14T17:14:19+00:00",
+    "document_title": "Software Engineer, AI Connections (Developer Platform) @ Notion",
+    "title": "Software Engineer, AI Connections (Developer Platform)",
+    "company": "Notion",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Who We Are', 'About the Role:', \"What You'll Achieve:\"]"
+    ]
+  },
+  {
+    "file": "ashby/10.html.gz",
+    "platform": "ashby",
+    "board": "notion",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/notion/f7ea6f19-fc0f-482c-b5a8-1271747fea1b",
+    "requested_url": "https://jobs.ashbyhq.com/notion/f7ea6f19-fc0f-482c-b5a8-1271747fea1b",
+    "fetched_at": "2026-11-14T17:14:22+00:00",
+    "document_title": "Solutions Consultant, Commercial, France @ Notion",
+    "title": "Solutions Consultant, Commercial, France",
+    "company": "Notion",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Who We Are', 'About the Role:', \"What You'll Achieve:\"]"
+    ]
+  },
+  {
+    "file": "ashby/11.html.gz",
+    "platform": "ashby",
+    "board": "notion",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/notion/8ee34d10-ba59-44bb-b12c-0130e908810d",
+    "requested_url": "https://jobs.ashbyhq.com/notion/8ee34d10-ba59-44bb-b12c-0130e908810d",
+    "fetched_at": "2026-11-14T17:14:25+00:00",
+    "document_title": "Executive Operations Partner - EPD (Executive Assistant) @ Notion",
+    "title": "Executive Operations Partner - EPD (Executive Assistant)",
+    "company": "Notion",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Who We Are', 'About the Role:', \"What You'll Achieve:\"]"
+    ]
+  },
+  {
+    "file": "ashby/12.html.gz",
+    "platform": "ashby",
+    "board": "notion",
+    "site": "jobs.ashbyhq.com",
+    "url": "https://jobs.ashbyhq.com/notion/7ee208b1-f87e-4627-9081-b2478327a02c",
+    "requested_url": "https://jobs.ashbyhq.com/notion/7ee208b1-f87e-4627-9081-b2478327a02c",
+    "fetched_at": "2026-11-14T17:14:27+00:00",
+    "document_title": "Solutions Consultant, Commercial, Benelux @ Notion",
+    "title": "Solutions Consultant, Commercial, Benelux",
+    "company": "Notion",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == JSON-LD title",
+      "company": "JSON-LD hiringOrganization.name"
+    },
+    "checks": {
+      "title_api_eq_jsonld": true,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Who We Are', 'About the Role:', \"What You'll Achieve:\"]"
+    ]
+  },
+  {
+    "file": "smartrecruiters/1.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161634499",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161634499",
+    "fetched_at": "2026-11-14T17:14:37+00:00",
+    "document_title": "Bosch Group Operation Head of Bosch China Training Center | SmartRecruiters",
+    "title": "Operation Head of Bosch China Training Center",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/2.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161577845",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161577845",
+    "fetched_at": "2026-11-14T17:14:48+00:00",
+    "document_title": "Bosch Group Warehouse Associate | SmartRecruiters",
+    "title": "Warehouse Associate",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/3.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161562656",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161562656",
+    "fetched_at": "2026-11-14T17:14:59+00:00",
+    "document_title": "Bosch Group Sales Controller (w/m/div.) - befristet | SmartRecruiters",
+    "title": "Sales Controller (w/m/div.) - befristet",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/4.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161530219",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161530219",
+    "fetched_at": "2026-11-14T17:15:10+00:00",
+    "document_title": "Bosch Group French Speaker | Backoffice Specialist | SmartRecruiters",
+    "title": "French Speaker | Backoffice Specialist",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/5.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161510719",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161510719",
+    "fetched_at": "2026-11-14T17:15:21+00:00",
+    "document_title": "Bosch Group CHASSIS ELETRONICS ENGINERR JR (36597) - BETIM/MG | SmartRecruiters",
+    "title": "CHASSIS ELETRONICS ENGINERR JR (36597) - BETIM/MG",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/6.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161504420",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161504420",
+    "fetched_at": "2026-11-14T17:15:31+00:00",
+    "document_title": "Bosch Group Junior Managers Program (Trainee) - Start your Leadership Journey in HR Tech, Digitalization and GenAI | SmartRecruiters",
+    "title": "Junior Managers Program (Trainee) - Start your Leadership Journey in HR Tech, Digitalization and GenAI",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/7.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161505048",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161505048",
+    "fetched_at": "2026-11-14T17:15:41+00:00",
+    "document_title": "Bosch Group Junior Managers Program (Trainee) - Starte deine Leadership Journey im Bereich Supply Chain Management | SmartRecruiters",
+    "title": "Junior Managers Program (Trainee) - Starte deine Leadership Journey im Bereich Supply Chain Management",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/8.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161494179",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161494179",
+    "fetched_at": "2026-11-14T17:15:52+00:00",
+    "document_title": "Bosch Group Territory Sales Manager (Pro Channel) - Oklahoma - Diablo Tools | SmartRecruiters",
+    "title": "Territory Sales Manager (Pro Channel) - Oklahoma - Diablo Tools",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/9.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161476996",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161476996",
+    "fetched_at": "2026-11-14T17:16:03+00:00",
+    "document_title": "Bosch Group Praktikum im Bereich Human Resources / Talent Acquisition & Development | SmartRecruiters",
+    "title": "Praktikum im Bereich Human Resources / Talent Acquisition & Development",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/10.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161473340",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161473340",
+    "fetched_at": "2026-11-14T17:16:13+00:00",
+    "document_title": "Bosch Group MID-LEVEL - TECHNICAL CONSULTANT - HCM (ABAP & FIORI) - 36512 | SmartRecruiters",
+    "title": "MID-LEVEL - TECHNICAL CONSULTANT - HCM (ABAP & FIORI) - 36512",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/11.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161461055",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161461055",
+    "fetched_at": "2026-11-14T17:16:23+00:00",
+    "document_title": "Bosch Group Operations & Customer Data Coordinator (Baltics) | SmartRecruiters",
+    "title": "Operations & Customer Data Coordinator (Baltics)",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  },
+  {
+    "file": "smartrecruiters/12.html.gz",
+    "platform": "smartrecruiters",
+    "board": "BoschGroup",
+    "site": "jobs.smartrecruiters.com",
+    "url": "https://jobs.smartrecruiters.com/BoschGroup/744000161444639",
+    "requested_url": "https://jobs.smartrecruiters.com/BoschGroup/744000161444639",
+    "fetched_at": "2026-11-14T17:16:33+00:00",
+    "document_title": "Bosch Group Werkstudent Data Engineering & Backend (w/m/div.) | SmartRecruiters",
+    "title": "Werkstudent Data Engineering & Backend (w/m/div.)",
+    "company": "Bosch Group",
+    "accept": {},
+    "checked_by": "scripts/fetch_postings.py cross-check of independent sources (listing API, JSON-LD, visible headings, <title>/og meta); the one disagreement was read and resolved by the W5 builder (an AI agent, not a human) from those sources and is listed in `notes`",
+    "method": {
+      "title": "listing API title == visible heading",
+      "company": "listing API company"
+    },
+    "checks": {
+      "title_api_eq_jsonld": false,
+      "title_api_in_headings": true,
+      "title_in_visible_text": true,
+      "company_in_page": true,
+      "company_in_title_or_meta": true
+    },
+    "notes": [
+      "trap: other h1 on the page: ['Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters']"
+    ]
+  }
+]

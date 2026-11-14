@@ -553,7 +553,13 @@ Extension (`extension/`, Chrome MV3): command `send-page` (default `Alt+Shift+P`
 ## V12. Proof (W5)
 
 `fixtures/postings/answer_key.json`: `[{file, platform, site, url, fetched_at, title, company}]`, pages as
-`fixtures/postings/<platform>/<n>.html.gz` (rendered DOM). `bench/v2/results.json`:
+`fixtures/postings/<platform>/<n>.html.gz` (rendered DOM). Additive (W5): each entry also has `board`, `requested_url`,
+`document_title` (send it as the page `title`, as the extension would), `accept: {field: [other accepted spellings]}`
+(empty unless stated), `method: {title, company}` (how each value was decided), `checks: {name: bool}` (which
+independent sources agreed), `notes` (resolved disagreements and `trap:` lines: page chrome or escaped JSON-LD a
+learned reader could pick) and `checked_by`. Provenance: `plan.json` (listing calls) and `fetch_log.json` (renders).
+Platforms: lever, greenhouse (job-boards.greenhouse.io), greenhouse_branded (careers.airbnb.com), ashby,
+smartrecruiters; 12 each. `bench/v2/results.json`:
 `{postings: [{n, file, site, label, ai_calls, seconds, correct}], series: {patchwork_cumulative_ai_calls: [...],
 browser_agent_cumulative_ai_calls: [...]}, numbers: [{name, value, unit, kind, source}]}` with `kind` ∈
 `measured | measured (earlier run) | estimate | extrapolated | not measured` as in v1.
