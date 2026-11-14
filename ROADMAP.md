@@ -11,7 +11,7 @@ Derived from *Patchwork-plus: Technical Plan* (Nov 13, 2026). Hours are on the 3
 | **1. MVP: the spine** | 0–12 | **H12: 100 records, 0 LLM calls**; Break 1 *detected* | ✅ done |
 | **2. BUILD loop** | 12–20 | **H20: record → spec → code → run, live** | ✅ done |
 | **3. REPAIR loop** | 20–28 | **H28: Break 1 repaired with approval** | ✅ done (+ Break 2) |
-| 4. Benchmarks & hardening | 28–32 | Benchmark page, Break 2 (stretch) | Break 2 ✅, `make smoke` ✅; benchmark page next |
+| 4. Benchmarks & hardening | 28–32 | Benchmark page, Break 2 (stretch) | ✅ Break 2, `make smoke`, `make bench` + Benchmark tab; manual/computer-use still estimates until timed |
 | 5. Freeze & rehearse | 32–36 | Code freeze H32, 5 rehearsals, backup video, Devpost | |
 
 ---
@@ -85,8 +85,12 @@ Tool → MVP function mapping (already built, so agents get guardrails for free)
 
 ## Phase 4: Benchmarks & hardening (H28–32)
 
-- [ ] D1: benchmark runs: manual (time 5, extrapolate), computer-use agent (run 5, extrapolate), Patchwork (measured on 100). Label every extrapolation
-- [ ] D4: benchmark page: break-even chart, share of breaks caught before any bad write, repair time; slides
+- [x] D1: benchmark runs: Patchwork measured on 100 (`make bench` -> `bench/results.json`, every number labelled `measured | measured (earlier run) | extrapolated | estimate | not measured` with a source)
+- [x] Baseline: a one-shot script written by a fresh Claude session from one prompt (`bench/baseline_prompt.md` -> `bench/baseline_script.py`), run through the same scenario and scored against ground truth
+- [ ] D1: manual (time 5, extrapolate): `python -m bench.stopwatch manual` is ready; until someone runs it, results.json uses a labelled 1 min/record estimate
+- [ ] D1: computer-use agent (run 5, extrapolate): no API key, so a labelled 3 min/record estimate citing OSWorld-Human (arXiv:2506.16042); `python -m bench.stopwatch computer_use` records real runs
+- [x] D4: benchmark page (web console tab 6, `GET /api/bench/results`): break-even chart, breaks caught before any bad write, repair time, all numbers with their kind
+- [ ] D4: slides
 - [x] D2: hardening (store migration/lock races, run-busy race, reset cancels agent threads, stale-run recovery on restart). Live-demo fallback: `PATCHWORK_AGENT=scripted` runs both breaks with no model
 - [x] D3: Break 2: new parser with `combine: product` (`multiply` only takes a constant, and units per case vary), case math confirmed with the user, warehouse asked when routing by supplier
 
