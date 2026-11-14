@@ -205,6 +205,9 @@ def deploy(name: str, version: int, *, store: Store | None = None, resolve_incid
         raise DeployRefused(f"{name} v{version}: tests have not passed on this version")
     previous = store.active_version(name)
     store.set_active(name, version)
+    from control import drafts
+
+    drafts.mark_live(name)  # a wizard draft becomes live once a version is deployed
     resolved = store.resolve_incidents(name, version) if resolve_incidents else []
     return {"name": name, "active_version": version, "previous_version": previous, "resolved_incidents": resolved}
 

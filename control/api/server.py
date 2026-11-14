@@ -18,8 +18,8 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from control import ops
-from control.api import credentials, demo, pages, recordings, sse
+from control import drafts, ops
+from control.api import credentials, demo, drafts as drafts_api, pages, recordings, sse
 from control.api.runs import CredentialMissing, RunManager, RunStartError
 from control.api.settings import Settings, load_dotenv
 from control.autorun import AutoRunner, Busy
@@ -343,7 +343,7 @@ def agent_resume(thread_id: str, body: ResumeRequest, request: Request) -> dict[
 
 @api.get("/integrations")
 def integrations() -> list[dict[str, Any]]:
-    return ops.list_integrations()
+    return drafts.annotate(ops.list_integrations())
 
 
 @api.get("/integrations/{name}")
@@ -581,4 +581,5 @@ def create_app(*, agent: Any | None = None, dotenv: bool = True) -> FastAPI:
     app.include_router(demo.router)
     app.include_router(pages.router)
     app.include_router(credentials.router)
+    app.include_router(drafts_api.router)
     return app

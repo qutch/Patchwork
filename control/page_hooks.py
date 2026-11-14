@@ -98,6 +98,10 @@ class PageHooks:
         return False
 
     def maybe_learn(self, name: str, page_ids: list[str]) -> list[str]:
+        from control import drafts
+
+        if drafts.is_waiting(name):
+            return []  # a wizard draft is not live: its pages wait until it is taught and deployed
         if not page_ids or not self.ai_enabled():
             return []  # AI off: the rows stay held (PARSE_NO_MATCH); turning AI on and replaying learns them
         agent = self.get_agent()

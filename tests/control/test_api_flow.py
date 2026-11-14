@@ -31,7 +31,8 @@ def test_full_flow_through_the_api(api, apps, monkeypatch):
     assert "deployed" in [e["event"] for e in rest] and rest[-1]["data"]["state"] == "done"
 
     [integ] = api.get("/api/integrations").json()
-    assert integ == {"name": NAME, "active_version": 1, "latest_version": 1, "open_incidents": 0}
+    assert integ == {"name": NAME, "active_version": 1, "latest_version": 1, "open_incidents": 0,
+                     "state": "live"}
 
     # Run 100 with live progress (paced so several progress snapshots are visible)
     monkeypatch.setenv("PATCHWORK_RUN_PACE_MS", "15")
