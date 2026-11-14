@@ -12,7 +12,8 @@ Human-in-the-loop: `ask_user` and `request_deploy` are tools that call `Threaded
 which emits the event and blocks this agent thread until the control plane calls `resume`. See
 agents/README.md for why this beats LangGraph `interrupt()` + `interrupt_on` here.
 
-Models: PATCHWORK_MODEL (primary) and PATCHWORK_MODEL_FALLBACK via ChatOpenRouter, with a shared rate
+Models: PATCHWORK_MODEL (primary) and PATCHWORK_MODEL_FALLBACK via ChatOpenRouter, or ChatAnthropic for
+`anthropic:claude-...` / `claude-...` ids (e.g. anthropic:claude-haiku-5-5), with a per-provider rate
 limiter, backoff on 429/timeouts/5xx, then a sticky switch to the fallback (`ResilientModelMiddleware`).
 """
 
@@ -79,23 +80,43 @@ LEARN_WRITABLE = ["/spec.yaml"]
 
 # ---- models --------------------------------------------------------------------------------
 
-_RATE_LIMITER = None
+_RATE_LIMITERS: dict[str, Any] = {}
+# requests/second per provider: OpenRouter's free tier caps at 20/min (0.3 rps = 18/min); Anthropic's paid API does not
+_DEFAULT_RPS = {"openrouter": "0.3", "anthropic": "4"}
 
 
-def _rate_limiter():
-    global _RATE_LIMITER
-    if _RATE_LIMITER is None:
+def _rate_limiter(provider: str = "openrouter"):
+    if provider not in _RATE_LIMITERS:
         from langchain_core.rate_limiters import InMemoryRateLimiter
-        rps = float(os.environ.get("PATCHWORK_MODEL_RPS", "0.3"))  # 18/min, under OpenRouter's 20/min free cap
-        _RATE_LIMITER = InMemoryRateLimiter(requests_per_second=rps, check_every_n_seconds=0.1, max_bucket_size=2)
-    return _RATE_LIMITER
+        env = "PATCHWORK_MODEL_RPS" if provider == "openrouter" else f"PATCHWORK_{provider.upper()}_RPS"
+        rps = float(os.environ.get(env, _DEFAULT_RPS[provider]))
+        _RATE_LIMITERS[provider] = InMemoryRateLimiter(requests_per_second=rps, check_every_n_seconds=0.1,
+                                                       max_bucket_size=2)
+    return _RATE_LIMITERS[provider]
+
+
+def anthropic_model_id(name: str) -> str | None:
+    """`anthropic:claude-haiku-5-5` or a bare `claude-...` id -> the Anthropic model id; anything else -> None
+    (an OpenRouter id such as `particle-ai/particle-1:free`)."""
+    if name.startswith("anthropic:"):
+        return name.split(":", 1)[1]
+    return name if name.startswith("claude-") else None
 
 
 def make_model(name: str) -> BaseChatModel:
+    timeout_s = float(os.environ.get("PATCHWORK_MODEL_TIMEOUT_S", "120"))
+    claude = anthropic_model_id(name)
+    if claude:
+        # Anthropic API (ANTHROPIC_API_KEY from .env). No temperature: current Claude models reject sampling
+        # params. Effort defaults to low: the agent's steps are short tool calls, and the code checks in the
+        # tools (not the model's thinking) decide what may be written.
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(model=claude, max_tokens=16000, max_retries=0, rate_limiter=_rate_limiter("anthropic"),
+                             default_request_timeout=timeout_s,
+                             output_config={"effort": os.environ.get("PATCHWORK_MODEL_EFFORT", "low")})
     from langchain_openrouter import ChatOpenRouter
     return ChatOpenRouter(model=name, temperature=0, max_retries=0, rate_limiter=_rate_limiter(),
-                          timeout=int(float(os.environ.get("PATCHWORK_MODEL_TIMEOUT_S", "120")) * 1000),
-                          app_title="Patchwork")
+                          timeout=int(timeout_s * 1000), app_title="Patchwork")
 
 
 def is_retryable(exc: BaseException) -> bool:

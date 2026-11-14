@@ -70,11 +70,13 @@ DEMO_FORM_URL ?= https://docs.google.com/forms/d/e/1FAIpQLSeJSRbMx1pr9nMwj4n1E5v
 DEMO_SHEET_CSV ?= https://docs.google.com/spreadsheets/d/1sEDvJMO4sQN3RJxo1JKFqqfrDfQTjZrNL2Ztlz0j60M/gviz/tq?tqx=out:csv&sheet=Form%20Responses%201
 STAGE_PORT ?= 38091
 STAGE_AGENT ?= deep
+# The model comes from PATCHWORK_MODEL / PATCHWORK_MODEL_FALLBACK (shell, else .env), e.g.
+# PATCHWORK_MODEL=anthropic:claude-haiku-5-5 with ANTHROPIC_API_KEY in .env; or STAGE_MODEL=... on the make line.
+STAGE_MODEL ?=
 .PHONY: stage-v2 web-stage smoke-v2-stage
 stage-v2:
 	PATCHWORK_WORKSPACE=$(CURDIR)/workspace-v2 PATCHWORK_AGENT=$(STAGE_AGENT) \
-	PATCHWORK_MODEL=$${PATCHWORK_MODEL:-particle-ai/particle-1:free} \
-	PATCHWORK_MODEL_FALLBACK=$${PATCHWORK_MODEL_FALLBACK:-nvidia/nemotron-3-ultra-550b-a55b:free} \
+	$(if $(STAGE_MODEL),PATCHWORK_MODEL=$(STAGE_MODEL)) \
 	PATCHWORK_AI_ENABLED=1 $(PY) -m control.api --port $(STAGE_PORT)
 
 web-stage:

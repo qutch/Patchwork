@@ -185,3 +185,24 @@ def test_rate_limited_primary_falls_back(apps, workspace):
     assert fallback.remaining == 0
     texts = [e["text"] for e in svc.events(tid) if e["type"] == "message"]
     assert any("switching to fallback-fake" in x for x in texts) and "hello from the fallback" in texts
+
+
+def test_make_model_routes_claude_ids_to_anthropic(monkeypatch):
+    """`anthropic:claude-...` / `claude-...` -> ChatAnthropic (no temperature, low effort, own rate limiter);
+    everything else stays on OpenRouter. Offline: building the client makes no request."""
+    from langchain_anthropic import ChatAnthropic
+
+    from agents import deep
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-a-key")
+    monkeypatch.setattr(deep, "_RATE_LIMITERS", {})
+    assert deep.anthropic_model_id("anthropic:claude-haiku-5-5") == "claude-haiku-5-5"
+    assert deep.anthropic_model_id("claude-haiku-5-5") == "claude-haiku-5-5"
+    assert deep.anthropic_model_id("particle-ai/particle-1:free") is None
+    m = deep.make_model("anthropic:claude-haiku-5-5")
+    assert isinstance(m, ChatAnthropic) and m.model == "claude-haiku-5-5"
+    assert m.temperature is None and m.output_config == {"effort": "low"} and m.max_retries == 0
+    assert m.rate_limiter is deep._RATE_LIMITERS["anthropic"]
+    o = deep.make_model("particle-ai/particle-1:free")
+    assert not isinstance(o, ChatAnthropic) and o.rate_limiter is deep._RATE_LIMITERS["openrouter"]
+    assert deep._RATE_LIMITERS["anthropic"].requests_per_second > deep._RATE_LIMITERS["openrouter"].requests_per_second
