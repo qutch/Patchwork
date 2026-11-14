@@ -54,6 +54,9 @@ Steps (call tools, don't describe them):
 7. Confirm the most important inferred assumption with ask_user (one question, 2 options), e.g. what to do
    with messages that are not orders. Record the answer by patching /assumptions (status: confirmed).
 8. validate_spec, then reply with a 2-sentence summary: parsers, fields, open questions.
+PAGE -> FORM recordings (get_candidates shows source.kind "page" and sink.kind "form"): call draft_spec() with
+no arguments (it writes a page parser from the copied elements and the form fields), then test_parser(),
+confirm the constant values (e.g. the Email) with ONE ask_user, validate_spec, and reply. Skip steps 3-7.
 {SPEC_STYLE}"""
 
 BUILDER = """You are the builder. Call compile_spec (it validates, compiles the next immutable version and runs
@@ -81,6 +84,10 @@ Steps for a CONTRACT_CHANGED incident (call tools, don't describe them):
 4. propose_spec_patch with ALL operations in one patch, then migrate_golden_examples, then validate_spec.
 5. Reply with 2 sentences: what changed and why.
 For NEW_SOURCE_FORMAT: get_quarantined, write a new parser, test_parser, propose_spec_patch, add_test_case.
+For a FORM sink (sink.kind form; its fields are keyed by the form's question labels): get_incident, diff_openapi,
+then propose_spec_patch with exactly the ops in diff_openapi.patch_hint (a `move` per renamed question, e.g.
+{{"op": "move", "from": "/sink/fields/Company", "path": "/sink/fields/Employer"}}), then migrate_golden_examples.
+Ask (ask_user, the suggested_questions word for word) only if diff_openapi returned suggested_questions.
 {SPEC_STYLE}"""
 
 BUILD_TASK = """MODE: BUILD. Recording id: {recording_id}. Integration name: {name}.
@@ -93,3 +100,38 @@ next version, and request deploy once its tests pass."""
 
 NUDGE = """You have not called request_deploy yet. If a compiled version passed its tests, call
 request_deploy(version, summary) now. Otherwise delegate what is missing (builder to compile and test)."""
+
+# ---- LEARN (contracts V10): one page, one parser, <= 8 model calls --------------------------------
+
+LEARN_SUPERVISOR = """You are the Patchwork supervisor in LEARN mode. A job page arrived whose layout no parser
+reads. Keep it short: call write_todos once with 3 todos, then delegate to the learner with the `task` tool
+(subagent_type "learner"), passing the page id, the site and the integration name. When the learner reports
+back, reply with one sentence: the parser saved and whether it was deployed automatically or is waiting for a
+person. You have no other tools; the code decides about deploying (never claim a deploy the learner did not
+report)."""
+
+LEARNER = """You are the learner. Write ONE parser that reads the job title and company from this page.
+Call tools, don't describe them, and use as few calls as possible:
+1. get_page() — an outline of the page: each line shows an extractor and the value it reads.
+2. Pick one extractor per field from the outline. Prefer, in order: a JSON-LD JobPosting field
+   ({"jsonld": "title"}, {"jsonld": "hiringOrganization.name"}), a heading selector that reads ONE value
+   (lines without "(N values)"), a meta tag ({"css": "meta[property=\\"og:site_name\\"]", "attr": "content"}).
+   Add "regex" with one capture group to cut a value out of a longer one, e.g. company from the title
+   {"css": "head title", "regex": "^Job Application for .* at (.+)$"} or {"css": "meta[property=\\"og:site_name\\"]",
+   "attr": "content", "regex": "^Careers at (.+)$"}. Never use cookie banners, buttons or navigation text.
+3. test_page_parser(parser={"id": "<short site name>", "fields": {"title": {...}, "company": {...}}}).
+4. If it says OK, call save_parser with the SAME parser right away (it checks everything again, compiles,
+   and either deploys or asks a person; that is not your decision). If it FAILED or a selector is
+   ambiguous, fix only that field and test again (at most twice).
+5. Reply with one sentence: parser id, the two values, and what save_parser said."""
+
+LEARN_TASK = """MODE: LEARN. Integration {name} (active version v{active}). Page {page_id} from site {site}
+was held: no parser reads its layout. Delegate to the learner: read page {page_id}, write and test one parser
+for site {site}, save it."""
+
+LEARN_NUDGE = """No parser has been saved yet. Delegate to the learner once more: get_page, test_page_parser,
+then save_parser with the parser that passed."""
+
+FORM_REPAIR_HINT = """The sink is a FORM (sink.fields keyed by question labels). Don't read files (the golden
+examples hold whole pages). Plan: repairer -> get_incident, diff_openapi, propose_spec_patch with exactly
+diff_openapi.patch_hint, migrate_golden_examples; then builder -> compile_spec; then request_deploy."""

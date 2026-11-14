@@ -580,6 +580,40 @@ LEARN `done.result`: `{model_calls, seconds, page_id, parser_id, site, version, 
 - TEACH from a page→form recording (`start_build(recording_id, name)`) uses V11 candidates and produces a spec shaped as V7
   with one parser (`origin.kind: taught`).
 
+**Details fixed while building W3 (additive):**
+- Thread status rows add `integration` (BUILD: the requested name or null; LEARN: the integration).
+- LEARN tools (`agents/deep_tools.py`, plain functions in `tool_functions(ctx)`, no langchain import, so the scripted
+  agent calls the same code): `get_page(page_id?)` (outline + the fields every parser must extract), `test_page_parser(parser)`
+  (run + evidence + corroboration + ambiguity; emits `evidence`), `save_parser(parser, reason)`. `save_parser` only works
+  on the thread's own page, defaults `match` to `{site: <page site>}`, refuses a field set different from the active
+  parsers', an existing parser id, a `match`/`fingerprint` that doesn't fit the page, and any value without evidence (no
+  compile). It seeds a golden example from the page, compiles, and applies D2 itself.
+- Ambiguity is asked by `save_parser` (code), once per field: `ask_user` "Which is the <field> on this page (<site>)?"
+  with the distinct values + "None of these". An answer that differs from the parser's value → `REFUSED` (fix the
+  selector). A field asked about still counts as ambiguous for D2 (a person approves).
+- Corroboration: matches are whole words; a source longer than 200 chars (e.g. `og:description`, JSON-LD
+  `description`) only counts on an exact match, so the posting body can't corroborate itself.
+- Evidence `where: "html"` covers attribute values and the `<title>` text. Content hidden from visitors (`noscript`,
+  `script`, `template`) is not visible text.
+- `learned` events: auto path → one event (`approval: auto`, `deployed: true`) right after the deploy and before
+  `deployed`; ask path → `approval: pending` before `request_deploy`, then `approval: human` with the outcome.
+  The parser's `origin.approved_by` is `auto` or `human` accordingly (a rejected version keeps `human`, never deployed).
+- `learn_policy` is read from `$PATCHWORK_WORKSPACE/settings.json` (`"auto"` default); an unknown value counts as `"approve"`.
+- For page integrations (`source.base_url: patchwork://control`) the agent never replays after `deployed` (LEARN or
+  REPAIR): the control plane does (V9). LEARN's filesystem allows writing `/spec.yaml` only.
+- TEACH page→form (`draft_spec` on V11 candidates): parser id from the site (`jobs.lever.co` → `lever`,
+  `careers.airbnb.com` → `airbnb`), `match: {site}`, no fingerprint, `origin: {kind: taught, approved_by: null}`;
+  `extract.route_by: site`; a mapping without a selector uses its first css/jsonld `alternatives` entry; field names
+  `Job Title` → `title`, `Company` → `company` (else a slug of the label); `validate: required` per page field; one
+  golden example built from the snapshot (record.* values from the record, page values as recorded). `start_build`
+  without a name builds `jobs_to_tracker` when the candidates are page→form. Until W2's `fixtures/recording_jobs/`
+  lands, `fixture-jobs` falls back to `fixtures/agent_candidates_jobs.json` (V11 shape, snapshot `fixtures/pages/lever-1.html`).
+- REPAIR on a form: `diff_openapi` pairs renames (name similarity, feeding field, then a unique same-type pair), returns
+  `patch_hint` (the `move` ops on `/sink/fields`) and `suggested_questions` only for questions it couldn't pair
+  ("The form question 'X' is gone. Which new question replaces it?", options = unpaired new labels + "None: stop sending it").
+  `propose_spec_patch` refuses ops on `/sink/url`, `/sink/kind`, `/source/kind` (as for base URLs). Golden bodies of
+  form specs are strings. Dry runs of form versions need no staging URL.
+
 ## V11. Capture (W2): page snapshots, element paths, page→form candidates, extension
 
 Recorder: every `copy` event adds `el.path` (a stable CSS path: `#id` if unique, else tag + stable classes with

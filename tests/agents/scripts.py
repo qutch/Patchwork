@@ -85,3 +85,30 @@ def repair_script(answer_by_supplier: bool = True) -> list:
         turn(call("request_deploy", version=2, summary="Adapt to Stockroom contract v2.")),
         turn(text="v2 deployed."),
     ]
+
+
+# ---- v2: LEARN (careers.airbnb.com, a branded Greenhouse page) -----------------------------------
+
+AIRBNB = {"id": "airbnb", "fields": {"title": {"css": "h1"},
+                                     "company": {"css": 'meta[property="og:site_name"]', "attr": "content",
+                                                 "regex": "^Careers at (.+)$"}}}
+LEARN_TODOS = [{"content": "Read the held page", "status": "in_progress"},
+               {"content": "Write and test a parser", "status": "pending"},
+               {"content": "Save it (code decides on deploy)", "status": "pending"}]
+
+
+def learn_script(page_id: str = "pg-000005", parser: dict | None = None) -> list:
+    parser = parser or AIRBNB
+    return [
+        # supervisor
+        turn(call("write_todos", todos=LEARN_TODOS)),
+        turn(call("task", subagent_type="learner",
+                  description=f"Learn page {page_id} (site careers.airbnb.com) for jobs_to_tracker")),
+        # learner
+        turn(call("get_page")),
+        turn(call("test_page_parser", parser=parser)),
+        turn(call("save_parser", parser=parser, reason="branded Greenhouse careers site")),
+        turn(text="Saved parser airbnb (title from h1, company from og:site_name); deployed automatically."),
+        # supervisor
+        turn(text="Learned careers.airbnb.com: parser airbnb, deployed automatically after every check passed."),
+    ]

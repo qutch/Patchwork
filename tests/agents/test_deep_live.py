@@ -115,3 +115,70 @@ def test_live_repair_only(apps, workspace, svc):
         time.sleep(0.05)
     assert ops.run_sandboxed("po_to_stockroom")["status"] == "completed"
     repair_and_check(svc, apps)
+
+
+# ---- v2: LEARN and form REPAIR (W1's compiler stood in by FakeEngine; the model is real) ----------
+
+def drive_v2(svc, tid, expected: dict | None = None, timeout=900):
+    """A person: answers ambiguity questions with the expected value, approves deploys whose tests passed."""
+    deadline, answered = time.time() + timeout, set()
+    while time.time() < deadline:
+        s = svc.status(tid)
+        if s["state"] in ("done", "failed"):
+            return s
+        p = s.get("pending")
+        if s["state"] == "waiting" and p and p["interrupt_id"] not in answered:
+            answered.add(p["interrupt_id"])
+            if p["type"] == "ask_user":
+                opts = p.get("options") or []
+                want = next((v for k, v in (expected or {}).items() if k in p["question"].lower()), None)
+                ans = want if want in opts else (opts[0] if opts else "Yes")
+                print(f"\n  ASK {p['question']!r} -> {ans!r}", flush=True)
+                svc.resume(tid, p["interrupt_id"], {"answer": ans})
+            else:
+                ok = bool(p["tests"]["passed"])
+                print(f"\n  DEPLOY v{p['version']} ({p['summary'][:160]!r}) -> {'approve' if ok else 'reject'}", flush=True)
+                svc.resume(tid, p["interrupt_id"], {"decision": "approve" if ok else "reject", "comment": ""})
+        time.sleep(0.2)
+    raise AssertionError(f"timeout: {svc.status(tid)}")
+
+
+@pytest.mark.parametrize("name,platform", [("greenhouse_branded-1", "greenhouse_branded"), ("greenhouse-1", "greenhouse")])
+def test_live_learn(workspace, monkeypatch, svc, name, platform):
+    from tests.agents.jobs import INDEX, FakeEngine, active_spec, golden, jobs_spec, page
+    engine = FakeEngine().install(monkeypatch)
+    rec = engine.add_page(page(name, seq=5))
+    others = ("lever", "ashby") if platform == "greenhouse" else ("lever", "greenhouse", "ashby")
+    engine.deploy_baseline(jobs_spec(others), [golden("ashby-1")])
+    t0 = time.time()
+    tid = svc.start_learn(rec["id"])
+    s = drive_v2(svc, tid, INDEX[name]["expected"])
+    end = report(svc, tid, f"LEARN {name} {time.time() - t0:.0f}s")
+    assert s["state"] == "done", end
+    result = end["result"]
+    print(f"\n  LEARN {name}: {result['model_calls']} model calls, {result['seconds']} s, approval={result['approval']}, "
+          f"calls_by_model={result.get('calls_by_model')}")
+    assert result["deployed"] is True and result["site"] == rec["site"]
+    assert result["model_calls"] <= 12
+    from agents.learn import run_page_parser
+    parser = next(p for p in active_spec()["extract"]["parsers"] if p["id"] == result["parser_id"])
+    assert run_page_parser(parser, rec) == INDEX[name]["expected"]
+    # the learned reader also reads the platform's other page (a layout is a template)
+    sibling = name[:-1] + "2"
+    assert run_page_parser(parser, page(sibling)) == INDEX[sibling]["expected"]
+
+
+def test_live_form_repair(workspace, monkeypatch, svc):
+    from tests.agents.jobs import FakeEngine, active_spec, golden, jobs_spec, open_form_incident
+    engine = FakeEngine().install(monkeypatch)
+    engine.deploy_baseline(jobs_spec(), [golden("ashby-1"), golden("greenhouse-1")])
+    inc = open_form_incident({"Company": "Employer"}, required=("Email", "Employer"))
+    t0 = time.time()
+    rid = svc.start_repair(inc)
+    s = drive_v2(svc, rid)
+    end = report(svc, rid, f"FORM REPAIR {time.time() - t0:.0f}s")
+    assert s["state"] == "done", end
+    print(f"\n  FORM REPAIR: {end['result']['model_calls']} model calls, {end['result']['seconds']} s")
+    assert end["result"]["deployed"] is True
+    fields = active_spec()["sink"]["fields"]
+    assert "Company" not in fields and fields["Employer"] == {"from": "company"}

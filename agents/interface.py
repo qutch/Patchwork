@@ -24,7 +24,7 @@ from typing import Any, Callable, Literal, Protocol
 
 from runner.store import workspace_dir
 
-Mode = Literal["build", "repair"]
+Mode = Literal["build", "repair", "learn"]
 ThreadState = Literal["running", "waiting", "done", "failed"]
 
 # Event types and their payload keys (all events also carry seq, t, thread_id, type):
@@ -43,7 +43,12 @@ EVENT_TYPES = {
     "deployed": ["name", "version", "previous_version"],
     "done": ["result"],
     "error": ["message"],
+    # v2 (contracts V10). UIs ignore types they don't know.
+    "evidence": ["page_id", "parser_id", "fields", "ok"],  # fields: [{name, value, ok, where, extractor}]
+    "learned": ["integration", "parser_id", "site", "version", "deployed", "approval", "reason"],  # auto|human|pending
 }
+
+DEFAULT_PAGE_INTEGRATION = "jobs_to_tracker"
 
 
 def now() -> str:
@@ -51,8 +56,9 @@ def now() -> str:
 
 
 class AgentService(Protocol):
-    def start_build(self, recording_id: str) -> str: ...
+    def start_build(self, recording_id: str, name: str | None = None) -> str: ...
     def start_repair(self, incident_id: int) -> str: ...
+    def start_learn(self, page_id: str, integration: str = DEFAULT_PAGE_INTEGRATION) -> str: ...  # "learn-<hex>"
     def events(self, thread_id: str, after: int = 0) -> list[dict[str, Any]]: ...
     def status(self, thread_id: str) -> dict[str, Any]: ...
     def resume(self, thread_id: str, interrupt_id: str, payload: dict[str, Any]) -> None: ...
@@ -72,7 +78,8 @@ class ThreadCancelled(BaseException):
 class _Thread:
     id: str
     mode: Mode
-    subject: str  # recording id or incident id
+    subject: str  # recording id, incident id or page id
+    integration: str | None = None  # BUILD: the requested name (None = the service default); LEARN: the integration
     state: ThreadState = "running"
     events: list[dict[str, Any]] = field(default_factory=list)
     pending: dict[str, Any] | None = None  # the open ask_user / request_deploy event
@@ -96,11 +103,16 @@ class ThreadedAgentService:
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
 
     # ---- public API --------------------------------------------------------------------
-    def start_build(self, recording_id: str) -> str:
-        return self._start("build", recording_id, lambda t: self._run_build(t, recording_id))
+    def start_build(self, recording_id: str, name: str | None = None) -> str:
+        return self._start("build", recording_id, lambda t: self._run_build(t, recording_id), integration=name)
 
     def start_repair(self, incident_id: int) -> str:
         return self._start("repair", str(incident_id), lambda t: self._run_repair(t, int(incident_id)))
+
+    def start_learn(self, page_id: str, integration: str = DEFAULT_PAGE_INTEGRATION) -> str:
+        """LEARN: one page whose layout no parser reads -> a checked parser (contracts V10)."""
+        return self._start("learn", page_id, lambda t: self._run_learn(t, page_id, integration),
+                           integration=integration)
 
     def events(self, thread_id: str, after: int = 0) -> list[dict[str, Any]]:
         t = self._threads.get(thread_id)
@@ -118,7 +130,7 @@ class ThreadedAgentService:
             evs = self.events(thread_id)  # raises KeyError if unknown
             last_state = next((e["state"] for e in reversed(evs) if e["type"] == "status"), "done")
             return {"thread_id": thread_id, "state": last_state, "pending": None, "last_seq": len(evs)}
-        return {"thread_id": t.id, "mode": t.mode, "subject": t.subject, "state": t.state,
+        return {"thread_id": t.id, "mode": t.mode, "subject": t.subject, "integration": t.integration, "state": t.state,
                 "pending": t.pending, "last_seq": len(t.events), "created_at": t.created_at}
 
     def resume(self, thread_id: str, interrupt_id: str, payload: dict[str, Any]) -> None:
@@ -205,9 +217,9 @@ class ThreadedAgentService:
         t.state = state
         self.emit(t, "status", state=state, mode=t.mode)
 
-    def _start(self, mode: Mode, subject: str, body: Callable[[_Thread], Any]) -> str:
+    def _start(self, mode: Mode, subject: str, body: Callable[[_Thread], Any], integration: str | None = None) -> str:
         tid = f"{mode}-{uuid.uuid4().hex[:10]}"
-        t = _Thread(id=tid, mode=mode, subject=subject)
+        t = _Thread(id=tid, mode=mode, subject=subject, integration=integration)
 
         def run() -> None:
             try:
@@ -233,3 +245,6 @@ class ThreadedAgentService:
 
     def _run_repair(self, t: _Thread, incident_id: int) -> Any:
         raise NotImplementedError
+
+    def _run_learn(self, t: _Thread, page_id: str, integration: str) -> Any:
+        raise NotImplementedError(f"{type(self).__name__} has no LEARN mode")
