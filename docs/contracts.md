@@ -719,3 +719,120 @@ What the harness and `scripts/smoke_v2.py` rely on (W5 reads, others own):
   fixture form on a free port and, after TEACH, **retarget** the taught spec's `sink.url` only (compile, test, deploy
   through `control.ops`, recorded in `results.json` `scenario.retarget`). `POST /api/demo/v2/reset` does not reset the
   fixture form; the smoke calls the form's `/admin/reset` itself.
+
+---
+
+# Part 3: Destinations and generalization (v3, 2026-11-14)
+
+Goal: the demo shows four destinations (Google Form, any labelled HTML form, Airtable, Postgres/SQLite) and integrations
+that are not about jobs. This part covers the first two steps (credentials, Airtable) and the generalization; generic
+HTML forms and SQL come later and will follow V14's shape (a label-keyed sink with an OpenAPI-shaped contract).
+
+Non-negotiable, as before: the runner stays AI-free (stripped env, no model keys, refuses AI modules); never silently
+write a wrong row; every AI-produced value checked by code; v1 (`po_to_stockroom`) and v2 (`jobs_to_tracker` on the
+Google Form) keep working unchanged and every existing test stays green; ports 8000-8003/5180 and 38091 (the owner's
+stage) are never bound, killed or reset; offline fakes in tests, no live model or Airtable calls in the suite.
+
+## Ownership (Part 3)
+
+| Stream | Owns | Must not touch |
+|---|---|---|
+| **A1 credentials** | `control/ops.py` (runner_env), `runner/http.py` (auth on API sinks/sources), `spec/models.py` (`auth` on `ApiSink`/`Source`), `control/api` `GET /api/credentials`, redaction in agent tools and run logs | Airtable files, web/ |
+| **A2 Airtable** | `runner/airtable.py`, `compiler/templates/adapters_airtable.py.j2`, `spec/models.py` (`AirtableSink`), `compiler/compile.py` (sink dispatch), `demo_apps/fake_airtable/`, label-keyed sink support in `agents/` (TEACH/REPAIR), `POST /api/integrations/build` destination option, smoke/bench flags | web/, page routing |
+| **B1 generalize (backend)** | prompts, `agents/learn.py` jsonld types, page→integration routing (`control/pages.py`, `control/api/pages.py`, `control/autorun.py`, extension), tracker API fields, demo endpoints `?integration=`, new validation rules (compiler + learn) | Airtable, credentials, web/ |
+| **B2 generalize (UI)** | `web/` | everything else |
+
+`runner/credentials.py` and `spec.models.Auth` are written by the lead (below) and are the shared base; extend, don't fork.
+
+## V13. Credentials
+
+- A spec names a credential, never a value: `auth: {scheme: bearer, credential: AIRTABLE_TOKEN}` or
+  `{scheme: header, header: X-Api-Key, credential: STOCK_API_KEY}` (`spec.models.Auth`). Names are UPPER_SNAKE_CASE and
+  may not match `runner.credentials.MODEL_KEY` (Anthropic/OpenRouter/OpenAI/LangChain/... keys): validation error.
+- Values live in `.env` (gitignored), loaded by the control plane. `control.ops.runner_env(spec=None)` (A1) adds
+  `PATCHWORK_CRED__<NAME>=<value>` **only for the names the run's spec references**, after the existing secret strip;
+  a missing value → the run fails to start with `credential <NAME> is not set: add <NAME>=... to .env` (no value shown).
+  Generated tests (`run_tests`) never get credentials: they use `runner.testing.FakeHttp`.
+- Runner side: `runner.credentials.get(name)` / `headers(auth)`; `runner/http.py` sends `headers(spec.sink.auth)` on
+  every sink request and `headers(spec.source.auth)` on source requests (config.yaml carries `auth` blocks, no values).
+  401/403 from a sink → `Quarantine("AUTH", "<sink> rejected the credential <NAME> (HTTP 401)")`.
+- Control-plane side (contract fetch for preflight/agents' `read_openapi`): the same `get()` reads the plain env var.
+- Nothing that leaves a process shows a value: run logs, quarantine details, incident payloads, agent tool results and
+  API error responses pass through `runner.credentials.redact(text, names=<credentials the spec references>)`.
+  Contract documents never include auth headers. A test asserts a sentinel token never appears in any of them.
+- `GET /api/credentials` → `[{name, set: bool, used_by: [integration, ...]}]` (never values).
+
+## V14. Airtable sink (`sink.kind: airtable`)
+
+```yaml
+sink:
+  kind: airtable
+  base_id: appXXXXXXXXXXXXXX          # from the base URL airtable.com/appXXXX/tblYYYY/...
+  table: Applications                 # table name or id (tbl...)
+  auth: {scheme: bearer, credential: AIRTABLE_TOKEN}
+  fields:                             # keyed by Airtable field NAME, like form labels; same value vocabulary as body
+    Job Title: {from: title}
+    Company: {from: company}
+    Link: {from: record.canonical_url}
+    Date Applied: {from: record.captured_date}
+  typecast: false
+  verify: {read_back: true}
+```
+
+- API base `https://api.airtable.com/v0`, overridden by `PATCHWORK_AIRTABLE_API_URL` (the fake in tests/smoke).
+- **Contract** (`runner.airtable.fetch_contract(base_id, table, headers)`, also used by `control.ops.fetch_contract`):
+  `GET /v0/meta/bases/{base_id}/tables` → the table by id or exact name → an OpenAPI-shaped doc with one operation
+  `POST /records` (manifest `sink_call`), whose request body schema has one property per **writable** field name,
+  `additionalProperties: false`, no `required`. Types: singleLineText/multilineText/richText/phoneNumber → string;
+  email → string `format: email`; url → string `format: uri`; number/currency/percent/rating/duration → number;
+  checkbox → boolean; date → string `format: date`; dateTime → string `format: date-time`; singleSelect → string `enum`
+  (choice names); multipleSelects → array of enum strings. Computed fields (formula, rollup, lookup, count,
+  autoNumber, createdTime, lastModifiedTime, createdBy, lastModifiedBy, button, multipleRecordLinks, attachments)
+  are omitted. Each property carries `x-airtable-type`. Hash input: names, types, options, never field ids or
+  descriptions, so renaming `Company` → `Employer` changes the hash and `validate_body` reports
+  `body.Company: not accepted by destination (no such property)` exactly like a form (`CONTRACT_CHANGED`).
+- **send**: `POST /v0/{base_id}/{table}` `{"records": [{"fields": body}], "typecast": false}`, paced ≥ 0.22 s apart per
+  base (Airtable: 5 req/s). 200 → record id kept for verify. 422 (`UNKNOWN_FIELD_NAME`, `INVALID_VALUE_FOR_COLUMN`,
+  ...) → `SINK_CONTRACT` with Airtable's error type and message; 401/403 → `AUTH`; 429 → wait 30 s, retry once, then
+  `UNKNOWN`; other ≥ 400 → `UNKNOWN`. Values are sent typed per the contract (number → JSON number, checkbox → bool,
+  date → `YYYY-MM-DD`); a value that does not fit its type is `VALIDATION_FAILED` before any request.
+- **verify** (`read_back: true`): `GET /v0/{base_id}/{table}/{record_id}` and compare every sent field (strings
+  whitespace-normalised, numbers numerically, dates as dates) → mismatch `VERIFY_MISMATCH`.
+- **Dry run**: fetch the contract and validate the body; never POST.
+- **TEACH**: `POST /api/integrations/build {recording_id, name?, destination?: {kind: airtable, base_id, table,
+  credential}}` retargets a page→form recording to Airtable: each recorded form label maps to the Airtable field with
+  the same normalised name; unmatched labels become an `ask_user` in the agent's TEACH, never a guess. `form_url`
+  stays as is.
+- **REPAIR**: label-keyed sinks (`form`, `airtable`) share the form repair path: `diff_openapi` → `patch_hint`
+  (`move /sink/fields/Company → /sink/fields/Employer`) → `migrate_golden_examples` → compile → `request_deploy`.
+  The scripted agent does the same.
+- **Fake**: `demo_apps/fake_airtable` (FastAPI): meta tables, create, get record, `POST /admin/rename {table, from,
+  to}`, `GET /admin/records`, bearer check (`401` on a wrong token), 422 on unknown field names, typed validation.
+  `scripts/smoke_v2.py --sink airtable` runs the 2-minute script against the fake (in-process) or the real base
+  (`PATCHWORK_AIRTABLE_BASE_ID`, `PATCHWORK_AIRTABLE_TABLE`, credential `AIRTABLE_TOKEN`; the rename is by hand, or via
+  the Meta API when the token also has `schema.bases:write`).
+
+## V15. Generalization: integrations that are not about jobs
+
+1. **Prompts and tools are domain-neutral.** LEARN/TEACH prompts name the integration's intent and its fields (from the
+   spec), never "job title and company". `get_page` lists every JSON-LD object type on the page. Readers written by
+   LEARN/TEACH always carry an explicit `jsonld_type`; `save_parser` fills it from the page when missing. The
+   runtime default (`JobPosting` when a spec omits it) is unchanged so compiled packages behave as before.
+2. **Pages go to one integration.** A page record gains `integration` (nullable). `POST /api/pages` accepts optional
+   `integration`; the extension sends the one chosen in its options (dropdown from `GET /api/extension` →
+   `{token, control_url, integrations: [{name, intent}], default_integration}`) and the popup can switch it.
+   `GET /api/pages?since=&integration=X` returns X's pages plus untagged pages when X is the default integration
+   (the first page integration, `jobs_to_tracker` when present); **without** `integration` it returns the default
+   integration's pages (so already-compiled `jobs_to_tracker` specs see exactly what they see today). TEACH writes
+   `params: {since: "{cursor}", integration: <name>}`. A page triggers runs, learns and tracker rows only for its
+   integration.
+3. **Tracker rows are generic.** `/api/tracker` rows gain `fields: {<field>: value}` (every extracted field, spec
+   order) and `field_names` at the top level; `title`/`company` stay for `jobs_to_tracker` (bench, tests). The
+   `VALIDATION_FAILED` explanation names the failing fields.
+4. **Demo endpoints take `?integration=`** (default `jobs_to_tracker`): `/api/demo/v2/reset`, `/save-baseline`,
+   `/api/layouts`, `/api/tracker`.
+5. **New validation rules**: `number` (cast float; optional `min`, `max`), `date` (ISO `YYYY-MM-DD` after the cast or
+   transform), `url` (absolute http/https). Implemented in the compiler's validate template and in LEARN's evidence
+   check (`agents/learn.py _check_rules`), with generated negative tests.
+6. **Default build name** for a page recording: `fixture-jobs` → `jobs_to_tracker` (unchanged); any other recording →
+   a slug of its intent (`Track product prices` → `track_product_prices`) unless `name` is given.
