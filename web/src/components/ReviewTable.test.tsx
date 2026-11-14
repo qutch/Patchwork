@@ -53,6 +53,22 @@ describe("ReviewTable", () => {
     ]);
   });
 
+  it("shows a picked alternative's own preview, or says it is recomputed, never the old value", () => {
+    const rows: ReviewRow[] = [{ ...ROWS[0], alternatives: [{ label: "Open Graph title", values: { p1: "OG Sony", p2: "OG Kindle" } }, "reader: jsonld name"] }];
+    render(<ReviewTable rows={rows} pages={PAGES} onDecide={() => {}} />);
+    expect(screen.getByText("Sony Headphones")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Source for Product"), { target: { value: "alt:0" } });
+    expect(screen.getByText("OG Sony")).toBeTruthy();
+    expect(screen.queryByText("Sony Headphones")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Source for Product"), { target: { value: "alt:1" } });
+    expect(screen.queryByText("Sony Headphones")).toBeNull();
+    expect(screen.getAllByText("recomputed on approve")).toHaveLength(2);
+  });
+
+  it("prefers a label over the raw source", () => {
+    expect(sourceLabel({ css: "h1", label: "the page heading" })).toBe("the page heading");
+  });
+
   it("approves with no edits when nothing changed and nothing needs you", () => {
     const onDecide = vi.fn();
     render(<ReviewTable rows={ROWS.filter((r) => r.status === "checked")} pages={PAGES} onDecide={onDecide} />);

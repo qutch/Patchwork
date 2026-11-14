@@ -153,6 +153,8 @@ export type AgentEvent = EvBase &
 export type ReviewSource = string | Record<string, unknown>;
 export interface ReviewRow {
   dest_field: string;
+  /** a human label for the source, when the backend sends one (preferred over `source`) */
+  label?: string;
   /** where the value comes from, e.g. "reader: h1.product-title", "the page's canonical URL", "today's date" */
   source: ReviewSource;
   /** example page id -> the value the source gives on that page */

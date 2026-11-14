@@ -4,6 +4,7 @@ import type { ReviewEdit, ReviewRow, ReviewSource } from "../api";
 /** A source in words: strings as sent, objects described (`{css: "h1"}` -> "reader: h1"). */
 export function sourceLabel(s: ReviewSource): string {
   if (typeof s === "string") return s;
+  if (typeof s.label === "string" && s.label) return s.label;
   if (typeof s.css === "string") return `reader: ${s.css}`;
   if (typeof s.jsonld === "string") return `reader: jsonld ${s.jsonld}`;
   if (typeof s.record === "string") return s.record === "canonical_url" ? "the page's canonical URL" : `the page's ${s.record.replace(/_/g, " ")}`;
@@ -11,6 +12,12 @@ export function sourceLabel(s: ReviewSource): string {
   if ("const" in s) return `constant: ${String(s.const)}`;
   if (s.skip) return "skipped";
   return JSON.stringify(s);
+}
+
+/** A picked alternative shows its own preview when the backend sent one; otherwise it says it is not computed yet. */
+function altValue(a: ReviewSource, id: string) {
+  const v = typeof a === "object" && a.values && typeof a.values === "object" ? (a.values as Record<string, string | null>)[id] : undefined;
+  return v ?? <span className="text-muted" title="Checked by code when you approve">recomputed on approve</span>;
 }
 
 type Pick = { kind: "unset" } | { kind: "keep" } | { kind: "alt"; i: number } | { kind: "const"; text: string } | { kind: "skip" };
@@ -70,7 +77,7 @@ export default function ReviewTable({ rows, pages, busy = false, onDecide }: {
                   <td className="min-w-[230px]">
                     <div className="flex flex-wrap items-center gap-2">
                       {r.ai_proposed && <span className="pill" style={{ color: "var(--accent)", background: "var(--accent-soft)" }} title="Proposed by AI, checked by code">AI</span>}
-                      <span className="text-[13px]">{sourceLabel(r.source)}</span>
+                      <span className="text-[13px]">{r.label || sourceLabel(r.source)}</span>
                     </div>
                     <select
                       className="input mt-1.5 text-[13px]"
@@ -100,6 +107,7 @@ export default function ReviewTable({ rows, pages, busy = false, onDecide }: {
                     <td key={id} className="text-[13px] break-all">
                       {p.kind === "skip" ? <span className="text-muted">skipped</span>
                         : p.kind === "const" ? (p.text.trim() || <span className="text-muted">—</span>)
+                        : p.kind === "alt" ? altValue(r.alternatives[p.i], id)
                         : r.values[id] ?? <span className="text-muted">—</span>}
                     </td>
                   ))}

@@ -116,7 +116,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // an old tab hash (#tracker, #agent, ...) is rewritten to its new address
     const canon = toHash(route);
     if (typeof location !== "undefined" && location.hash && location.hash !== canon) history.replaceState(null, "", canon);
-    const on = () => setRoute(routeFromHash());
+    const on = () => {
+      const r = routeFromHash();
+      const c = toHash(r);
+      if (location.hash !== c) history.replaceState(null, "", c); // `#tracker` typed mid-session lands on the new address too
+      setRoute(r);
+    };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -39,6 +39,16 @@ describe("App routing", () => {
     expect(location.hash).toBe("#/integrations/jobs_to_tracker/rows");
   });
 
+  it("rewrites an old hash typed mid-session too", async () => {
+    location.hash = "#/";
+    render(<App />);
+    await screen.findByText("Your integrations", undefined, T);
+    location.hash = "#tracker";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await screen.findByText("Pages sent with the hotkey", undefined, T);
+    expect(location.hash).toBe("#/integrations/jobs_to_tracker/rows");
+  });
+
   it("#record still shows the Record view under New integration", async () => {
     location.hash = "#record";
     render(<App />);

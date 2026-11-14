@@ -80,7 +80,7 @@ function StepWhat({ onCreated }: { onCreated: (d: Draft) => void }) {
       <div className="grid gap-4 max-w-[760px]">
         <label className="grid gap-1">
           <span className="label m-0">In a sentence</span>
-          <textarea className="input" rows={2} value={intent} placeholder="Track the price of products I look at"
+          <textarea className="input" rows={2} value={intent} placeholder="Describe what should be copied, from where to where"
             onChange={(e) => { setTouched(true); setIntent(e.target.value); }} aria-label="What should it do" />
         </label>
         <div className="rounded-md bg-sunken px-4 py-3 grid gap-1 text-[13.5px]">
@@ -307,8 +307,8 @@ function StepExamples({ draft, pages, onTaught, onBack }: {
 }
 
 // ------------------------------------------------------------------------------- 4. review
-function StepReview({ draft, threadId, aiOff, pages, retry, onRestart }: {
-  draft: Draft; threadId: string | null; aiOff: boolean; pages: PageRecord[]; retry: () => void; onRestart: () => void;
+function StepReview({ draft, threadId, aiOff, pages, retry, retryError, onRestart }: {
+  draft: Draft; threadId: string | null; aiOff: boolean; pages: PageRecord[]; retry: () => void; retryError: string | null; onRestart: () => void;
 }) {
   const { settings, act, refresh, navigate } = useApp();
   const { view } = useAgentThread(threadId);
@@ -330,6 +330,7 @@ function StepReview({ draft, threadId, aiOff, pages, retry, onRestart }: {
           ) : (
             <p className="m-0">AI is on. Ready when you are.</p>
           )}
+          <Problem text={retryError} />
           <div className="flex gap-2"><button className="btn" onClick={onRestart}>Back to examples</button>
             <button className="btn btn-primary" disabled={!settings?.ai_enabled} onClick={retry}>Teach now</button></div>
         </div>
@@ -357,7 +358,8 @@ function StepReview({ draft, threadId, aiOff, pages, retry, onRestart }: {
     setBusy(false);
     refresh();
   };
-  const finishedWithout = view.state === "done" && !live;
+  // only a rejected teach ends without going live; right after Approve the draft is still catching up
+  const finishedWithout = view.state === "done" && !live && draft.state === "draft";
   return (
     <Card eyebrow="Step 4" title="Review what it proposes">
       <div className="grid gap-4">
@@ -418,6 +420,7 @@ export default function NewIntegration() {
   }, [name]);
   const step = name && !draft ? 0 : override ?? natural;
   const threadId = tid ?? draft?.thread_id ?? null;
+  const [retryError, setRetryError] = useState<string | null>(null);
 
   if (name && !draft) {
     return draftQ.error ? (
@@ -436,10 +439,11 @@ export default function NewIntegration() {
   };
   const reteach = async () => {
     if (!draft) return;
+    setRetryError(null);
     try {
       taught((await api.teach(draft.name, draft.example_page_ids.length ? draft.example_page_ids : pages.map((p) => p.id))).thread_id, false);
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 409 && /\bAI is off\b/i.test(e.detail))) setAiOff(false);
+      if (!(e instanceof ApiError && e.status === 409 && /\bAI is off\b/i.test(e.detail))) setRetryError(errText(e));
     }
   };
   return (
@@ -452,7 +456,7 @@ export default function NewIntegration() {
       {step === 2 && draft && <StepWhere draft={draft} onChecked={() => { void draftQ.reload(); setOverride(3); }} />}
       {step === 3 && draft && <StepExamples draft={draft} pages={pages} onTaught={taught} onBack={() => setOverride(2)} />}
       {step === 4 && draft && (
-        <StepReview draft={draft} threadId={threadId} aiOff={aiOff} pages={pages} retry={reteach}
+        <StepReview draft={draft} threadId={threadId} aiOff={aiOff} pages={pages} retry={reteach} retryError={retryError}
           onRestart={() => { setTid(null); setAiOff(false); setOverride(3); }} />
       )}
     </>
