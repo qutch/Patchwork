@@ -63,7 +63,8 @@ def test_submit_click_snapshots_the_form_and_confirmation_is_seen(recorded, form
     assert click["url"] == FORM_ALIAS + "/"
     assert [q["label"] for q in click["form"]["questions"]] == ["Email", "Job Title", "Company", "Link", "Date Applied"]
     assert [q["required"] for q in click["form"]["questions"]] == [True, False, False, False, False]
-    assert {q["input"] for q in click["form"]["questions"]} == {"text"}
+    # Email is type=email, as on the real demo Google Form (fixtures/google_form/viewform.html)
+    assert [q["input"] for q in click["form"]["questions"]] == ["email", "text", "text", "text", "text"]
     conf = _events(recording, "confirmation")
     assert len(conf) == 1 and "Your response has been recorded." in conf[0]["lines"]
     assert conf[0]["t"] >= click["t"]

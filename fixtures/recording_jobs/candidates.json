@@ -21,12 +21,12 @@
     ],
     "submit": "Submit",
     "confirmation_text": "Your response has been recorded",
-    "title": "Patchwork Test Form",
+    "title": "Job tracker",
     "questions": [
       {
         "label": "Email",
         "required": true,
-        "input": "text"
+        "input": "email"
       },
       {
         "label": "Job Title",

@@ -5,18 +5,18 @@
     "jobs.lever.co",
     "127.0.0.1:18010"
   ],
-  "started_at": 1794676896786,
-  "stopped_at": 1794676899406,
+  "started_at": 1794677933964,
+  "stopped_at": 1794677936870,
   "start_url": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
   "events": [
     {
-      "t": 1794676898260,
+      "t": 1794677935665,
       "type": "framenavigated",
       "url": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
       "title": "Palantir Technologies - American Tech Fellowship"
     },
     {
-      "t": 1794676898403,
+      "t": 1794677935836,
       "type": "copy",
       "url": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
       "text": "American Tech Fellowship",
@@ -35,7 +35,7 @@
       "snapshot": "snapshots/1.html"
     },
     {
-      "t": 1794676898436,
+      "t": 1794677935917,
       "type": "copy",
       "url": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
       "text": "Palantir Technologies",
@@ -54,13 +54,13 @@
       "snapshot": "snapshots/1.html"
     },
     {
-      "t": 1794676898515,
+      "t": 1794677936017,
       "type": "framenavigated",
       "url": "http://127.0.0.1:18010/",
-      "title": "Patchwork Test Form"
+      "title": "Job tracker"
     },
     {
-      "t": 1794676898625,
+      "t": 1794677936126,
       "type": "input",
       "url": "http://127.0.0.1:18010/",
       "value": "demo@example.com",
@@ -78,7 +78,7 @@
       }
     },
     {
-      "t": 1794676898627,
+      "t": 1794677936128,
       "type": "paste",
       "url": "http://127.0.0.1:18010/",
       "value": "American Tech Fellowship",
@@ -96,7 +96,7 @@
       }
     },
     {
-      "t": 1794676898634,
+      "t": 1794677936135,
       "type": "paste",
       "url": "http://127.0.0.1:18010/",
       "value": "Palantir Technologies",
@@ -114,7 +114,7 @@
       }
     },
     {
-      "t": 1794676898642,
+      "t": 1794677936143,
       "type": "input",
       "url": "http://127.0.0.1:18010/",
       "value": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
@@ -132,7 +132,7 @@
       }
     },
     {
-      "t": 1794676898684,
+      "t": 1794677936182,
       "type": "input",
       "url": "http://127.0.0.1:18010/",
       "value": "2026-11-14",
@@ -150,7 +150,7 @@
       }
     },
     {
-      "t": 1794676898686,
+      "t": 1794677936183,
       "type": "click",
       "url": "http://127.0.0.1:18010/",
       "el": {
@@ -159,9 +159,9 @@
         "name": "Submit",
         "label": null,
         "testid": null,
-        "css": "div#submit",
+        "css": "form#f div",
         "nearby": "Email *Job TitleCompanyLinkDate Applied",
-        "id": "submit",
+        "id": null,
         "accessible_name": "Submit"
       },
       "form": {
@@ -169,7 +169,7 @@
           {
             "label": "Email",
             "required": true,
-            "input": "text"
+            "input": "email"
           },
           {
             "label": "Job Title",
@@ -192,26 +192,26 @@
             "input": "text"
           }
         ],
-        "title": "Patchwork Test Form"
+        "title": "Job tracker"
       }
     },
     {
-      "t": 1794676898703,
+      "t": 1794677936225,
+      "type": "framenavigated",
+      "url": "http://127.0.0.1:18010/submit",
+      "title": "Job tracker"
+    },
+    {
+      "t": 1794677936226,
       "type": "confirmation",
       "url": "http://127.0.0.1:18010/submit",
       "lines": [
-        "Patchwork Test Form",
+        "Job tracker",
         "Your response has been recorded.",
         "Submit another response"
       ],
-      "title": "Patchwork Test Form",
+      "title": "Job tracker",
       "el": null
-    },
-    {
-      "t": 1794676898703,
-      "type": "framenavigated",
-      "url": "http://127.0.0.1:18010/submit",
-      "title": "Patchwork Test Form"
     }
   ]
 }
