@@ -37,9 +37,12 @@ class FakeBuildAgent(ScriptedAgentService):
         self.builds.append((recording_id, name))
 
         def body(t):
-            if self.mode == "deploy_request":
-                return self.interrupt(t, "request_deploy", name=name, version=1, summary="x", spec_diff="",
+            if self.mode in ("deploy_request", "deploy_revise"):
+                answer = self.interrupt(t, "request_deploy", name=name, version=1, summary="x", spec_diff="",
                                       code_diff="", tests={"passed": True, "summary": "ok"})
+                if self.mode == "deploy_revise":  # like the real agent: revises after a rejection
+                    self.gate.wait(15)
+                return answer
             self.gate.wait(15)
             if self.mode == "fail":
                 raise RuntimeError("model unavailable")
@@ -205,3 +208,19 @@ def test_rejected_deploy_request_returns_the_draft_to_draft(client, products_dra
                                                        "decision": "reject", "comment": "no"})
     assert r.status_code == 200, r.text
     assert drafts.get(name).state == "draft"
+
+
+def test_teach_is_refused_while_the_thread_revises_after_a_rejection(client, products_draft_with_pages, fake_agent):
+    name, pids = products_draft_with_pages
+    fake_agent.mode = "deploy_revise"
+    tid = teach(client, name, pids)
+    deadline = time.time() + 10
+    while time.time() < deadline and fake_agent.status(tid)["state"] != "waiting":
+        time.sleep(0.02)
+    pending = fake_agent.status(tid)["pending"]
+    client.post(f"/api/agent/{tid}/resume", json={"interrupt_id": pending["interrupt_id"], "decision": "reject"})
+    assert drafts.get(name).state == "draft" and fake_agent.status(tid)["state"] == "running"
+    r = client.post(f"/api/integrations/{name}/teach", json={"page_ids": pids})
+    assert r.status_code == 409 and "is still being taught" in r.json()["detail"]
+    assert len(fake_agent.builds) == 1
+    fake_agent.gate.set()

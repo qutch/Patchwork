@@ -93,6 +93,8 @@ def teach(name: str, body: TeachBody, request: Request) -> dict[str, str]:
 
     require_draft(name)
     draft = drafts.reconcile(name, request.app.state.agent) or require_draft(name)
+    if drafts.thread_active(request.app.state.agent, draft.thread_id):  # whatever the state says
+        raise HTTPException(409, f"{name} is still being taught: wait for the current agent thread to finish")
     if draft.state != "draft":
         raise HTTPException(409, f"{name} is already {draft.state}: it can be taught once")
     if not draft.destination:
