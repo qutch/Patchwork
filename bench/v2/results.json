@@ -1,0 +1,2069 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-14T18:20:44Z",
+  "command": "python -m bench.v2.run  (make bench-v2)",
+  "environment": {
+    "python": "3.12.5",
+    "platform": "macOS-27.0.1",
+    "agent": "scripted (no model calls)",
+    "settings": {
+      "ai_enabled": true,
+      "agent": "scripted",
+      "model": "scripted",
+      "learn_policy": "auto"
+    }
+  },
+  "scenario": {
+    "postings": 60,
+    "order_seed": 2026,
+    "platforms": [
+      "ashby",
+      "greenhouse",
+      "greenhouse_branded",
+      "lever",
+      "smartrecruiters"
+    ],
+    "taught": "fixture-jobs",
+    "library_at_start": [
+      {
+        "parser_id": "lever",
+        "site": "jobs.lever.co"
+      }
+    ],
+    "retarget": null,
+    "notes": [
+      "Pages are real, public postings rendered once by scripts/fetch_postings.py and replayed from fixtures/postings; title/company are scored against answer_key.json (its `method`/`checks`/`notes`).",
+      "The library starts with the one taught parser; every other layout must be learned (C8).",
+      "The scripted agent makes no model calls. AI calls per learn come from --learn-calls with their own kind and source; the browser-agent line is an estimate (assumption in numbers).",
+      "Questions and deploy approvals from learn threads are answered instantly by the harness like a person reading the page, and counted in learns_that_asked_a_person."
+    ]
+  },
+  "postings": [
+    {
+      "n": 1,
+      "file": "smartrecruiters/2.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "learned_now",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 2,
+      "routed_by": "match",
+      "learn_thread_id": "learn-3491cd58ba",
+      "thread_model_calls": 0,
+      "ai_calls": 8,
+      "ai_calls_kind": "measured (earlier run)",
+      "asked_person": [],
+      "seconds": 2.42,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Warehouse Associate",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "Warehouse Associate",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 2,
+      "file": "smartrecruiters/1.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 2,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.68,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Operation Head of Bosch China Training Center",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "Operation Head of Bosch China Training Center",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 3,
+      "file": "lever/2.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 2,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.687,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Deployment Strategist, Internship - US Government",
+        "company": "Palantir Technologies"
+      },
+      "want": {
+        "title": "Deployment Strategist, Internship - US Government",
+        "company": "Palantir Technologies"
+      },
+      "error": null
+    },
+    {
+      "n": 4,
+      "file": "greenhouse_branded/6.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "learned_now",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 3,
+      "routed_by": "match",
+      "learn_thread_id": "learn-06252e826f",
+      "thread_model_calls": 0,
+      "ai_calls": 8,
+      "ai_calls_kind": "measured (earlier run)",
+      "asked_person": [],
+      "seconds": 2.302,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Senior Analyst, Advanced Analytics - Gurugram",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Senior Analyst, Advanced Analytics - Gurugram",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 5,
+      "file": "smartrecruiters/6.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 3,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.552,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Junior Managers Program (Trainee) - Start your Leadership Journey in HR Tech, Digitalization and GenAI",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "Junior Managers Program (Trainee) - Start your Leadership Journey in HR Tech, Digitalization and GenAI",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 6,
+      "file": "lever/4.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 3,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.695,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Meritocracy Fellowship",
+        "company": "Palantir Technologies"
+      },
+      "want": {
+        "title": "Meritocracy Fellowship",
+        "company": "Palantir Technologies"
+      },
+      "error": null
+    },
+    {
+      "n": 7,
+      "file": "greenhouse_branded/10.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 3,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.688,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Senior Staff Data Scientist, Guest & Host Marketplace AI",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Senior Staff Data Scientist, Guest & Host Marketplace AI",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 8,
+      "file": "ashby/5.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "learned_now",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 4,
+      "routed_by": "match",
+      "learn_thread_id": "learn-50362be44f",
+      "thread_model_calls": 0,
+      "ai_calls": 8,
+      "ai_calls_kind": "measured (earlier run)",
+      "asked_person": [],
+      "seconds": 2.565,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Technical Program Manager, Compute Infrastructure",
+        "company": "OpenAI"
+      },
+      "want": {
+        "title": "Technical Program Manager, Compute Infrastructure",
+        "company": "OpenAI"
+      },
+      "error": null
+    },
+    {
+      "n": 9,
+      "file": "greenhouse_branded/11.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 4,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.675,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Spécialiste principal(e), Soutien Premium",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Spécialiste principal(e), Soutien Premium",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 10,
+      "file": "lever/5.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 4,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.825,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Senior Backend Software Engineer - Infrastructure",
+        "company": "Palantir Technologies"
+      },
+      "want": {
+        "title": "Senior Backend Software Engineer - Infrastructure",
+        "company": "Palantir Technologies"
+      },
+      "error": null
+    },
+    {
+      "n": 11,
+      "file": "ashby/7.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 4,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 2.134,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Hardware Finance Sr. Manager",
+        "company": "OpenAI"
+      },
+      "want": {
+        "title": "Hardware Finance Sr. Manager",
+        "company": "OpenAI"
+      },
+      "error": null
+    },
+    {
+      "n": 12,
+      "file": "greenhouse_branded/4.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 4,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.84,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Market Manager, Spain & Portugal",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Market Manager, Spain & Portugal",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 13,
+      "file": "greenhouse/11.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "learned_now",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": "learn-6d02e18c85",
+      "thread_model_calls": 0,
+      "ai_calls": 8,
+      "ai_calls_kind": "measured (earlier run)",
+      "asked_person": [],
+      "seconds": 2.702,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Manager, SMB Sales",
+        "company": "Figma"
+      },
+      "want": {
+        "title": "Manager, SMB Sales",
+        "company": "Figma"
+      },
+      "error": null
+    },
+    {
+      "n": 14,
+      "file": "greenhouse/8.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.691,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Staff Forward Deployed Engineer",
+        "company": "Anthropic"
+      },
+      "want": {
+        "title": "Staff Forward Deployed Engineer",
+        "company": "Anthropic"
+      },
+      "error": null
+    },
+    {
+      "n": 15,
+      "file": "smartrecruiters/5.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.677,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "CHASSIS ELETRONICS ENGINERR JR (36597) - BETIM/MG",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "CHASSIS ELETRONICS ENGINERR JR (36597) - BETIM/MG",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 16,
+      "file": "greenhouse_branded/1.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.592,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Account Executive (Hotels)",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Account Executive (Hotels)",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 17,
+      "file": "lever/10.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.831,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Product Designer",
+        "company": "Spotify"
+      },
+      "want": {
+        "title": "Product Designer",
+        "company": "Spotify"
+      },
+      "error": null
+    },
+    {
+      "n": 18,
+      "file": "ashby/9.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.69,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Software Engineer, AI Connections (Developer Platform)",
+        "company": "Notion"
+      },
+      "want": {
+        "title": "Software Engineer, AI Connections (Developer Platform)",
+        "company": "Notion"
+      },
+      "error": null
+    },
+    {
+      "n": 19,
+      "file": "greenhouse/6.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.594,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Engineering Manager, Finance Engineering",
+        "company": "Anthropic"
+      },
+      "want": {
+        "title": "Engineering Manager, Finance Engineering",
+        "company": "Anthropic"
+      },
+      "error": null
+    },
+    {
+      "n": 20,
+      "file": "greenhouse/10.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.706,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Customer Success Manager (São Paulo, Brazil)",
+        "company": "Figma"
+      },
+      "want": {
+        "title": "Customer Success Manager (São Paulo, Brazil)",
+        "company": "Figma"
+      },
+      "error": null
+    },
+    {
+      "n": 21,
+      "file": "lever/11.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.73,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Senior Data Scientist, Artist-First AI Music lab",
+        "company": "Spotify"
+      },
+      "want": {
+        "title": "Senior Data Scientist, Artist-First AI Music lab",
+        "company": "Spotify"
+      },
+      "error": null
+    },
+    {
+      "n": 22,
+      "file": "lever/3.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.716,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Forward Deployed Software Engineer - UK Government",
+        "company": "Palantir Technologies"
+      },
+      "want": {
+        "title": "Forward Deployed Software Engineer - UK Government",
+        "company": "Palantir Technologies"
+      },
+      "error": null
+    },
+    {
+      "n": 23,
+      "file": "smartrecruiters/9.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.705,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Praktikum im Bereich Human Resources / Talent Acquisition & Development",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "Praktikum im Bereich Human Resources / Talent Acquisition & Development",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 24,
+      "file": "greenhouse/5.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.811,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "3P Revenue Accounting & Reporting",
+        "company": "Anthropic"
+      },
+      "want": {
+        "title": "3P Revenue Accounting & Reporting",
+        "company": "Anthropic"
+      },
+      "error": null
+    },
+    {
+      "n": 25,
+      "file": "greenhouse/12.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.722,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Security Engineer",
+        "company": "Figma"
+      },
+      "want": {
+        "title": "Security Engineer",
+        "company": "Figma"
+      },
+      "error": null
+    },
+    {
+      "n": 26,
+      "file": "greenhouse_branded/7.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.935,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Senior Executive IT Support Engineer, Tech Foundations",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Senior Executive IT Support Engineer, Tech Foundations",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 27,
+      "file": "greenhouse_branded/2.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.733,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Emergency Response Manager, APAC",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Emergency Response Manager, APAC",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 28,
+      "file": "ashby/12.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.807,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Solutions Consultant, Commercial, Benelux",
+        "company": "Notion"
+      },
+      "want": {
+        "title": "Solutions Consultant, Commercial, Benelux",
+        "company": "Notion"
+      },
+      "error": null
+    },
+    {
+      "n": 29,
+      "file": "lever/12.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.686,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Senior Product Manager - User Platform",
+        "company": "Spotify"
+      },
+      "want": {
+        "title": "Senior Product Manager - User Platform",
+        "company": "Spotify"
+      },
+      "error": null
+    },
+    {
+      "n": 30,
+      "file": "lever/9.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.71,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Head of Measurement & Advertising Effectiveness",
+        "company": "Spotify"
+      },
+      "want": {
+        "title": "Head of Measurement & Advertising Effectiveness",
+        "company": "Spotify"
+      },
+      "error": null
+    },
+    {
+      "n": 31,
+      "file": "greenhouse/1.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.676,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Account Executive, Mobile Gaming",
+        "company": "Discord"
+      },
+      "want": {
+        "title": "Account Executive, Mobile Gaming",
+        "company": "Discord"
+      },
+      "error": null
+    },
+    {
+      "n": 32,
+      "file": "greenhouse/2.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.696,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Public Affairs Advisor",
+        "company": "Discord"
+      },
+      "want": {
+        "title": "Public Affairs Advisor",
+        "company": "Discord"
+      },
+      "error": null
+    },
+    {
+      "n": 33,
+      "file": "smartrecruiters/11.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.69,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Operations & Customer Data Coordinator (Baltics)",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "Operations & Customer Data Coordinator (Baltics)",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 34,
+      "file": "ashby/10.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.678,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Solutions Consultant, Commercial, France",
+        "company": "Notion"
+      },
+      "want": {
+        "title": "Solutions Consultant, Commercial, France",
+        "company": "Notion"
+      },
+      "error": null
+    },
+    {
+      "n": 35,
+      "file": "smartrecruiters/8.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.711,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Territory Sales Manager (Pro Channel) - Oklahoma - Diablo Tools",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "Territory Sales Manager (Pro Channel) - Oklahoma - Diablo Tools",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 36,
+      "file": "ashby/8.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.681,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Payroll Initiatives Lead",
+        "company": "OpenAI"
+      },
+      "want": {
+        "title": "Payroll Initiatives Lead",
+        "company": "OpenAI"
+      },
+      "error": null
+    },
+    {
+      "n": 37,
+      "file": "smartrecruiters/7.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.69,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Junior Managers Program (Trainee) - Starte deine Leadership Journey im Bereich Supply Chain Management",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "Junior Managers Program (Trainee) - Starte deine Leadership Journey im Bereich Supply Chain Management",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 38,
+      "file": "greenhouse/7.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.699,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Partner Support Operations Lead",
+        "company": "Anthropic"
+      },
+      "want": {
+        "title": "Partner Support Operations Lead",
+        "company": "Anthropic"
+      },
+      "error": null
+    },
+    {
+      "n": 39,
+      "file": "smartrecruiters/12.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.7,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Werkstudent Data Engineering & Backend (w/m/div.)",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "Werkstudent Data Engineering & Backend (w/m/div.)",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 40,
+      "file": "lever/6.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.711,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Software Engineer, Internship",
+        "company": "Palantir Technologies"
+      },
+      "want": {
+        "title": "Software Engineer, Internship",
+        "company": "Palantir Technologies"
+      },
+      "error": null
+    },
+    {
+      "n": 41,
+      "file": "smartrecruiters/4.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.706,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "French Speaker | Backoffice Specialist",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "French Speaker | Backoffice Specialist",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 42,
+      "file": "lever/1.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.721,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Administrative Business Partner",
+        "company": "Palantir Technologies"
+      },
+      "want": {
+        "title": "Administrative Business Partner",
+        "company": "Palantir Technologies"
+      },
+      "error": null
+    },
+    {
+      "n": 43,
+      "file": "greenhouse/4.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.713,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Staff Software Engineer, Enterprise Platform",
+        "company": "Discord"
+      },
+      "want": {
+        "title": "Staff Software Engineer, Enterprise Platform",
+        "company": "Discord"
+      },
+      "error": null
+    },
+    {
+      "n": 44,
+      "file": "greenhouse_branded/5.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.712,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Product Manager, LATAM (São Paulo, Brazil)",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Product Manager, LATAM (São Paulo, Brazil)",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 45,
+      "file": "ashby/2.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.706,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Software Engineer, Backend, Credit",
+        "company": "Ramp"
+      },
+      "want": {
+        "title": "Software Engineer, Backend, Credit",
+        "company": "Ramp"
+      },
+      "error": null
+    },
+    {
+      "n": 46,
+      "file": "greenhouse_branded/8.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.686,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Senior Manager, Content & Knowledge Architecture",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Senior Manager, Content & Knowledge Architecture",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 47,
+      "file": "ashby/11.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.748,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Executive Operations Partner - EPD (Executive Assistant)",
+        "company": "Notion"
+      },
+      "want": {
+        "title": "Executive Operations Partner - EPD (Executive Assistant)",
+        "company": "Notion"
+      },
+      "error": null
+    },
+    {
+      "n": 48,
+      "file": "smartrecruiters/3.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.766,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Sales Controller (w/m/div.) - befristet",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "Sales Controller (w/m/div.) - befristet",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 49,
+      "file": "ashby/1.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.724,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Software Engineer, Security, Cloud",
+        "company": "Ramp"
+      },
+      "want": {
+        "title": "Software Engineer, Security, Cloud",
+        "company": "Ramp"
+      },
+      "error": null
+    },
+    {
+      "n": 50,
+      "file": "greenhouse_branded/3.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.831,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Machine Learning Engineer, Assistance Engineering",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Machine Learning Engineer, Assistance Engineering",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 51,
+      "file": "greenhouse_branded/12.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.697,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Staff Software Engineer, Guest & Host",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Staff Software Engineer, Guest & Host",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 52,
+      "file": "ashby/4.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.718,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Senior Manager, Account Manager, Enterprise",
+        "company": "Ramp"
+      },
+      "want": {
+        "title": "Senior Manager, Account Manager, Enterprise",
+        "company": "Ramp"
+      },
+      "error": null
+    },
+    {
+      "n": 53,
+      "file": "ashby/3.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.695,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Solutions Consultant, Post Sales, Enterprise",
+        "company": "Ramp"
+      },
+      "want": {
+        "title": "Solutions Consultant, Post Sales, Enterprise",
+        "company": "Ramp"
+      },
+      "error": null
+    },
+    {
+      "n": 54,
+      "file": "greenhouse/3.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.703,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Senior Product Designer, Consumer Revenue",
+        "company": "Discord"
+      },
+      "want": {
+        "title": "Senior Product Designer, Consumer Revenue",
+        "company": "Discord"
+      },
+      "error": null
+    },
+    {
+      "n": 55,
+      "file": "lever/7.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.702,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Account Executive - Commercial, Spotify Technology",
+        "company": "Spotify"
+      },
+      "want": {
+        "title": "Account Executive - Commercial, Spotify Technology",
+        "company": "Spotify"
+      },
+      "error": null
+    },
+    {
+      "n": 56,
+      "file": "ashby/6.html.gz",
+      "platform": "ashby",
+      "site": "jobs.ashbyhq.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "ashbyhq",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.71,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Product Manager, Integrity",
+        "company": "OpenAI"
+      },
+      "want": {
+        "title": "Product Manager, Integrity",
+        "company": "OpenAI"
+      },
+      "error": null
+    },
+    {
+      "n": 57,
+      "file": "smartrecruiters/10.html.gz",
+      "platform": "smartrecruiters",
+      "site": "jobs.smartrecruiters.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "smartrecruiters",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.733,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "MID-LEVEL - TECHNICAL CONSULTANT - HCM (ABAP & FIORI) - 36512",
+        "company": "Bosch Group"
+      },
+      "want": {
+        "title": "MID-LEVEL - TECHNICAL CONSULTANT - HCM (ABAP & FIORI) - 36512",
+        "company": "Bosch Group"
+      },
+      "error": null
+    },
+    {
+      "n": 58,
+      "file": "greenhouse_branded/9.html.gz",
+      "platform": "greenhouse_branded",
+      "site": "careers.airbnb.com",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "airbnb",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.708,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Senior Program Manager, Design",
+        "company": "Airbnb"
+      },
+      "want": {
+        "title": "Senior Program Manager, Design",
+        "company": "Airbnb"
+      },
+      "error": null
+    },
+    {
+      "n": 59,
+      "file": "greenhouse/9.html.gz",
+      "platform": "greenhouse",
+      "site": "job-boards.greenhouse.io",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "greenhouse",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.704,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Account Executive, Enterprise",
+        "company": "Figma"
+      },
+      "want": {
+        "title": "Account Executive, Enterprise",
+        "company": "Figma"
+      },
+      "error": null
+    },
+    {
+      "n": 60,
+      "file": "lever/8.html.gz",
+      "platform": "lever",
+      "site": "jobs.lever.co",
+      "label": "code",
+      "status": "success",
+      "reason": null,
+      "parser": "lever",
+      "version": 5,
+      "routed_by": "match",
+      "learn_thread_id": null,
+      "thread_model_calls": 0,
+      "ai_calls": 0,
+      "ai_calls_kind": "measured",
+      "asked_person": [],
+      "seconds": 0.728,
+      "correct": true,
+      "outcome": "right_write",
+      "got": {
+        "title": "Content Marketing Manager Indonesia",
+        "company": "Spotify"
+      },
+      "want": {
+        "title": "Content Marketing Manager Indonesia",
+        "company": "Spotify"
+      },
+      "error": null
+    }
+  ],
+  "series": {
+    "patchwork_cumulative_ai_calls": [
+      8,
+      8,
+      8,
+      16,
+      16,
+      16,
+      16,
+      24,
+      24,
+      24,
+      24,
+      24,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32
+    ],
+    "browser_agent_cumulative_ai_calls": [
+      6,
+      12,
+      18,
+      24,
+      30,
+      36,
+      42,
+      48,
+      54,
+      60,
+      66,
+      72,
+      78,
+      84,
+      90,
+      96,
+      102,
+      108,
+      114,
+      120,
+      126,
+      132,
+      138,
+      144,
+      150,
+      156,
+      162,
+      168,
+      174,
+      180,
+      186,
+      192,
+      198,
+      204,
+      210,
+      216,
+      222,
+      228,
+      234,
+      240,
+      246,
+      252,
+      258,
+      264,
+      270,
+      276,
+      282,
+      288,
+      294,
+      300,
+      306,
+      312,
+      318,
+      324,
+      330,
+      336,
+      342,
+      348,
+      354,
+      360
+    ]
+  },
+  "series_meta": {
+    "patchwork_cumulative_ai_calls": {
+      "kind": "measured (earlier run)",
+      "source": "bench/v2/run.py (this run); per learn: deep agent (particle-1) LEARN, 6 runs of make smoke-v2 on 2026-11-14: 8 calls each",
+      "note": "0 for postings read by a known layout; a learn's calls at the posting that triggered it"
+    },
+    "browser_agent_cumulative_ai_calls": {
+      "kind": "estimate",
+      "source": "assumption (bench/v2/run.py BROWSER_AGENT_ASSUMPTION); no browser agent was run",
+      "assumption": "Estimate, not run: a DOM-reading browser agent makes at least one model call per posting (read the page and pick title/company), then opens the tracker form, fills 5 fields, submits and checks the confirmation. At one model call per action step with fields batched in pairs, that is ~6 calls per posting, every posting, forever: it does not learn. Even at the floor of 1 call per posting the line rises by 1 per posting."
+    }
+  },
+  "numbers": [
+    {
+      "name": "postings",
+      "value": 60,
+      "unit": "postings",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)"
+    },
+    {
+      "name": "platforms",
+      "value": 5,
+      "unit": "platforms",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)"
+    },
+    {
+      "name": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)",
+      "note": "right rows / postings, scored on the tracker form's rows vs fixtures/postings/answer_key.json; held postings count as not right"
+    },
+    {
+      "name": "right_rows",
+      "value": 60,
+      "unit": "postings",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)"
+    },
+    {
+      "name": "wrong_rows_written",
+      "value": 0,
+      "unit": "postings",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)",
+      "note": "a row with another title or company than the answer key, or a second row for a posting"
+    },
+    {
+      "name": "held_for_a_person",
+      "value": 0,
+      "unit": "postings",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)",
+      "note": "nothing written"
+    },
+    {
+      "name": "silently_dropped",
+      "value": 0,
+      "unit": "postings",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)"
+    },
+    {
+      "name": "learn_threads",
+      "value": 4,
+      "unit": "threads",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)",
+      "note": "one per new layout (site)"
+    },
+    {
+      "name": "learns_that_asked_a_person",
+      "value": 0,
+      "unit": "threads",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)",
+      "note": "ask_user or request_deploy, answered instantly by the harness"
+    },
+    {
+      "name": "ai_calls_per_known_layout_posting",
+      "value": 0,
+      "unit": "calls",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)",
+      "note": "postings labelled code; the runner cannot import a model SDK"
+    },
+    {
+      "name": "ai_calls_per_learn",
+      "value": 8,
+      "unit": "calls",
+      "kind": "measured (earlier run)",
+      "source": "deep agent (particle-1) LEARN, 6 runs of make smoke-v2 on 2026-11-14: 8 calls each"
+    },
+    {
+      "name": "patchwork_ai_calls_total",
+      "value": 32,
+      "unit": "calls",
+      "kind": "measured (earlier run)",
+      "source": "bench/v2/run.py (this run): learn threads x ai_calls_per_learn (measured (earlier run)); 0 for every other posting"
+    },
+    {
+      "name": "browser_agent_ai_calls_per_posting",
+      "value": 6,
+      "unit": "calls",
+      "kind": "estimate",
+      "source": "assumption (bench/v2/run.py BROWSER_AGENT_ASSUMPTION); no browser agent was run",
+      "note": "Estimate, not run: a DOM-reading browser agent makes at least one model call per posting (read the page and pick title/company), then opens the tracker form, fills 5 fields, submits and checks the confirmation. At one model call per action step with fields batched in pairs, that is ~6 calls per posting, every posting, forever: it does not learn. Even at the floor of 1 call per posting the line rises by 1 per posting."
+    },
+    {
+      "name": "browser_agent_ai_calls_total",
+      "value": 360,
+      "unit": "calls",
+      "kind": "estimate",
+      "source": "assumption (bench/v2/run.py BROWSER_AGENT_ASSUMPTION); no browser agent was run",
+      "note": "6 x 60 postings"
+    },
+    {
+      "name": "seconds_per_known_posting_median",
+      "value": 0.706,
+      "unit": "s",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)",
+      "note": "POST /api/pages until the row was final: run start (subprocess), extract, preflight, headless form fill + submit on the fixture form; the Google Form adds ~1.3-2 s (spike a)"
+    },
+    {
+      "name": "seconds_per_learn_median",
+      "value": 2.492,
+      "unit": "s",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)",
+      "note": "scripted agent, page posted until its row was written"
+    },
+    {
+      "name": "teach_seconds",
+      "value": 2.599,
+      "unit": "s",
+      "kind": "measured",
+      "source": "bench/v2/run.py (this run)",
+      "note": "scripted TEACH from fixture-jobs, deploy approved instantly"
+    }
+  ],
+  "questions": [
+    {
+      "question": "You typed 'demo@example.com' into 'Email'. Send that on every row?",
+      "answer": "demo@example.com",
+      "how": "demo email"
+    }
+  ],
+  "summary": {
+    "postings": 60,
+    "right_write": 60,
+    "wrong_write": 0,
+    "held": 0,
+    "dropped": 0,
+    "accuracy": 1.0,
+    "wrong_rows_written": 0
+  }
+}

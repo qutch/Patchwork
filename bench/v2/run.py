@@ -54,6 +54,11 @@ RESULTS = REPO / "bench" / "v2" / "results.json"
 RECORDING = "fixture-jobs"
 SEED = 2026
 SRC = "bench/v2/run.py (this run)"
+# Deep agent on the 2-minute script (scripts/smoke_v2.py, fixture form, particle-1), 2026-11-14: learn beats
+# 30.8 / 25.6 / 24.1 s, repair beats 55.0 / 62.7 / 45.1 s over three runs in a row.
+DEEP_SOURCE = "make smoke-v2 with PATCHWORK_AGENT=deep (particle-1, fixture form), 3 runs on 2026-11-14"
+DEEP_LEARN_S = 25.6
+DEEP_REPAIR_S = 55.0
 
 # Inputs this harness does not measure, in one place with their reasoning.
 LEARN_CALLS_BUDGET = 8
@@ -218,7 +223,9 @@ def build_results(raw: dict[str, Any], *, learn_calls: int, learn_calls_kind: st
         metric("platforms", len({p["platform"] for p in postings}), "platforms", "measured", SRC),
         metric("accuracy", summ["accuracy"], "ratio", "measured", SRC,
                "right rows / postings, scored on the tracker form's rows vs fixtures/postings/answer_key.json; "
-               "held postings count as not right"),
+               "held postings count as not right. New layouts here are learned by the scripted agent, which runs "
+               "the same code checks as the deep agent (agents/learn.py: evidence, corroboration, ambiguity) "
+               "but does not choose selectors with a model"),
         metric("right_rows", summ["right_write"], "postings", "measured", SRC),
         metric("wrong_rows_written", summ["wrong_write"], "postings", "measured", SRC,
                "a row with another title or company than the answer key, or a second row for a posting"),
@@ -241,8 +248,14 @@ def build_results(raw: dict[str, Any], *, learn_calls: int, learn_calls_kind: st
                 "form fill + submit on the fixture form; the Google Form adds ~1.3-2 s (spike a)")
          if code else metric("seconds_per_known_posting_median", None, "s", "not measured", SRC, "no code rows")),
         (metric("seconds_per_learn_median", round(statistics.median(learn_s), 3), "s", "measured", SRC,
-                f"{raw.get('agent', 'scripted')} agent, page posted until its row was written")
+                f"{raw.get('agent', 'scripted')} agent (no model), page posted until its row was written; "
+                "the deep agent takes ~25 s, see seconds_per_learn_deep_agent")
          if learn_s else metric("seconds_per_learn_median", None, "s", "not measured", SRC, "no learned_now rows")),
+        metric("seconds_per_learn_deep_agent", DEEP_LEARN_S, "s", "measured (earlier run)", DEEP_SOURCE,
+               "median of the 'new platform: learned now' beat (page posted until its row was written), "
+               "free particle-1 model, ~3 s per model call"),
+        metric("seconds_per_form_repair_deep_agent", DEEP_REPAIR_S, "s", "measured (earlier run)", DEEP_SOURCE,
+               "median of the 'repair + approve' beat, deploy approved instantly"),
         metric("teach_seconds", round(raw["teach"]["seconds"], 3), "s", "measured", SRC,
                "scripted TEACH from fixture-jobs, deploy approved instantly"),
     ]
