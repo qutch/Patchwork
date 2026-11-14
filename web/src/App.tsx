@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
-import { AppProvider, TABS, useApp } from "./state";
+import { AppProvider, useApp } from "./state";
 import { AiToggle } from "./components/AiToggle";
-import TrackerTab from "./tabs/Tracker";
 import Presenter from "./components/Presenter";
 import RecordTab from "./tabs/Record";
-import ReviewTab from "./tabs/Review";
-import AgentTab from "./tabs/Agent";
-import IntegrationTab from "./tabs/Integration";
-import RunsTab from "./tabs/Runs";
 import BenchmarkTab from "./tabs/Benchmark";
+import Home from "./pages/Home";
+import IntegrationPage from "./pages/IntegrationPage";
+import NewIntegration from "./pages/NewIntegration";
+import CredentialsDrawer from "./components/CredentialsDrawer";
 
 type Theme = "system" | "light" | "dark";
 function useTheme(): [Theme, () => void] {
@@ -32,9 +31,14 @@ function useTheme(): [Theme, () => void] {
 }
 
 function Header() {
-  const { tab, go, settings, threads, incidents, apiDown, isPageIntegration } = useApp();
+  const { route, navigate, setCredsOpen, settings, threads, incidents, apiDown } = useApp();
   const [theme, nextTheme] = useTheme();
   const waiting = threads.some((t) => t.state === "waiting");
+  const link = (active: boolean) => ({
+    className: "relative px-3 py-2 rounded-md text-[15px] font-medium no-underline",
+    style: { color: active ? "var(--accent)" : "var(--ink)", background: active ? "var(--accent-soft)" : "transparent" },
+    "aria-current": active ? ("page" as const) : undefined,
+  });
   return (
     <header className="border-b border-line bg-surface sticky top-0 z-20">
       <div className="max-w-[1320px] mx-auto px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-3">
@@ -43,34 +47,15 @@ function Header() {
           <span className="font-mono text-xs text-muted hidden 2xl:inline">integration console</span>
         </div>
         <nav className="flex flex-wrap gap-1 order-3 lg:order-none w-full lg:w-auto" aria-label="Sections">
-          {TABS.map((t, i) => {
-            const active = tab === t.id;
-            return (
-              <a
-                key={t.id}
-                href={`#${t.id}`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  go(t.id);
-                }}
-                aria-current={active ? "page" : undefined}
-                className="relative px-3 py-2 rounded-md text-[15px] font-medium no-underline"
-                style={{ color: active ? "var(--accent)" : "var(--ink)", background: active ? "var(--accent-soft)" : "transparent" }}
-              >
-                <span className="font-mono text-xs text-muted mr-1.5">{i + 1}</span>
-                {t.label}
-                {t.id === "agent" && waiting && (
-                  <span className="ml-2 inline-block w-2.5 h-2.5 rounded-full align-middle pulse" style={{ background: "var(--gate)" }} title="An agent is waiting for you" />
-                )}
-                {t.id === "tracker" && incidents.some((i) => isPageIntegration(i.integration)) && (
-                  <span className="ml-2 inline-block w-2.5 h-2.5 rounded-full align-middle" style={{ background: "var(--bad)" }} title="Open incident" />
-                )}
-                {t.id === "runs" && incidents.some((i) => !isPageIntegration(i.integration)) && (
-                  <span className="ml-2 inline-block w-2.5 h-2.5 rounded-full align-middle" style={{ background: "var(--bad)" }} title="Open incident" />
-                )}
-              </a>
-            );
-          })}
+          <a href="#/" onClick={(e) => { e.preventDefault(); navigate({ page: "home" }); }} {...link(route.page === "home" || route.page === "integration")}>
+            Integrations
+            {(waiting || incidents.length > 0) && (
+              <span className="ml-2 inline-block w-2.5 h-2.5 rounded-full align-middle pulse" style={{ background: incidents.length ? "var(--bad)" : "var(--gate)" }} title="Something needs you" />
+            )}
+          </a>
+          <a href="#/new" onClick={(e) => { e.preventDefault(); navigate({ page: "new" }); }} {...link(route.page === "new")}>
+            New integration
+          </a>
         </nav>
         <div className="ml-auto flex items-center gap-3">
           {settings && (
@@ -80,6 +65,15 @@ function Header() {
           )}
           {apiDown && <span className="pill" style={{ color: "var(--bad)", background: "var(--bad-soft)" }}>API unreachable</span>}
           <AiToggle />
+          <button className="btn" onClick={() => setCredsOpen(true)}>Credentials</button>
+          <details className="relative">
+            <summary className="btn list-none cursor-pointer" aria-label="More">More</summary>
+            <div className="absolute right-0 mt-1 z-30 card card-b grid gap-1 min-w-[160px]">
+              <a href="#/bench" onClick={(e) => { e.preventDefault(); navigate({ page: "bench" }); (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); }} {...link(route.page === "bench")}>
+                Benchmark
+              </a>
+            </div>
+          </details>
           <button className="btn" onClick={nextTheme} title="Theme: system → light → dark" aria-label={`Theme: ${theme}`}>
             {theme === "dark" ? "☾" : theme === "light" ? "☀" : "◐"} <span className="font-mono text-xs">{theme}</span>
           </button>
@@ -105,16 +99,13 @@ function Notice() {
 }
 
 function Body() {
-  const { tab } = useApp();
+  const { route } = useApp();
   return (
     <main className="max-w-[1320px] mx-auto px-4 py-6 grid gap-6">
-      {tab === "tracker" && <TrackerTab />}
-      {tab === "record" && <RecordTab />}
-      {tab === "review" && <ReviewTab />}
-      {tab === "agent" && <AgentTab />}
-      {tab === "integration" && <IntegrationTab />}
-      {tab === "runs" && <RunsTab />}
-      {tab === "bench" && <BenchmarkTab />}
+      {route.page === "home" && <Home />}
+      {route.page === "new" && (route.mode === "show" ? <RecordTab /> : <NewIntegration draft={route.draft} />)}
+      {route.page === "integration" && <IntegrationPage name={route.name} section={route.section} />}
+      {route.page === "bench" && <BenchmarkTab />}
     </main>
   );
 }
@@ -128,6 +119,7 @@ export default function App() {
         <>
           <Header />
           <Body />
+          <CredentialsDrawer />
         </>
       )}
       <Notice />

@@ -112,7 +112,7 @@ interface Assumption {
 }
 
 export default function ReviewTab() {
-  const { recordingId, integrations, integrationName, threads, threadId, go } = useApp();
+  const { recordingId, integrations, integrationName, threads, threadId, navigate } = useApp();
   const [cands, setCands] = useState<Candidates | null>(null);
   const [assumptions, setAssumptions] = useState<Assumption[] | null>(null);
   const [specVersion, setSpecVersion] = useState<number | null>(null);
@@ -159,7 +159,7 @@ export default function ReviewTab() {
         {cands ? (
           <MappingTable c={cands} />
         ) : (
-          <Empty action={<button className="btn" onClick={() => go("record")}>Go to Record</button>}>
+          <Empty action={<button className="btn" onClick={() => navigate({ page: "new" })}>Start a new integration</button>}>
             No candidates yet. Record a transfer and press “Find mappings”.
           </Empty>
         )}

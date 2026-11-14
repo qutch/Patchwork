@@ -147,7 +147,7 @@ export function LearnEvidence({ threadId, settings }: { threadId: string; settin
 }
 
 function RowDetail({ row, settings, onReplay, w }: { row: TrackerRow; settings: Settings | null; onReplay: () => void; w: Wording }) {
-  const { go, setThreadId } = useApp();
+  const { navigate, setThreadId, pageIntegration } = useApp();
   const hint = heldHint(row, settings, w);
   const o = row.parser_origin ? originText(row.parser_origin) : null;
   return (
@@ -170,7 +170,7 @@ function RowDetail({ row, settings, onReplay, w }: { row: TrackerRow; settings: 
               </button>
             )}
             {row.learn_thread_id && (
-              <button className="btn" onClick={() => { setThreadId(row.learn_thread_id); go("agent"); }}>Open the learn thread →</button>
+              <button className="btn" onClick={() => { setThreadId(row.learn_thread_id); navigate({ page: "integration", name: pageIntegration, section: "activity" }); }}>Open the learn thread →</button>
             )}
           </div>
         </div>
@@ -386,7 +386,7 @@ export default function TrackerTab() {
           <>
             <IntegrationBar name={name} d={view.destination} />
             {q.error && !q.data && <span className="pill" style={{ color: "var(--bad)", background: "var(--bad-soft)" }}>tracker unavailable</span>}
-            <a className="btn no-underline" href="?present=1" title="Big type for the room; → and ← step through the 2-minute script">Presenter mode</a>
+            <a className="btn no-underline" href={`?present=1&integration=${encodeURIComponent(name)}`} title="Big type for the room; → and ← step through the 2-minute script">Presenter mode</a>
             <button className="btn" onClick={replay} disabled={!held} title={held ? "Run held pages again on the active version" : "Nothing is held"}>
               Replay held pages{held ? ` (${held})` : ""}
             </button>

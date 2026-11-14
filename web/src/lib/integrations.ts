@@ -4,7 +4,7 @@
 // Tolerant by design: older backends have no `integrations` on /api/extension, no /api/credentials and no
 // `destination` anywhere, so every helper falls back to what the UI showed for jobs_to_tracker before.
 import { parse as parseYaml } from "yaml";
-import { TRACKER, type Credential, type DestinationInfo, type ExtensionInfo, type IntegrationSummary, type PageIntegration } from "../api";
+import { TRACKER, type Credential, type ThreadStatus, type DestinationInfo, type ExtensionInfo, type IntegrationSummary, type PageIntegration } from "../api";
 
 /** The v1 integration (email → stockroom API): never a page integration. */
 export const V1_INTEGRATION = "po_to_stockroom";
@@ -40,6 +40,18 @@ export function defaultIntegration(ext: ExtensionInfo | null | undefined, list: 
 /** The remembered (or URL) choice when it still exists; the default otherwise. */
 export function pickIntegration(wanted: string | null | undefined, list: PageIntegration[], dflt: string): string {
   return wanted && list.some((i) => i.name === wanted) ? wanted : dflt;
+}
+
+/**
+ * Does an agent thread belong to this integration? The thread says so (`integration`, or a draft's `subject`)
+ * when the control plane does; otherwise build and repair threads are the v1 integration's and learn threads
+ * the page integrations'.
+ */
+export function threadBelongs(t: ThreadStatus, name: string): boolean {
+  if (t.integration) return t.integration === name;
+  if (t.subject === name || t.subject === `draft-${name}`) return true;
+  if (t.subject?.startsWith("draft-")) return false;
+  return t.mode === "learn" ? name !== V1_INTEGRATION : name === V1_INTEGRATION;
 }
 
 /** "track_product_prices" → "Track product prices". */

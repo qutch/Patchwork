@@ -129,6 +129,8 @@ export type AgentEvent = EvBase &
         code_diff: string;
         tests: TestsResult;
         spec_patch?: JsonPatchOp[];
+        /** teach from examples: one row per destination field (the review table) */
+        review?: ReviewRow[];
       }
     | { type: "resumed"; interrupt_id: string; payload: Record<string, unknown> }
     | { type: "deployed"; name: string; version: number; previous_version: number | null }
@@ -146,6 +148,23 @@ export type AgentEvent = EvBase &
         reason: string;
       }
   );
+/** Task 5 `request_deploy.review[]`: where one destination field's value comes from, per example page. */
+export interface ReviewRow {
+  dest_field: string;
+  /** the source in words, e.g. "reader: h1.product-title", "the page's canonical URL", "today's date" */
+  source: string;
+  /** example page id -> the value the source gives on that page */
+  values: Record<string, string | null>;
+  ai_proposed: boolean;
+  status: "checked" | "needs_you";
+  /** other sources the person may pick instead (the only ones the resume accepts besides a constant or skip) */
+  alternatives: string[];
+}
+/** Task 5 resume `edits[]`: `choice` is one of the row's `alternatives`, a constant or a skip. */
+export interface ReviewEdit {
+  dest_field: string;
+  choice: string | { const: string } | { skip: true };
+}
 export type ThreadMode = "build" | "repair" | "learn";
 /** V10 `evidence.fields[]`: one page value the learner proposed, and what code found when it checked it. */
 export interface EvidenceField {
@@ -170,15 +189,21 @@ export interface ThreadStatus {
   pending: InterruptEvent | null;
   last_seq: number;
   created_at?: string;
+  /** optional extra: the integration the thread works on, when the control plane says so */
+  integration?: string;
 }
 
 export type ResumeBody =
   | { interrupt_id: string; answer: string }
-  | { interrupt_id: string; decision: "approve" | "reject"; comment?: string };
+  | { interrupt_id: string; decision: "approve" | "reject"; comment?: string; edits?: ReviewEdit[] };
 
 // ---------------------------------------------------------------- integrations
+/** Task 2: a draft is waiting for its examples, `teaching` while the agent builds it, `live` once deployed. */
+export type IntegrationState = "draft" | "teaching" | "live";
 export interface IntegrationSummary {
   name: string;
+  /** Task 2; absent on older backends (read as live) */
+  state?: IntegrationState;
   active_version: number | null;
   latest_version: number;
   open_incidents: number | IncidentSummary[];
@@ -493,6 +518,41 @@ export interface DestinationInfo {
   /** the credential NAME the sink's auth references (V13), never its value */
   credential?: string | null;
 }
+/** Task 3 destination per kind, as sent to `PUT /api/integrations/{name}/destination`. */
+export type DestinationInput =
+  | { kind: "airtable"; base_id?: string; base_url?: string; table: string; credential: string }
+  | { kind: "form"; url: string }
+  | { kind: "api"; base_url: string; operation: { method: string; path: string }; credential?: string }
+  | { kind: "sqlite"; path: string; table: string };
+/** Task 2 draft. */
+export interface Draft {
+  name: string;
+  intent: string;
+  state: IntegrationState;
+  destination: (DestinationInput & Record<string, unknown>) | null;
+  example_page_ids: string[];
+  thread_id: string | null;
+  created_at: string;
+}
+export interface DestinationField {
+  name: string;
+  type: string;
+  required: boolean;
+  options?: string[];
+}
+export interface ApiOperation {
+  method: string;
+  path: string;
+  summary: string;
+  fields: string[];
+}
+/** Task 3 check result: what the destination wants, by field. */
+export interface DestinationCheck {
+  kind: string;
+  title: string;
+  fields: DestinationField[];
+  operations?: ApiOperation[];
+}
 /** V13 `GET /api/credentials`: names and whether they are set. Values are never sent. */
 export interface Credential {
   name: string;
@@ -615,11 +675,25 @@ export const api = {
   /** What the extension sends on a hotkey press. The UI only uses it in tests and rehearsal tools. */
   postPage: (b: { url: string; title: string; html: string; integration?: string }, token: string) =>
     request<PageAccepted>("POST", "/api/pages", b, { "X-Patchwork-Token": token }),
-  pages: (p: { since?: number; limit?: number } = {}) => request<PageRecord[]>("GET", `/api/pages${qs(p)}`),
+  pages: (p: { since?: number; limit?: number; integration?: string } = {}) => request<PageRecord[]>("GET", `/api/pages${qs(p)}`),
   page: (id: string) => request<{ page: PageRecord; row: TrackerRow }>("GET", `/api/pages/${enc(id)}`),
   extension: () => request<ExtensionInfo>("GET", "/api/extension"),
   /** V13; 404 on backends without credentials. */
   credentials: () => request<Credential[]>("GET", "/api/credentials"),
+  /** Task 1: 201 `{name, set: true, used_by}`. The value is sent once and never comes back. */
+  addCredential: (name: string, value: string) => request<Credential>("POST", "/api/credentials", { name, value }),
+
+  // new integration wizard (Tasks 2-4)
+  newIntegration: (intent: string, name?: string) => request<Draft>("POST", "/api/integrations/new", name ? { intent, name } : { intent }),
+  draft: (name: string) => request<Draft>("GET", `/api/integrations/${enc(name)}/draft`),
+  deleteIntegration: (name: string, deleteRows: boolean) =>
+    request<unknown>("DELETE", `/api/integrations/${enc(name)}${qs({ delete_rows: deleteRows ? "true" : "false" })}`),
+  putDestination: (name: string, d: DestinationInput) => request<DestinationCheck>("PUT", `/api/integrations/${enc(name)}/destination`, d),
+  airtableTables: (base_id: string, credential: string) =>
+    request<{ id: string; name: string }[]>("GET", `/api/destinations/airtable/tables${qs({ base_id, credential })}`),
+  apiOperations: (base_url: string, credential?: string) =>
+    request<ApiOperation[]>("GET", `/api/destinations/api/operations${qs({ base_url, credential })}`),
+  teach: (name: string, page_ids: string[]) => request<{ thread_id: string }>("POST", `/api/integrations/${enc(name)}/teach`, { page_ids }),
   tracker: (p: { integration?: string; limit?: number } = {}) =>
     request<TrackerResponse>("GET", `/api/tracker${qs({ integration: p.integration ?? TRACKER, limit: p.limit })}`),
   layouts: (integration: string = TRACKER) => request<Layout[]>("GET", `/api/layouts${qs({ integration })}`),
