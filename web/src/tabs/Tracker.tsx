@@ -6,6 +6,7 @@ import { useAgentThread, useApp, usePoll } from "../state";
 import { AiToggle } from "../components/AiToggle";
 import { IncidentBanner } from "../components/IncidentBanner";
 import { Card, Empty, PageHead, Spinner } from "../components/ui";
+import { LayoutsPanel } from "../components/Layouts";
 
 // ------------------------------------------------------------------------------- data
 /** The tracker, polled every second so a hotkey press shows up within ~1 s. */
@@ -197,11 +198,11 @@ export function TrackerTable({ rows, settings, big = false, onReplay }: { rows: 
       <table className="tbl" style={big ? { fontSize: 18 } : undefined}>
         <thead>
           <tr>
-            <th className="w-[78px]">Time</th>
+            <th className="w-[84px] whitespace-nowrap">Time</th>
             <th>Posting</th>
             {!big && <th>Read by</th>}
             <th>Result</th>
-            <th className="text-right">AI calls</th>
+            <th className="text-right whitespace-nowrap">AI calls</th>
           </tr>
         </thead>
         <tbody>
@@ -215,7 +216,7 @@ export function TrackerTable({ rows, settings, big = false, onReplay }: { rows: 
                   onClick={big ? undefined : () => setOpen(isOpen ? null : r.page_id)}
                   aria-expanded={big ? undefined : isOpen}
                 >
-                  <td className="font-mono text-muted num" style={{ fontSize: big ? 16 : 12.5 }}>{clock(r.captured_at)}</td>
+                  <td className="font-mono text-muted num whitespace-nowrap" style={{ fontSize: big ? 16 : 12.5 }}>{clock(r.captured_at)}</td>
                   <td><Posting row={r} big={big} /></td>
                   {!big && (
                     <td className="text-[13px]">
@@ -355,8 +356,8 @@ export default function TrackerTab() {
         {q.data ? <TrackerTable rows={rows} settings={settings} onReplay={replay} /> : <div className="card-b text-muted">{q.error ? `Couldn't load the tracker: ${q.error}` : "Loading…"}</div>}
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px] items-start">
-        <div id="layouts-slot" />
+      <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_360px] items-start">
+        <LayoutsPanel />
         <ExtensionCard />
       </div>
     </>
