@@ -1142,7 +1142,7 @@ def seed_repair_workdir(name: str) -> Path:
     store = Store()
     active = store.active_version(name)
     if not active:
-        raise RuntimeError(f"{name} has no active version to repair")
+        raise RuntimeError(f"{name} has no active version to repair or extend (teach it first)")
     vdir = workspace_dir() / "integrations" / name / f"v{active}"
     wd = work_dir(name)
     (wd / "spec.yaml").write_text((vdir / "spec.yaml").read_text())

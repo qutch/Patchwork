@@ -35,7 +35,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from agents import prompts
-from agents.deep_tools import FAIL_PREFIXES, ToolContext, build_tools, seed_repair_workdir
+from agents.deep_tools import FAIL_PREFIXES, ToolContext, build_tools, seed_learn_workdir, seed_repair_workdir
 from agents.interface import ThreadCancelled, ThreadedAgentService, _Thread
 from agents.scripted import NAME, work_dir
 from runner.store import Store
@@ -63,6 +63,16 @@ SUBAGENTS: dict[str, tuple[str, str, list[str]]] = {
 FS_TOOLS = ["ls", "read_file", "write_file", "edit_file"]
 READ_ONLY_FS_TOOLS = ["ls", "read_file"]
 WRITABLE = ["/spec.yaml", "/examples.yaml", "/transforms.py"]
+
+# LEARN (contracts V10): the supervisor only plans and delegates; the learner reads the page outline, tests
+# candidates and saves one parser. save_parser decides auto-deploy vs asking a person (D2) in code, so
+# neither agent gets request_deploy. Target <= 8 model calls per learn.
+LEARN_SUPERVISOR_TOOLS: list[str] = []
+LEARN_SUBAGENTS: dict[str, tuple[str, str, list[str]]] = {
+    "learner": ("One job page whose layout no parser reads -> a tested parser (css/jsonld) saved for its site.",
+                prompts.LEARNER, ["get_page", "test_page_parser", "ask_user", "save_parser", "add_test_case"]),
+}
+LEARN_WRITABLE = ["/spec.yaml"]
 
 
 # ---- models --------------------------------------------------------------------------------
@@ -253,6 +263,7 @@ class DeepAgentService(ThreadedAgentService):
         self.name = name or os.environ.get("PATCHWORK_INTEGRATION_NAME", NAME)
         self.max_model_calls = max_model_calls or int(os.environ.get("PATCHWORK_AGENT_MAX_CALLS", "80"))
         self.max_nudges = max_nudges
+        self.max_learn_calls = int(os.environ.get("PATCHWORK_LEARN_MAX_CALLS", "12"))
         self.retry_base_delay = retry_base_delay
         self.model_calls: dict[str, int] = {}
 
@@ -285,8 +296,10 @@ class DeepAgentService(ThreadedAgentService):
         model, fallback = self.models()
         _no_general_purpose_subagent(model)
         tools = build_tools(ctx)
+        learn = t.mode == "learn"
+        sup_tools, subagent_defs = (LEARN_SUPERVISOR_TOOLS, LEARN_SUBAGENTS) if learn else (SUPERVISOR_TOOLS, SUBAGENTS)
         backend = FilesystemBackend(root_dir=str(ctx.wd), virtual_mode=True)
-        permissions = [FilesystemPermission(operations=["write"], paths=WRITABLE, mode="allow"),
+        permissions = [FilesystemPermission(operations=["write"], paths=LEARN_WRITABLE if learn else WRITABLE, mode="allow"),
                        FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")]
 
         def resilient() -> ResilientModelMiddleware:
@@ -297,7 +310,7 @@ class DeepAgentService(ThreadedAgentService):
             return FilesystemMiddleware(backend=backend, tools=FS_TOOLS, permissions=permissions)
 
         subagents = []
-        for sname, (desc, prompt, tool_names) in SUBAGENTS.items():
+        for sname, (desc, prompt, tool_names) in subagent_defs.items():
             subagents.append({
                 "name": sname, "description": desc, "system_prompt": prompt,
                 "tools": [tools[n] for n in tool_names],
@@ -305,8 +318,8 @@ class DeepAgentService(ThreadedAgentService):
             })
         return create_deep_agent(
             model=model,
-            tools=[tools[n] for n in SUPERVISOR_TOOLS],
-            system_prompt=prompts.SUPERVISOR,
+            tools=[tools[n] for n in sup_tools],
+            system_prompt=prompts.LEARN_SUPERVISOR if learn else prompts.SUPERVISOR,
             middleware=[FilesystemMiddleware(backend=backend, tools=READ_ONLY_FS_TOOLS, permissions=permissions),
                         TodoListMiddleware(), EventMiddleware(self, t, "supervisor"), resilient()],
             subagents=subagents,
@@ -317,24 +330,35 @@ class DeepAgentService(ThreadedAgentService):
         )
 
     def _drive(self, t: _Thread, ctx: ToolContext, first_message: str) -> dict[str, Any]:
-        budget = _Budget(self.max_model_calls)
+        learn = t.mode == "learn"
+        budget = _Budget(min(self.max_model_calls, self.max_learn_calls) if learn else self.max_model_calls)
         agent = self.build_agent(t, ctx, budget)
         cfg = {"configurable": {"thread_id": t.id}, "recursion_limit": 200}
         t0 = time.monotonic()
         message = first_message
+        nudges = min(self.max_nudges, 1) if learn else self.max_nudges
+
+        def finished() -> bool:
+            return ctx.learn_result is not None if learn else (ctx.deploy_requested or ctx.stopped)
+
         try:
-            for attempt in range(self.max_nudges + 1):
+            for attempt in range(nudges + 1):
                 agent.invoke({"messages": [HumanMessage(content=message)]}, cfg)
-                if ctx.deploy_requested or ctx.stopped:
+                if finished():
                     break
-                if attempt < self.max_nudges:
-                    self.emit(t, "message", agent="supervisor", text="(harness) No deploy requested yet; nudging the supervisor.")
-                    message = prompts.NUDGE
+                if attempt < nudges:
+                    what = "No parser saved yet" if learn else "No deploy requested yet"
+                    self.emit(t, "message", agent="supervisor", text=f"(harness) {what}; nudging the supervisor.")
+                    message = prompts.LEARN_NUDGE if learn else prompts.NUDGE
         finally:
             self.model_calls[t.id] = budget.calls
         result: dict[str, Any] = {"model_calls": budget.calls, "calls_by_model": budget.by_model,
-                                  "seconds": round(time.monotonic() - t0, 1),
-                                  **(ctx.deploy_result or {"deployed": False})}
+                                  "seconds": round(time.monotonic() - t0, 1)}
+        if learn:
+            if ctx.learn_result is None:
+                raise RuntimeError(f"learn finished without saving a parser ({json.dumps(result)})")
+            return {**result, **ctx.learn_result}
+        result.update(ctx.deploy_result or {"deployed": False})
         if ctx.last_version:
             result.setdefault("version", ctx.last_version["version"])
         if not ctx.deploy_requested and not ctx.stopped:
@@ -356,4 +380,15 @@ class DeepAgentService(ThreadedAgentService):
         ctx = ToolContext(self, t, name=name, incident_id=incident_id)
         msg = prompts.REPAIR_TASK.format(incident_id=incident_id, name=name, active=Store().active_version(name),
                                          incident_type=inc["type"], summary=inc["summary"])
+        return self._drive(t, ctx, msg)
+
+    def _run_learn(self, t: _Thread, page_id: str, integration: str) -> Any:
+        seed_learn_workdir(integration)
+        ctx = ToolContext(self, t, name=integration, page_id=page_id)
+        try:
+            site = ctx.get_page_record(page_id).get("site") or "?"
+        except KeyError as e:
+            raise KeyError(f"page {page_id} not found: {e}") from None
+        msg = prompts.LEARN_TASK.format(page_id=page_id, name=integration, site=site,
+                                        active=Store().active_version(integration))
         return self._drive(t, ctx, msg)

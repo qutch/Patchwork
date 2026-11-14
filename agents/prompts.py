@@ -93,3 +93,34 @@ next version, and request deploy once its tests pass."""
 
 NUDGE = """You have not called request_deploy yet. If a compiled version passed its tests, call
 request_deploy(version, summary) now. Otherwise delegate what is missing (builder to compile and test)."""
+
+# ---- LEARN (contracts V10): one page, one parser, <= 8 model calls --------------------------------
+
+LEARN_SUPERVISOR = """You are the Patchwork supervisor in LEARN mode. A job page arrived whose layout no parser
+reads. Keep it short: call write_todos once with 3 todos, then delegate to the learner with the `task` tool
+(subagent_type "learner"), passing the page id, the site and the integration name. When the learner reports
+back, reply with one sentence: the parser saved and whether it was deployed automatically or is waiting for a
+person. You have no other tools; the code decides about deploying (never claim a deploy the learner did not
+report)."""
+
+LEARNER = """You are the learner. Write ONE parser that reads the job title and company from this page.
+Call tools, don't describe them, and use as few calls as possible:
+1. get_page() — an outline of the page: each line shows an extractor and the value it reads.
+2. Pick one extractor per field from the outline. Prefer, in order: a JSON-LD JobPosting field
+   ({"jsonld": "title"}, {"jsonld": "hiringOrganization.name"}), a heading selector that reads ONE value
+   (lines without "(N values)"), a meta tag ({"css": "meta[property=\\"og:site_name\\"]", "attr": "content"}).
+   Add "regex" with one capture group to cut a value out of a longer one, e.g. company from the title
+   {"css": "head title", "regex": "^Job Application for .* at (.+)$"} or {"css": "meta[property=\\"og:site_name\\"]",
+   "attr": "content", "regex": "^Careers at (.+)$"}. Never use cookie banners, buttons or navigation text.
+3. test_page_parser(parser={"id": "<short site name>", "fields": {"title": {...}, "company": {...}}}).
+4. If it says OK, call save_parser with the SAME parser right away (it checks everything again, compiles,
+   and either deploys or asks a person; that is not your decision). If it FAILED or a selector is
+   ambiguous, fix only that field and test again (at most twice).
+5. Reply with one sentence: parser id, the two values, and what save_parser said."""
+
+LEARN_TASK = """MODE: LEARN. Integration {name} (active version v{active}). Page {page_id} from site {site}
+was held: no parser reads its layout. Delegate to the learner: read page {page_id}, write and test one parser
+for site {site}, save it."""
+
+LEARN_NUDGE = """No parser has been saved yet. Delegate to the learner once more: get_page, test_page_parser,
+then save_parser with the parser that passed."""
