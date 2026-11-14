@@ -171,7 +171,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void incidentsQ.reload();
     void integrationsQ.reload();
     void settingsQ.reload();
-  }, [threadsQ, incidentsQ, integrationsQ, settingsQ]);
+    void credentialsQ.reload();
+  }, [threadsQ, incidentsQ, integrationsQ, settingsQ, credentialsQ]);
 
   const setAi = useCallback(async (on: boolean) => {
     const prev = settingsQ.data;

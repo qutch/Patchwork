@@ -103,7 +103,7 @@ function Body() {
   return (
     <main className="max-w-[1320px] mx-auto px-4 py-6 grid gap-6">
       {route.page === "home" && <Home />}
-      {route.page === "new" && (route.mode === "show" ? <RecordTab /> : <NewIntegration draft={route.draft} />)}
+      {route.page === "new" && (route.mode === "show" ? <RecordTab /> : <NewIntegration />)}
       {route.page === "integration" && <IntegrationPage name={route.name} section={route.section} />}
       {route.page === "bench" && <BenchmarkTab />}
     </main>

@@ -149,21 +149,23 @@ export type AgentEvent = EvBase &
       }
   );
 /** Task 5 `request_deploy.review[]`: where one destination field's value comes from, per example page. */
+/** A source as the backend describes it: words, or a reader/record/today/const object (shown by `sourceLabel`). */
+export type ReviewSource = string | Record<string, unknown>;
 export interface ReviewRow {
   dest_field: string;
-  /** the source in words, e.g. "reader: h1.product-title", "the page's canonical URL", "today's date" */
-  source: string;
+  /** where the value comes from, e.g. "reader: h1.product-title", "the page's canonical URL", "today's date" */
+  source: ReviewSource;
   /** example page id -> the value the source gives on that page */
   values: Record<string, string | null>;
   ai_proposed: boolean;
   status: "checked" | "needs_you";
   /** other sources the person may pick instead (the only ones the resume accepts besides a constant or skip) */
-  alternatives: string[];
+  alternatives: ReviewSource[];
 }
 /** Task 5 resume `edits[]`: `choice` is one of the row's `alternatives`, a constant or a skip. */
 export interface ReviewEdit {
   dest_field: string;
-  choice: string | { const: string } | { skip: true };
+  choice: ReviewSource | { const: string } | { skip: true };
 }
 export type ThreadMode = "build" | "repair" | "learn";
 /** V10 `evidence.fields[]`: one page value the learner proposed, and what code found when it checked it. */

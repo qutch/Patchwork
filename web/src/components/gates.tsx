@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { api, type InterruptEvent } from "../api";
+import { api, type InterruptEvent, type ReviewEdit } from "../api";
 import { splitFileDiffs } from "../lib/derive";
 import { useApp } from "../state";
 import { Diff, DiffStat, TestsPill, Tabs } from "./ui";
+import ReviewTable from "./ReviewTable";
 
 type Ask = Extract<InterruptEvent, { type: "ask_user" }>;
 type Deploy = Extract<InterruptEvent, { type: "request_deploy" }>;
@@ -69,9 +70,9 @@ export function DeployCard({ ev, threadId, answer }: { ev: Deploy; threadId: str
   const [view, setView] = useState<"spec" | "code" | "patch" | "tests">(ev.spec_diff ? "spec" : "code");
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
-  const decide = async (decision: "approve" | "reject") => {
+  const decide = async (decision: "approve" | "reject", edits?: ReviewEdit[]) => {
     setBusy(true);
-    await act(() => api.resume(threadId, { interrupt_id: ev.interrupt_id, decision, comment }));
+    await act(() => api.resume(threadId, { interrupt_id: ev.interrupt_id, decision, comment, ...(edits?.length ? { edits } : {}) }));
     setBusy(false);
     refresh();
   };
@@ -105,6 +106,7 @@ export function DeployCard({ ev, threadId, answer }: { ev: Deploy; threadId: str
           </div>
           <TestsPill passed={ev.tests.passed} summary={ev.tests.summary} />
         </div>
+        {ev.review && ev.review.length > 0 && <ReviewTable rows={ev.review} pages={{}} busy={busy} onDecide={decide} />}
         <div className="border border-line rounded-md overflow-hidden">
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-line bg-surface flex-wrap">
             <Tabs
@@ -143,7 +145,7 @@ export function DeployCard({ ev, threadId, answer }: { ev: Deploy; threadId: str
             </pre>
           )}
         </div>
-        <div className="flex flex-wrap gap-2 items-center">
+        {!(ev.review && ev.review.length > 0) && <div className="flex flex-wrap gap-2 items-center">
           <input className="input flex-1 min-w-[220px]" placeholder="Comment (optional, sent with your decision)" value={comment} onChange={(e) => setComment(e.target.value)} aria-label="Comment" />
           <button className="btn btn-lg btn-gate" disabled={busy || !ev.tests.passed} onClick={() => decide("approve")}>
             ✓ Approve &amp; deploy v{ev.version}
@@ -151,7 +153,7 @@ export function DeployCard({ ev, threadId, answer }: { ev: Deploy; threadId: str
           <button className="btn btn-lg btn-danger" disabled={busy} onClick={() => decide("reject")}>
             Reject
           </button>
-        </div>
+        </div>}
       </div>
     </section>
   );

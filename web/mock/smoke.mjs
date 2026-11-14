@@ -90,6 +90,28 @@ try {
   const status = await j("GET", "/api/integrations/po_to_stockroom");
   assert.equal(status.active_version, 2);
   assert.equal(status.open_incidents.length, 0);
+  // New integration wizard: draft -> destination -> example pages -> teach thread -> approve with edits -> live
+  await j("POST", "/api/credentials", { name: "AIRTABLE_TOKEN", value: "sentinel-cred-123456" });
+  const draft = await j("POST", "/api/integrations/new", { intent: "Track products I like" });
+  assert.equal(draft.state, "draft");
+  const chk = await j("PUT", `/api/integrations/${draft.name}/destination`, { kind: "airtable", base_id: "appTEST00000000001", table: "Products", credential: "AIRTABLE_TOKEN" });
+  assert.equal(chk.fields[1].name, "Price");
+  const { token } = await j("GET", "/api/extension");
+  const sendPage = async (url, title) => {
+    const r = await fetch(`${BASE}/api/pages`, { method: "POST", headers: { "content-type": "application/json", "x-patchwork-token": token }, body: JSON.stringify({ url, title, html: "<h1>x</h1>", integration: draft.name }) });
+    assert.equal(r.status, 201);
+    return (await r.json()).id;
+  };
+  const pids = [await sendPage("https://shop-a.example.com/p/1", "Mug - Shop A"), await sendPage("https://lumen-supply.example.org/i/2", "Lamp | Lumen")];
+  await assert.rejects(j("POST", `/api/integrations/${draft.name}/teach`, { page_ids: pids }), (e) => e.status === 409); // AI is off here
+  await j("PUT", "/api/settings", { ai_enabled: true });
+  const taught = await j("POST", `/api/integrations/${draft.name}/teach`, { page_ids: pids });
+  const review = await waitPending(taught.thread_id, "request_deploy");
+  assert.ok(review.review.some((r) => r.ai_proposed && r.status === "needs_you"));
+  await j("POST", `/api/agent/${taught.thread_id}/resume`, { interrupt_id: review.interrupt_id, decision: "approve", edits: [{ dest_field: "Store", choice: { const: "Acme" } }] });
+  await waitState(taught.thread_id, "done");
+  assert.equal((await j("GET", `/api/integrations/${draft.name}/draft`)).state, "live");
+  assert.equal((await j("GET", `/api/tracker?integration=${draft.name}`)).rows.filter((r) => r.status === "success").length, 2);
   // Benchmark tab: serves bench/results.json when `make bench` has written it, else 404.
   const bench = await fetch(`${BASE}/api/bench/results`);
   assert.ok(bench.status === 200 || bench.status === 404, `bench results: ${bench.status}`);

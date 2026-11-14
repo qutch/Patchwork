@@ -105,9 +105,10 @@ export function createV3(h) {
 
   const credOf = (def) => def.sink.auth?.credential ?? null;
   const liveNames = () => Object.keys(I);
+  const openDrafts = () => [...drafts.values()].filter((d) => d.state !== "live");
   const calls = (n) => (h.settings().agent === "deep" ? n : 0);
   const readerOf = (def, pid) => def.readers[pid] ?? def.learned[pid];
-  const usedBy = (name) => [...liveNames().filter((n) => credOf(I[n].def) === name), ...[...drafts.values()].filter((d) => d.destination?.credential === name).map((d) => d.name)];
+  const usedBy = (name) => [...liveNames().filter((n) => credOf(I[n].def) === name), ...openDrafts().filter((d) => d.destination?.credential === name).map((d) => d.name)];
 
   function fresh(name) {
     const def = DEFS[name];
@@ -252,7 +253,7 @@ export function createV3(h) {
   const slug = (intent) => String(intent).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").split("_").slice(0, 5).join("_") || "integration";
   const CRED_NAME = /^[A-Z][A-Z0-9_]{1,63}$/;
   const REFUSED_CRED = new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "PATH", "HOME", "SHELL", "USER", "PYTHONPATH"]);
-  const APP_ID = /app[A-Za-z0-9]{14}/;
+  const APP_ID = /app[A-Za-z0-9]{14,}/;
 
   const TABLES = [{ id: "tblProducts000001", name: "Products" }, { id: "tblReadingList0001", name: "Reading list" }];
   const TABLE_FIELDS = {
@@ -446,7 +447,7 @@ export function createV3(h) {
       const page = ingest(st, { url: p.url, title: p.title, html: p.html });
       processRow(st, st.rows.get(page.id));
     }
-    drafts.delete(draft.name);
+    draft.state = "live"; // the draft record stays (state live), as the control plane keeps it
     return st;
   }
 
@@ -598,7 +599,7 @@ export function createV3(h) {
     if (p === "/api/extension" && M === "GET")
       return send(res, 200, { token: TOKEN, control_url: h.base(), default_integration: JOBS,
         integrations: [{ name: JOBS, intent: JOBS_INTENT }, ...liveNames().map((n) => ({ name: n, intent: I[n].def.intent })),
-          ...[...drafts.values()].map((d) => ({ name: d.name, intent: d.intent }))] }), true;
+          ...openDrafts().map((d) => ({ name: d.name, intent: d.intent }))] }), true;
     if (p === "/api/credentials" && M === "GET")
       return send(res, 200, [...credentials].map(([name, set]) => ({ name, set, used_by: usedBy(name) }))), true;
     if (p === "/api/demo/mock/credential" && M === "POST") {
@@ -606,13 +607,13 @@ export function createV3(h) {
       credentials.set(body.name, !!body.set);
       return send(res, 200, { name: body.name, set: !!body.set }), true;
     }
-    if (p === "/api/pages" && M === "POST" && drafts.has(body.integration)) {
+    if (p === "/api/pages" && M === "POST" && openDrafts().some((d) => d.name === body.integration)) {
       if (req.headers["x-patchwork-token"] !== TOKEN) return fail(res, 401, "bad or missing X-Patchwork-Token"), true;
       if (typeof body.url !== "string" || typeof body.html !== "string") return fail(res, 422, "url, title and html are required"), true;
       const page = ingestForDraft(drafts.get(body.integration), body);
       return send(res, 201, { id: page.id, seq: page.seq, site: page.site, canonical_url: page.canonical_url, integration: page.integration, run_id: null, queued: false }), true;
     }
-    if (p === "/api/pages" && M === "GET" && drafts.has(url.searchParams.get("integration")))
+    if (p === "/api/pages" && M === "GET" && openDrafts().some((d) => d.name === url.searchParams.get("integration")))
       return send(res, 200, [...draftPages.values()].filter((x) => x.integration === url.searchParams.get("integration")).map(({ html, ...pg }) => pg)), true; // eslint-disable-line no-unused-vars
     if (p === "/api/pages" && M === "POST") {
       const st = which(url, body);
@@ -693,7 +694,7 @@ export function createV3(h) {
   return {
     handle,
     integrations: () => [...liveNames().map((n) => summary(I[n])),
-      ...[...drafts.values()].map((d) => ({ name: d.name, state: d.state, intent: d.intent, active_version: null, latest_version: 0, open_incidents: 0 }))],
+      ...openDrafts().map((d) => ({ name: d.name, state: d.state, intent: d.intent, active_version: null, latest_version: 0, open_incidents: 0 }))],
     threads: () => [...threads.values()].map(threadStatus),
   };
 }

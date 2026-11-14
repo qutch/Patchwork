@@ -25,7 +25,7 @@ export function routeFor(i: Pick<IntegrationSummary, "name" | "state">): Route {
 
 /** One card per integration: what it does, where it writes, and whether anything needs a person. */
 export default function Home() {
-  const { integrations, pageIntegrations, incidents, threads, navigate } = useApp();
+  const { integrations, pageIntegrations, incidents, threads, navigate, setCredsOpen } = useApp();
   return (
     <>
       <PageHead
@@ -33,6 +33,7 @@ export default function Home() {
         title="Your integrations"
         right={
           <>
+            <button className="btn" onClick={() => setCredsOpen(true)}>Credentials</button>
             <button className="btn btn-primary" onClick={() => navigate({ page: "new" })}>New integration</button>
           </>
         }
