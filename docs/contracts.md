@@ -910,3 +910,75 @@ A label-keyed sink (V14's shape) whose destination is a table in a local databas
 - Extension: `default_popup: popup.html` ("Send pages to" list + "Send this page", which messages the worker's
   `sendActiveTab()`); the toolbar click no longer sends directly. The choice is `integration` in
   `chrome.storage.local` (absent = default); the options page has the same list.
+
+## V18. Rows, `clean`, cross-check rules, per-row records (generalized input)
+
+One input document (an HTML table page, a CSV/XLSX sheet, the text lines of a PDF) becomes many checked records. All
+additions are optional: a spec without `rows`, `clean` or a cross-check rule validates, dumps, hashes and compiles
+exactly as before. Field names come only from the spec; the code knows no subject.
+
+### Spec (`spec/models.py`)
+
+- **`Parser.rows: Rows | None`**. `Rows = {select, fields, require?, hold?}`:
+  - `select`, exactly one of:
+    - `{table: {columns: [<header>, ...]}}` (`columns` not empty): the first table whose header contains every name
+      (whitespace-normalised, case-insensitive).
+    - `{css: "<selector>"}`: each match in the record's HTML is a row element (needs `source.html_field`).
+    - `{lines: {after?, before?, match, skip?}}` (regexes): the text lines strictly between the first line matching
+      `after` and the next line matching `before`. A line that `match`es is a row; its named groups are the row's
+      cells. A line `match` misses must be blank, a repeat of a line from before the first row, or matched by `skip`.
+  - `fields: {<ident>: RowExtract}` (not empty). `RowExtract` = exactly one of `column` (a table header or a named
+    group of `lines.match`, case-insensitive), `index` (a cell or group position, from 0), `css` (inside the row
+    element; optional `attr`) or `regex` (on the row's text, group 1); a `regex` next to `column`/`index`/`css` is a
+    refine. Plus `cast` (`str` default) and `clean`. `column`/`index` need `select.table` or `select.lines`; `css`
+    needs `select.css`; a `column` with `select.lines` must be a named group of `match`.
+  - `require: [<row field>, ...]`: a subset of `fields`; when omitted it is filled with `[<first row field>]`.
+  - `hold: document | row` (default `document`).
+- **`Parser.all_fields()`** = document field names | row field names. A name in both is an error.
+- **Either every parser has `rows` or none does** (`Spec.has_rows()`). Field references (validate, dedupe, sink) are
+  checked against the intersection of `all_fields()`. `record.row_no` (from 1) and `record.row_count` are record
+  refs, valid like any `record.*`.
+- **`clean`** on `FieldExtract` and `RowExtract`: `money` | `{money: {decimal: "." | ","}}` | `number` |
+  `{number: {decimal}}` | `{date: [<strptime formats>, ...]}` (not empty) | `{split: {sep, part}}` | `strip` | `upper` |
+  `lower` (`runner.clean.CLEANERS`). Anything else is a spec error. `clean` runs on the raw value before `cast`.
+- **`FieldExtract`**: a `regex` next to `json_path` is now a refine (as next to `css`/`jsonld`), e.g.
+  `{json_path: "$.meta.subject", regex: 'Ref\s+(\S+)'}`.
+- **Cross-check rules** in `validate` (`spec.models.CROSS_RULES`), allowed only when every parser has `rows`:
+  - `{rule: sum_equals, rows_field: f, field: g, tolerance?}`: Σ of row field `f` equals document field `g`.
+  - `{rule: product_equals, fields: [a, b], field: c, tolerance?}`: on every row, `a × b` equals row field `c`.
+  - `{rule: count_equals, field: g}`: the number of rows equals document field `g`.
+  - `tolerance` defaults to `0.01` on these rules and is refused on any other rule (so other rules dump as before).
+    `rows_field` and `fields` must be row fields common to every parser; `field` is a document field (a row field for
+    `product_equals`).
+
+Two examples (one with document fields and a cross-check, one without):
+
+```yaml
+extract:
+  route_by: site
+  parsers:
+    - id: sender_a
+      match: {site: sender-a.example}
+      fields:
+        ref:   {json_path: "$.meta.subject", regex: 'Ref\s+(\S+)'}
+        total: {regex: 'Total\s+(\S+)', clean: money}
+      rows:
+        select: {lines: {after: '^Item\s+Qty', before: '^Total', match: '^(?P<item>.+?)\s+(?P<qty>\d+)\s+(?P<amount>\S+)$'}}
+        fields:
+          item:   {column: item}
+          qty:    {column: qty, cast: int}
+          amount: {column: amount, clean: money}
+validate:
+  - {rule: sum_equals, rows_field: amount, field: total}
+dedupe: {key: [ref, record.row_no]}
+```
+
+```yaml
+      rows:
+        select: {table: {columns: [Name, Email, Session]}}
+        hold: row
+        fields:
+          name:    {column: Name}
+          email:   {column: Email, clean: lower}
+          session: {column: Session}
+```
