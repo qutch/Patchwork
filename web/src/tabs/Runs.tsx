@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api, finishedSummary, splitCounts, streams,
-  type Counts, type Incident, type RecordRow, type RunDetail, type RunProgress, type RunSummary,
+  type Counts, type RecordRow, type RunDetail, type RunProgress, type RunSummary,
 } from "../api";
 import { fmtDuration, fmtTime } from "../lib/derive";
 import { useApp, usePoll } from "../state";
 import { AiToggle } from "../components/AiToggle";
+import { IncidentBanner } from "../components/IncidentBanner";
 import { Card, Empty, JsonInline, PageHead, Pill, outcomeStyle } from "../components/ui";
 
 const REASON_ORDER = ["VALIDATION_FAILED", "NOT_FOUND", "PARSE_NO_MATCH", "SINK_CONTRACT", "AUTH", "VERIFY_MISMATCH", "UNKNOWN"];
@@ -79,61 +80,6 @@ function Counter({ label, value, k, big = false, sub }: { label: string; value: 
   );
 }
 
-function IncidentBanner({ id }: { id: number }) {
-  const { settings, act, setThreadId, go, refresh } = useApp();
-  const [inc, setInc] = useState<Incident | null>(null);
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    api.incident(id).then(setInc, () => setInc(null));
-  }, [id]);
-  if (!inc) return null;
-  const errors = inc.detail?.contract_errors ?? [];
-  const ai = !!settings?.ai_enabled;
-  const repair = async () => {
-    setBusy(true);
-    const r = await act(() => api.repair(inc.id));
-    setBusy(false);
-    if (r) {
-      setThreadId(r.thread_id);
-      refresh();
-      go("agent");
-    }
-  };
-  return (
-    <section className="rounded-md border-2 overflow-hidden" style={{ borderColor: "var(--bad)", background: "var(--bad-soft)" }} role="alert">
-      <div className="px-5 py-4 flex flex-wrap items-center gap-4 justify-between">
-        <div className="grid gap-1 min-w-0">
-          <div className="font-mono text-[12px] font-bold uppercase tracking-wider" style={{ color: "var(--bad)" }}>
-            Incident #{inc.id} · {inc.type} · {inc.reason_codes.join(", ")} · v{inc.version}
-          </div>
-          <div className="display text-[22px] font-extrabold leading-tight" style={{ color: "var(--ink)" }}>
-            {inc.type === "CONTRACT_CHANGED" ? "Run blocked before any write: Stockroom's contract changed" : inc.summary}
-          </div>
-          <div className="text-[15px]">{inc.summary}</div>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          {!ai && <AiToggle />}
-          <button className="btn btn-lg btn-primary" onClick={repair} disabled={busy || !ai} title={ai ? "Start the REPAIR agent" : "Turn AI on to repair"}>
-            Repair with AI →
-          </button>
-        </div>
-      </div>
-      {errors.length > 0 && (
-        <div className="px-5 pb-4">
-          <button className="btn" onClick={() => setOpen((o) => !o)}>
-            {open ? "Hide" : "Show"} {errors.length} contract errors
-          </button>
-          {open && (
-            <pre className="code rounded mt-2" style={{ maxHeight: 260 }}>
-              {errors.join("\n")}
-            </pre>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
 
 function RecordGrid({ records }: { records: RecordRow[] }) {
   return (
@@ -323,7 +269,7 @@ export default function RunsTab() {
   };
 
   // a blocked run's incident, or the newest open one
-  const incidentId = incidents[0]?.id ?? null;
+  const incidentId = incidents.find((i) => i.integration === name)?.id ?? null;
   const reasons = Object.entries(c.reasons).sort(([a], [b]) => REASON_ORDER.indexOf(a) - REASON_ORDER.indexOf(b));
 
   return (

@@ -52,7 +52,12 @@ const companyFrom = (url, site) => {
   })();
   return COMPANY[slug] ?? (slug ? slug[0].toUpperCase() + slug.slice(1) : null);
 };
-const titleFrom = (t) => String(t || "").split(/ [-|@–] /)[0].trim() || null;
+/** The posting title inside a document.title, per platform (Lever puts the company first). */
+const titleFrom = (t, site = "") => {
+  const s = String(t || "").replace(/^Job Application for /, "").replace(/ at [A-Z][\w]*$/, "");
+  const parts = s.split(/ [-|@–] /);
+  return (site === "jobs.lever.co" && parts.length > 1 ? parts.slice(1).join(" - ") : parts[0]).trim() || null;
+};
 
 /** Canned postings for mock/press.mjs (what the extension would send). */
 export const POSTINGS = {
@@ -77,7 +82,7 @@ export const POSTINGS = {
 };
 export function cannedHtml(url, title) {
   const site = siteOf(url);
-  const t = titleFrom(title.replace(/^Job Application for /, "").replace(/ at \w+$/, ""));
+  const t = titleFrom(title, site);
   const gh = site === "careers.airbnb.com" ? `<script src="https://boards.greenhouse.io/embed/job_board/js?for=airbnb"></script>` : "";
   return `<html><head><title>${title}</title>${gh}</head><body><div class="cookie">We use cookies. Accept</div><h1>${t}</h1><a>Apply for this job</a></body></html>`;
 }
@@ -234,7 +239,7 @@ export function createV2(h) {
     const layout = layoutOf(pid);
     Object.assign(row, {
       parser: pid, version: V.active, routed_by, parser_origin: h.clone(layout.origin),
-      title: titleFrom(page.title.replace(/^Job Application for /, "").replace(/ at \w+$/, "")), company: companyFrom(page.url, page.site),
+      title: titleFrom(page.title, page.site), company: companyFrom(page.url, page.site),
     });
     if (written(page.canonical_url)) return Object.assign(row, { status: "duplicate", label: "duplicate", reason: null, detail: `already in the tracker (${page.canonical_url})`, incident_id: null });
     const learnedNow = row.learn_thread_id && layout.origin?.thread_id === row.learn_thread_id;
@@ -298,7 +303,7 @@ export function createV2(h) {
 
   function evidenceFor(page, pid) {
     const r = READERS[pid] ?? { fields: { title: { css: "h1" }, company: { css: 'meta[property="og:site_name"]', attr: "content" } } };
-    const title = titleFrom(page.title.replace(/^Job Application for /, "").replace(/ at \w+$/, ""));
+    const title = titleFrom(page.title, page.site);
     const company = companyFrom(page.url, page.site);
     const where = (f) => (r.fields[f]?.jsonld ? "jsonld" : r.fields[f]?.attr ? "html" : "text");
     return [

@@ -1,12 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  api, streams, ApiError,
+  api, streams, ApiError, TRACKER,
   type AgentEvent, type IncidentSummary, type IntegrationSummary, type Settings, type ThreadStatus,
 } from "./api";
 import { deriveThread, mergeEvents } from "./lib/derive";
 
-export type Tab = "record" | "review" | "agent" | "integration" | "runs" | "bench";
+export type Tab = "tracker" | "record" | "review" | "agent" | "integration" | "runs" | "bench";
 export const TABS: { id: Tab; label: string }[] = [
+  { id: "tracker", label: "Tracker" },
   { id: "record", label: "Record" },
   { id: "review", label: "Review" },
   { id: "agent", label: "Agent Activity" },
@@ -98,7 +99,7 @@ export const useApp = () => {
 
 function tabFromHash(): Tab {
   const h = (typeof location !== "undefined" ? location.hash : "").replace("#", "");
-  return (TABS.find((t) => t.id === h)?.id ?? "record") as Tab;
+  return (TABS.find((t) => t.id === h)?.id ?? "tracker") as Tab;
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -177,7 +178,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     threads: threadsQ.data ?? [],
     incidents: incidentsQ.data ?? [],
     integrations,
-    integrationName: integrations[0]?.name ?? "po_to_stockroom",
+    // v1 tabs (Review, Integration, Runs) follow the v1 integration; the Tracker tab is jobs_to_tracker
+    integrationName: integrations.find((i) => i.name !== TRACKER)?.name ?? "po_to_stockroom",
     refresh, notice, notify, act,
   };
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
