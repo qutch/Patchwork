@@ -15,8 +15,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-from control import autorun, ops, tracker
+from control import autorun, layouts, ops, tracker
 from control.api.settings import extension_token
 from runner.store import Store
 
@@ -129,3 +130,30 @@ def get_page(page_id: str, request: Request, integration: str | None = None) -> 
 @router.get("/extension")
 def extension(request: Request) -> dict[str, str]:
     return {"token": extension_token(), "control_url": control_url(request)}
+
+
+# ---- tracker and learned layouts ----------------------------------------------------------------
+
+class RevertBody(BaseModel):
+    integration: str = DEFAULT_INTEGRATION
+
+
+@router.get("/tracker")
+def get_tracker(request: Request, integration: str = DEFAULT_INTEGRATION,
+                limit: int = Query(50, ge=1, le=1000)) -> dict[str, Any]:
+    state = request.app.state
+    return tracker.tracker_rows(Store(), state.inbox, current_agent(state), integration, limit)
+
+
+@router.get("/layouts")
+def get_layouts(integration: str = DEFAULT_INTEGRATION) -> list[dict[str, Any]]:
+    return tracker.layouts(Store(), integration)
+
+
+@router.post("/layouts/{parser_id}/revert")
+def revert_layout(parser_id: str, body: RevertBody) -> dict[str, Any]:
+    """Compile the active spec minus that parser, test, deploy (no AI). 409 if tests fail or it is the last parser."""
+    try:
+        return layouts.revert_parser(body.integration, parser_id)
+    except layouts.LayoutError as e:
+        raise HTTPException(e.status, str(e)) from None

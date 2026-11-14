@@ -500,6 +500,17 @@ quarantined records, then run once more (pages blocked by preflight were never f
 - `GET /api/pages/{id}` takes optional `?integration=`. `GET /api/pages?since=` also accepts `None`/`null` as 0; a
   non-integer → 422; `limit` 1–1000.
 - Page ids are never reused in a workspace (the seq counter survives `/api/demo/v2/reset`).
+- TrackerRow: a page with no record yet whose latest run (started after the page) was `blocked` by preflight is
+  `status: held, label: held, reason: "CONTRACT_CHANGED"` with that run's `incident_id`; after a `failed`/`tripped` run it
+  is `status: failed`. A quarantined page whose learn thread is running/waiting is `status: learning` (label null); one
+  whose learn deployed but whose replay hasn't finished is `status: running`. `totals` count every page in the inbox
+  (not just `limit`). Which page started which learn thread is kept in `pages.db` (`learns`), so labels survive a restart.
+- Learn trigger: a page is learned from at most once (a later replay of it never starts a second thread); one active
+  (running/waiting) learn per `site`. Agents without `start_learn` or with AI off → rows stay `held`. Only `deployed`
+  events from `learn-*`/`repair-*` threads trigger the replay + run, after that thread has finished.
+- Layouts: active parsers first (active spec order), then removed ones (newest first). Revert also answers
+  `name, previous_version, removed_parser, dropped_examples` (golden examples the removed parser handled are dropped);
+  404 for an unknown integration or parser.
 
 ## V10. Agents (W3): LEARN mode and the TEACH/REPAIR additions
 
