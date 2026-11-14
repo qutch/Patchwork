@@ -548,6 +548,11 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         """Summarize the destination ('sink') OpenAPI: operations, query params and request body schemas."""
         if target == "sink" and ctx.spec_path.exists():
             return summarize_openapi(ctx.fetch_contract(ctx.spec_dict()))
+        if target == "sink" and not ctx.spec_path.exists():
+            c = candidates_for(ctx.recording_id or "fixture")
+            if is_page_candidates(c):  # no spec yet: the recorded form (sink.url; forms have no base_url)
+                from runner.forms import fetch_form_contract
+                return summarize_openapi(fetch_form_contract(c["sink"]["url"]))
         base = ctx.sink_base() if target == "sink" else ctx.source_base()
         doc = httpx.get(base + "/openapi.json", timeout=10).json()
         return summarize_openapi(doc)

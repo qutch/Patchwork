@@ -6,3 +6,6 @@ workspace/*
 !workspace/.gitkeep
 node_modules/
 .env
+
+# v2 stage workspace (learned layouts + baseline for the demo Google Form; see docs/demo-v2.md)
+workspace-v2/

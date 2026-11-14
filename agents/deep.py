@@ -233,9 +233,14 @@ class EventMiddleware(AgentMiddleware):
         self.svc.emit(self.t, "tool_call", agent=self.agent, tool=tool, args=_args_for_event(args))
         try:
             result = handler(request)
-        except Exception as e:
-            self.svc.emit(self.t, "tool_result", agent=self.agent, tool=tool, ok=False, summary=f"{type(e).__name__}: {e}")
-            raise
+        except Exception as e:  # ThreadCancelled is a BaseException and still propagates
+            # Hand the error back to the model as the tool's result, so it can recover, instead of failing the
+            # whole thread (a live TEACH died on one KeyError, 2026-11-14). Guardrails are unaffected: they refuse
+            # by returning text, and nothing was written by a tool that raised.
+            summary = f"{type(e).__name__}: {e}"
+            self.svc.emit(self.t, "tool_result", agent=self.agent, tool=tool, ok=False, summary=_short(summary, 400))
+            return ToolMessage(content=f"ERROR: {summary}", tool_call_id=call.get("id") or "", name=tool,
+                               status="error")
         text = _result_text(result)
         ok = not (getattr(result, "status", None) == "error" or text.lstrip().upper().startswith(FAIL_PREFIXES)
                   or text.lstrip().startswith("Error"))

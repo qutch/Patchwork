@@ -192,3 +192,38 @@ def test_page_goldens_are_not_readable_by_agents(repaired):
     assert svc.max_page_repair_calls == 30
     first = model.seen[0][-1].content
     assert "Don't read files" in first and "patch_hint" in first
+
+
+def test_read_openapi_before_draft_reads_the_form_contract(workspace, monkeypatch):
+    """Live TEACH (2026-11-14) called read_openapi before draft_spec: a page→form recording's sink has a url,
+    not a base_url, so the tool must read the form contract instead of failing with KeyError."""
+    svc, t, ctx, tools = make_ctx("build", recording_id="fixture-jobs")
+    assert not ctx.spec_path.exists()
+    seen = []
+    doc = {"openapi": "3.0.3", "info": {"title": "Job tracker", "x-patchwork-kind": "form"},
+           "paths": {"/form": {"post": {"requestBody": {"content": {"application/json": {"schema": {
+               "type": "object", "required": ["Email"],
+               "properties": {"Email": {"type": "string"}, "Company": {"type": "string"}}}}}}}}}}
+    import runner.forms
+    monkeypatch.setattr(runner.forms, "fetch_form_contract", lambda url: seen.append(url) or doc)
+    out = tools["read_openapi"]()
+    assert seen == ["http://127.0.0.1:18010/"]  # the recorded form (fixture-jobs)
+    assert "Company" in out and "/form" in out
+
+
+def test_tool_exception_goes_back_to_the_model(workspace):
+    """A tool that raises must not fail the whole thread: the model gets an error result and can recover."""
+    from types import SimpleNamespace
+
+    from agents.deep import EventMiddleware
+    svc, t, ctx, tools = make_ctx("build", recording_id="fixture-jobs")
+    mw = EventMiddleware(svc, t, "supervisor")
+    req = SimpleNamespace(tool_call={"name": "read_openapi", "args": {}, "id": "call_1"})
+
+    def boom(_):
+        raise KeyError("base_url")
+
+    msg = mw.wrap_tool_call(req, boom)
+    assert getattr(msg, "status", None) == "error" and "KeyError" in msg.content and msg.tool_call_id == "call_1"
+    last = [e for e in svc.events(t.id) if e["type"] == "tool_result"][-1]
+    assert last["ok"] is False and "KeyError" in last["summary"]
