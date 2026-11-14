@@ -45,6 +45,7 @@ from spec import SpecError, parse_spec, validate_spec
 MAX_REPAIR_ATTEMPTS = 3
 FAIL_PREFIXES = ("ERROR", "REFUSED", "FAILED", "INVALID")
 CONTROL_SOURCE = "patchwork://control"
+JOBS_RECORDING = "fixture-jobs"
 LEARN_POLICIES = ("auto", "approve")
 _IDENT = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -196,6 +197,9 @@ def candidates_for(recording_id: str) -> dict:
     path = workspace_dir() / "recordings" / recording_id / "candidates.json"
     if path.exists():
         return json.loads(path.read_text())
+    if recording_id == JOBS_RECORDING:  # W2's fixture recording, else the agents' V11 stand-in
+        own = FIXTURES / "recording_jobs" / "candidates.json"
+        return json.loads((own if own.exists() else FIXTURES / "agent_candidates_jobs.json").read_text())
     try:
         from matcher import match  # type: ignore[import-not-found]
     except ImportError:
@@ -209,6 +213,131 @@ def candidates_for(recording_id: str) -> dict:
     if recording_id == "fixture":
         return json.loads((FIXTURES / "agent_candidates.json").read_text())
     raise FileNotFoundError(f"no candidates for recording {recording_id} (no candidates.json and no matcher)")
+
+
+def is_page_candidates(c: dict) -> bool:
+    return (c.get("source") or {}).get("kind") == "page" and (c.get("sink") or {}).get("kind") == "form"
+
+
+def default_build_name(recording_id: str, fallback: str) -> str:
+    """BUILD without a name: page->form recordings build `jobs_to_tracker` (V9), others the v1 default."""
+    from agents.interface import DEFAULT_PAGE_INTEGRATION
+    try:
+        return DEFAULT_PAGE_INTEGRATION if is_page_candidates(candidates_for(recording_id)) else fallback
+    except Exception:  # noqa: BLE001 - no candidates yet: the interpreter will report it
+        return fallback
+
+
+def snapshot_html(recording_id: str, snapshot: str) -> str:
+    """The source page saved at copy time (V11 `snapshots/<n>.html`, relative to the recording dir)."""
+    for root in (workspace_dir() / "recordings" / recording_id, FIXTURES / "recording_jobs", FIXTURES):
+        p = root / snapshot
+        if p.is_file():
+            return p.read_text()
+    raise FileNotFoundError(f"snapshot {snapshot} of recording {recording_id} not found")
+
+
+_FIELD_ALIASES = {"job title": "title", "title": "title", "position": "title", "role": "title",
+                  "company": "company", "company name": "company", "employer": "company", "organization": "company"}
+
+
+def _field_name(label: str) -> str:
+    key = " ".join(label.lower().replace("*", "").split())
+    return _FIELD_ALIASES.get(key) or (re.sub(r"[^a-z0-9]+", "_", key).strip("_") or "field")
+
+
+def site_parser_id(site: str) -> str:
+    """jobs.lever.co -> lever, job-boards.greenhouse.io -> greenhouse, careers.airbnb.com -> airbnb."""
+    parts = [p for p in (site or "").lower().split(".") if p]
+    name = parts[-2] if len(parts) >= 2 else (parts[0] if parts else "page")
+    name = re.sub(r"[^a-z0-9]+", "_", name).strip("_") or "page"
+    return name if name[0].isalpha() else f"p_{name}"
+
+
+def _extractor_from_mapping(m: dict) -> dict | None:
+    if m.get("kind") == "css" and m.get("css"):
+        f = {"css": m["css"]}
+    elif m.get("kind") == "jsonld" and m.get("jsonld"):
+        f = {"jsonld": m["jsonld"], **({"jsonld_type": m["jsonld_type"]} if m.get("jsonld_type") else {})}
+    else:  # copied text without a selector: fall back to a recorded alternative
+        alt = next((a for a in m.get("alternatives") or [] if isinstance(a, dict) and (a.get("css") or a.get("jsonld"))), None)
+        if alt is None:
+            return None
+        f = {k: alt[k] for k in ("css", "attr", "jsonld", "jsonld_type", "regex") if alt.get(k)}
+        return f
+    for k in ("attr", "regex"):
+        if m.get(k):
+            f[k] = m[k]
+    return f
+
+
+def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str) -> tuple[dict, list[dict], list[str]]:
+    """V11 page->form candidates -> a V7/V5 spec with one taught parser, plus one golden example built from
+    the snapshot (expected values are the recorded ones, independent of the parser). Returns
+    (spec, examples, problems)."""
+    src, sink = c["source"], c["sink"]
+    site = src.get("site") or ""
+    fields, form_fields, assumptions, problems = {}, {}, [], []
+    record_values: dict[str, str] = {}
+    by_label = {m["dest_field"]: m for m in c.get("mappings") or []}
+    labels = list(sink.get("labels") or by_label)
+    for label in labels:
+        m = by_label.get(label)
+        if m is None:
+            continue
+        kind = m.get("kind")
+        if kind == "record" and str(m.get("from", "")).startswith("record."):
+            form_fields[label] = {"from": m["from"]}
+            record_values[label] = m["from"]
+            assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "observed",
+                                "text": f"{label} comes from the page record ({m['from']})"})
+        elif kind == "const":
+            form_fields[label] = {"const": m["value"]}
+            assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "inferred",
+                                "text": f"{label} is always {m['value']!r} (typed during the recording)"})
+        else:
+            f = _extractor_from_mapping(m)
+            if f is None:
+                problems.append(f"{label}: no selector or alternative to read it from the page")
+                continue
+            fname = _field_name(label)
+            fields[fname] = f
+            form_fields[label] = {"from": fname}
+            assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "observed",
+                                "text": f"{label} is read from the page ({learn.extractor_label(f)})"})
+    for u in c.get("unexplained") or []:
+        form_fields[u["dest_field"]] = {"const": u["value"]}
+        assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "inferred",
+                            "text": f"{u['dest_field']} is always {u['value']!r} (not found on the page)"})
+    assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "inferred",
+                        "text": "the posting's canonical URL identifies it; pressing the hotkey twice is a duplicate"})
+    parser = {"id": site_parser_id(site), "match": {"site": site},
+              "origin": {"kind": "taught", "at": now(), "thread_id": thread_id, "approved_by": None},
+              "fields": fields}
+    spec = {
+        "spec_version": 1, "name": name, "intent": c.get("intent") or "",
+        "source": {"kind": "api", "base_url": CONTROL_SOURCE,
+                   "list": {"method": "GET", "path": "/api/pages", "params": {"since": "{cursor}"}},
+                   "record_id": "id", "text_field": "text", "html_field": "html", "cursor_field": "seq"},
+        "extract": {"route_by": "site", "parsers": [parser]},
+        "validate": [{"field": f, "rule": "required"} for f in fields],
+        "dedupe": {"key": ["record.canonical_url"]},
+        "sink": {"kind": "form", "url": sink["url"], "fields": form_fields, "submit": sink.get("submit") or "Submit",
+                 **({"verify": {"confirmation_text": sink["confirmation_text"]}} if sink.get("confirmation_text") else {})},
+        "on_error": "quarantine", "assumptions": assumptions,
+    }
+    date = next((by_label[lab]["value"] for lab, ref in record_values.items() if ref == "record.captured_date"), None)
+    rec = learn.make_page_record(src["url"], html, seq=1, captured_at=f"{date}T12:00:00.000+00:00" if date else None)
+    body = {}
+    for label, vs in form_fields.items():
+        if "const" in vs:
+            body[label] = str(vs["const"])
+        elif vs["from"].startswith("record."):
+            body[label] = str(rec[vs["from"].removeprefix("record.")])
+        else:
+            body[label] = str(by_label[label]["value"])
+    examples = [{"name": f"taught_{parser['id']}_1", "record": rec, "expect": {"body": body}}]
+    return spec, examples, problems
 
 
 def summarize_recording(rec: dict) -> str:
@@ -451,6 +580,10 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         return "\n".join(lines)
 
     def _ensure_samples() -> list[dict]:
+        if not ctx.samples and ctx.spec_path.exists() and is_page_integration(ctx.spec_dict()) \
+                and not os.environ.get("PATCHWORK_CONTROL_URL"):
+            ex = ctx.wd / "examples.yaml"  # TEACH: the recorded page is the sample
+            ctx.samples = [e["record"] for e in (yaml.safe_load(ex.read_text()) if ex.exists() else []) or []]
         if not ctx.samples:
             fetch_source_samples(15)
         return ctx.samples
@@ -511,6 +644,24 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         `field_names` optionally renames extracted fields, e.g. {"product_id": "sku", "quantity": "qty",
         "reference": "po_id"} (destination field -> short extracted field name). Overwrites spec.yaml."""
         c = candidates_for(ctx.recording_id or "fixture")
+        if is_page_candidates(c):
+            try:
+                html = snapshot_html(ctx.recording_id or JOBS_RECORDING, c["source"]["snapshot"])
+            except (FileNotFoundError, KeyError) as e:
+                return f"ERROR: {e}"
+            spec, examples, problems = draft_page_spec(c, name=ctx.name, thread_id=ctx.t.id, html=html)
+            ctx.spec_path.write_text(yaml.safe_dump(spec, sort_keys=False, width=200))
+            (ctx.wd / "examples.yaml").write_text(yaml.safe_dump(examples, sort_keys=False, width=200))
+            ctx.samples = [examples[0]["record"]]
+            errors = ctx.validate_spec_text(ctx.spec_path.read_text())
+            ctx.svc.emit(ctx.t, "artifact", kind="spec", name=ctx.name, version=None, path=str(ctx.spec_path))
+            p = spec["extract"]["parsers"][0]
+            readers = {k: learn.extractor_label(v) for k, v in p["fields"].items()}
+            return (f"wrote spec.yaml (page -> form: parser {p['id']} for {p['match']['site']}, fields {readers}, "
+                    f"form fields {list(spec['sink']['fields'])}, dedupe record.canonical_url) and examples.yaml "
+                    "(the recorded page). "
+                    + ("; ".join(f"PROBLEM: {x}" for x in problems) + ". " if problems else "")
+                    + ("valid" if not errors else "INVALID: " + "; ".join(errors)))
         rec = load_recording(ctx.recording_id or "fixture")
         field_names = field_names or {}
         src, sink, record = c["source"], c["sink"], c["source"]["record"]
@@ -710,9 +861,10 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         v = passing[-1]["version"]
         vdir = workspace_dir() / "integrations" / ctx.name / f"v{v}"
         cfg = yaml.safe_load((vdir / "config.yaml").read_text())
+        is_form = cfg["sink"].get("kind") == "form"  # forms: the runner fills but never submits on dry runs (V5)
         staging = (os.environ.get("PATCHWORK_STAGING_BASE_URL") or cfg["sink"].get("staging_base_url") or "").rstrip("/")
-        live = (os.environ.get("PATCHWORK_SINK_BASE_URL") or cfg["sink"]["base_url"]).rstrip("/")
-        if not staging or staging == live:
+        live = (os.environ.get("PATCHWORK_SINK_BASE_URL") or cfg["sink"].get("base_url") or "").rstrip("/")
+        if not is_form and (not staging or staging == live):
             return "REFUSED: no separate staging sink configured; agents never write to the live sink"
         try:
             s = ops.run_sandboxed(ctx.name, version=str(v), dry_run=True, limit=max(1, min(int(limit), 25)), timeout=120)

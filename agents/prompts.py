@@ -54,6 +54,9 @@ Steps (call tools, don't describe them):
 7. Confirm the most important inferred assumption with ask_user (one question, 2 options), e.g. what to do
    with messages that are not orders. Record the answer by patching /assumptions (status: confirmed).
 8. validate_spec, then reply with a 2-sentence summary: parsers, fields, open questions.
+PAGE -> FORM recordings (get_candidates shows source.kind "page" and sink.kind "form"): call draft_spec() with
+no arguments (it writes a page parser from the copied elements and the form fields), then test_parser(),
+confirm the constant values (e.g. the Email) with ONE ask_user, validate_spec, and reply. Skip steps 3-7.
 {SPEC_STYLE}"""
 
 BUILDER = """You are the builder. Call compile_spec (it validates, compiles the next immutable version and runs
@@ -81,6 +84,10 @@ Steps for a CONTRACT_CHANGED incident (call tools, don't describe them):
 4. propose_spec_patch with ALL operations in one patch, then migrate_golden_examples, then validate_spec.
 5. Reply with 2 sentences: what changed and why.
 For NEW_SOURCE_FORMAT: get_quarantined, write a new parser, test_parser, propose_spec_patch, add_test_case.
+For a FORM sink (sink.kind form; its fields are keyed by the form's question labels): get_incident, diff_openapi,
+then propose_spec_patch with exactly the ops in diff_openapi.patch_hint (a `move` per renamed question, e.g.
+{{"op": "move", "from": "/sink/fields/Company", "path": "/sink/fields/Employer"}}), then migrate_golden_examples.
+Ask (ask_user, the suggested_questions word for word) only if diff_openapi returned suggested_questions.
 {SPEC_STYLE}"""
 
 BUILD_TASK = """MODE: BUILD. Recording id: {recording_id}. Integration name: {name}.

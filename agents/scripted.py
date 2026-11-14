@@ -68,6 +68,13 @@ def work_dir(name: str = NAME) -> Path:
 def load_recording(recording_id: str) -> dict[str, Any]:
     if recording_id == "fixture":
         return json.loads((FIXTURES / "recording.json").read_text())
+    if recording_id == "fixture-jobs":  # W2's page->form fixture recording; a stub until it lands
+        own = FIXTURES / "recording_jobs" / "recording.json"
+        if own.exists():
+            return json.loads(own.read_text())
+        c = json.loads((FIXTURES / "agent_candidates_jobs.json").read_text())
+        return {"id": "fixture-jobs", "intent": c["intent"], "allowlist": [c["source"]["site"]],
+                "start_url": c["source"]["url"], "events": []}
     path = workspace_dir() / "recordings" / recording_id / "recording.json"
     return json.loads(path.read_text())
 

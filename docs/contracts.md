@@ -542,6 +542,18 @@ LEARN `done.result`: `{model_calls, seconds, page_id, parser_id, site, version, 
 - `learn_policy` is read from `$PATCHWORK_WORKSPACE/settings.json` (`"auto"` default); an unknown value counts as `"approve"`.
 - For page integrations (`source.base_url: patchwork://control`) the agent never replays after `deployed` (LEARN or
   REPAIR): the control plane does (V9). LEARN's filesystem allows writing `/spec.yaml` only.
+- TEACH page→form (`draft_spec` on V11 candidates): parser id from the site (`jobs.lever.co` → `lever`,
+  `careers.airbnb.com` → `airbnb`), `match: {site}`, no fingerprint, `origin: {kind: taught, approved_by: null}`;
+  `extract.route_by: site`; a mapping without a selector uses its first css/jsonld `alternatives` entry; field names
+  `Job Title` → `title`, `Company` → `company` (else a slug of the label); `validate: required` per page field; one
+  golden example built from the snapshot (record.* values from the record, page values as recorded). `start_build`
+  without a name builds `jobs_to_tracker` when the candidates are page→form. Until W2's `fixtures/recording_jobs/`
+  lands, `fixture-jobs` falls back to `fixtures/agent_candidates_jobs.json` (V11 shape, snapshot `fixtures/pages/lever-1.html`).
+- REPAIR on a form: `diff_openapi` pairs renames (name similarity, feeding field, then a unique same-type pair), returns
+  `patch_hint` (the `move` ops on `/sink/fields`) and `suggested_questions` only for questions it couldn't pair
+  ("The form question 'X' is gone. Which new question replaces it?", options = unpaired new labels + "None: stop sending it").
+  `propose_spec_patch` refuses ops on `/sink/url`, `/sink/kind`, `/source/kind` (as for base URLs). Golden bodies of
+  form specs are strings. Dry runs of form versions need no staging URL.
 
 ## V11. Capture (W2): page snapshots, element paths, page→form candidates, extension
 

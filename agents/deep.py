@@ -35,7 +35,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from agents import prompts
-from agents.deep_tools import FAIL_PREFIXES, ToolContext, build_tools, seed_learn_workdir, seed_repair_workdir
+from agents.deep_tools import (FAIL_PREFIXES, ToolContext, build_tools, default_build_name, seed_learn_workdir,
+                               seed_repair_workdir)
 from agents.interface import ThreadCancelled, ThreadedAgentService, _Thread
 from agents.scripted import NAME, work_dir
 from runner.store import Store
@@ -366,7 +367,7 @@ class DeepAgentService(ThreadedAgentService):
         return result
 
     def _run_build(self, t: _Thread, recording_id: str) -> Any:
-        name = t.integration or self.name
+        name = t.integration or default_build_name(recording_id, self.name)
         ctx = ToolContext(self, t, name=name, recording_id=recording_id)
         work_dir(name)
         return self._drive(t, ctx, prompts.BUILD_TASK.format(recording_id=recording_id, name=name))

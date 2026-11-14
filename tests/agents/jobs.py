@@ -181,6 +181,21 @@ class FakeEngine:
         return built["version"]
 
 
+def open_form_incident(renames: dict[str, str], required=("Email",)) -> int:
+    """A CONTRACT_CHANGED incident like the runner's form preflight raises (V6) after renaming questions."""
+    from runner.store import Store
+    labels = ["Email", "Job Title", "Company", "Link", "Date Applied"]
+    new_labels = [renames.get(lab, lab) for lab in labels]
+    errors = [f"body.{old}: not accepted by destination (no such property)" for old in renames]
+    errors += [f"body.{new}: required by destination but missing from body" for new in renames.values() if new in required]
+    store = Store()
+    return store.open_incident(
+        name=NAME, version=store.active_version(NAME), run_id=None, type="CONTRACT_CHANGED",
+        reason_codes=["CONTRACT_CHANGED"], summary="The tracker form changed: " + "; ".join(errors),
+        detail={"contract_errors": errors, "sink_call": {"method": "POST", "path": "/form"}},
+        old_openapi=form_contract(labels), new_openapi=form_contract(new_labels, required))
+
+
 def set_learn_policy(policy: str) -> None:
     from runner.store import workspace_dir
     path = workspace_dir() / "settings.json"
