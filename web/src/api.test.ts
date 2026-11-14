@@ -27,6 +27,14 @@ class FakeES {
     this.readyState = 2;
     this.onerror?.();
   }
+  /** What a real EventSource does on a refused connection (e.g. 404): a data-less "error" Event that
+   *  also reaches addEventListener("error"), the same name as the agent's own `error` event. */
+  fail() {
+    this.readyState = 2;
+    const ev = { type: "error" } as Event;
+    for (const fn of this.listeners.get("error") ?? []) fn(ev as MessageEvent);
+    this.onerror?.();
+  }
 }
 
 afterEach(() => {
@@ -93,6 +101,21 @@ describe("openStream", () => {
     es.emit("progress", 0, { processed: 0, total: 100 }); // total became known
     es.emit("finished", 1, { processed: 0, total: 100 });
     expect(got).toEqual([null, 100, 100]);
+  });
+
+  it("a refused connection is not delivered as an agent `error` event", () => {
+    vi.useFakeTimers();
+    const got: unknown[] = [];
+    openStream("/api/agent/gone/stream", {
+      events: ["status", "error"],
+      onMessage: (m) => got.push(m.data),
+      EventSourceImpl: FakeES as unknown as typeof EventSource,
+    });
+    FakeES.instances[0].fail(); // e.g. the thread was deleted by a demo reset -> 404
+    expect(got).toEqual([]);
+    vi.advanceTimersByTime(300);
+    FakeES.instances[1].emit("error", 4, { message: "model timed out" }); // the agent's real error event
+    expect(got).toEqual([{ message: "model timed out" }]);
   });
 
   it("withAfter keeps an existing query", () => {

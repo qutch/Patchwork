@@ -428,6 +428,9 @@ export function openStream<T = unknown>(url: string, opts: StreamOptions<T>): St
   };
 
   const handler = (ev: MessageEvent) => {
+    // A refused or dropped connection fires a data-less "error" Event, which also reaches a listener
+    // for a server event named "error" (the agent stream has one). Only real messages carry data.
+    if (typeof ev.data !== "string") return;
     const id = ev.lastEventId ? Number(ev.lastEventId) : null;
     if (id !== null && !Number.isNaN(id)) {
       if (id <= last && !opts.snapshots) return;

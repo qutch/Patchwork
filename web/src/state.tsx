@@ -140,6 +140,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const incidentsQ = usePoll(() => api.incidents("open"), 2000);
   const integrationsQ = usePoll(api.integrations, 2000);
 
+  // A thread remembered from an earlier session may be gone (demo reset, new workspace). Check once,
+  // on the first thread list: later checks could race a thread created a moment ago.
+  const checkedThread = useRef(false);
+  useEffect(() => {
+    if (checkedThread.current || !threadsQ.data) return;
+    checkedThread.current = true;
+    if (threadId && !threadsQ.data.some((t) => t.thread_id === threadId)) setThreadId(null);
+  }, [threadsQ.data, threadId, setThreadId]);
+
   const refresh = useCallback(() => {
     void threadsQ.reload();
     void incidentsQ.reload();
