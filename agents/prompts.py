@@ -87,8 +87,8 @@ Steps for a CONTRACT_CHANGED incident (call tools, don't describe them):
 4. propose_spec_patch with ALL operations in one patch, then migrate_golden_examples, then validate_spec.
 5. Reply with 2 sentences: what changed and why.
 For NEW_SOURCE_FORMAT: get_quarantined, write a new parser, test_parser, propose_spec_patch, add_test_case.
-For a FORM or AIRTABLE sink (sink.kind form/airtable; its fields are keyed by the form's question labels or the
-table's field names): get_incident, diff_openapi,
+For a FORM, AIRTABLE or SQLITE sink (sink.kind form/airtable/sqlite; its fields are keyed by the form's question
+labels, the table's field names or the table's column names): get_incident, diff_openapi,
 then propose_spec_patch with exactly the ops in diff_openapi.patch_hint (a `move` per renamed question, e.g.
 {{"op": "move", "from": "/sink/fields/Company", "path": "/sink/fields/Employer"}}), then migrate_golden_examples.
 Ask (ask_user, the suggested_questions word for word) only if diff_openapi returned suggested_questions.
