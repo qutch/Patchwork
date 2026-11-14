@@ -18,6 +18,10 @@ from typing import Any
 CRED_PREFIX = "PATCHWORK_CRED__"
 NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
 MODEL_KEY = re.compile(r"(ANTHROPIC|OPENROUTER|OPENAI|LANGCHAIN|LANGSMITH|GOOGLE_API|GEMINI|PATCHWORK_MODEL)", re.I)
+# Process variables a runner needs: a spec naming one would strip it from the runner's environment.
+SYSTEM_NAMES = re.compile(r"^(PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_[A-Z_]+|TZ|PWD|TERM|"
+                          r"PYTHON[A-Z_]*|VIRTUAL_ENV|PATCHWORK_[A-Z0-9_]*|SSL_CERT_[A-Z_]+|REQUESTS_CA_BUNDLE|"
+                          r"(HTTPS?|NO|ALL)_PROXY|DYLD_[A-Z_]+|LD_[A-Z_]+)$", re.I)
 
 
 class CredentialError(RuntimeError):
@@ -30,6 +34,8 @@ def check_name(name: str) -> str:
         raise ValueError(f"credential name {name!r} must be UPPER_SNAKE_CASE (e.g. AIRTABLE_TOKEN)")
     if MODEL_KEY.search(name) or name.startswith(CRED_PREFIX):
         raise ValueError(f"credential {name!r} is not allowed: model keys never reach the runner")
+    if SYSTEM_NAMES.match(name):
+        raise ValueError(f"credential {name!r} is not allowed: it is a process variable the runner needs")
     return name
 
 

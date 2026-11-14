@@ -347,3 +347,12 @@ def test_agent_tool_results_and_events_are_redacted(secure, workspace, monkeypat
     _no_sentinel(json.dumps(ev))
     assert "***" in ev["text"]
     _no_sentinel((svc.root / f"{t.id}.jsonl").read_text())
+
+
+def test_system_variable_names_are_not_credentials():
+    import pytest
+    from runner.credentials import check_name
+    for bad in ("PATH", "HOME", "PYTHONPATH", "PATCHWORK_WORKSPACE", "LC_ALL", "HTTPS_PROXY"):
+        with pytest.raises(ValueError, match="process variable"):
+            check_name(bad)
+    assert check_name("AIRTABLE_TOKEN") == "AIRTABLE_TOKEN"
