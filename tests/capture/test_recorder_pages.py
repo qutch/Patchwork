@@ -122,3 +122,30 @@ def test_bare_host_allowlist(form, tmp_path):
     assert any(e["type"] == "framenavigated" and e["url"] == form.url + "/" for e in recording["events"])
     assert [e["value"] for e in recording["events"] if e["type"] == "input"] == ["Acme"]
     assert json.loads((tmp_path / "rec" / "recording.json").read_text())["allowlist"] == ["127.0.0.1"]
+
+
+def test_real_google_form_markup_offline(tmp_path):
+    """fixtures/google_form/viewform.html (the demo Form's real markup) served at a fake host with every other
+    request aborted: questions, the Email heading and required flags are read the way V5 resolves them.
+    Only "Clear form" is clicked; nothing can leave the browser."""
+    from tests.capture.jobs_demo import REPO
+    html = (REPO / "fixtures" / "google_form" / "viewform.html").read_bytes()
+
+    async def script(page):
+        async def handle(route):
+            if route.request.url == "https://forms.test/viewform":
+                await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=html)
+            else:
+                await route.abort()
+        await page.context.route("**/*", handle)
+        await page.goto("https://forms.test/viewform")
+        await page.get_by_role("textbox", name="Your email").fill("demo@example.com")
+        await page.get_by_role("textbox", name="Your email").blur()
+        await page.get_by_role("button", name="Clear form").click()
+    recording = run(record_with(tmp_path / "rec", ["forms.test"], script))
+    email = next(e for e in recording["events"] if e["type"] == "input")
+    assert email["el"]["question"] == "Email" and email["value"] == "demo@example.com"
+    click = next(e for e in recording["events"] if e["type"] == "click" and e.get("form"))
+    qs = click["form"]["questions"]
+    assert [q["label"] for q in qs] == ["Email", "Job Title", "Company", "Link", "Date Applied"]
+    assert [q["required"] for q in qs] == [True, False, False, False, False]
