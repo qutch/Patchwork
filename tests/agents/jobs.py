@@ -16,6 +16,8 @@ from pathlib import Path
 import yaml
 
 from agents.learn import make_page_record
+from agents.learn import ydump as _ydump
+from agents.learn import yload as _yload
 
 REPO = Path(__file__).resolve().parents[2]
 PAGES = REPO / "fixtures" / "pages"
@@ -135,7 +137,7 @@ class FakeEngine:
             from spec import validate_spec
             return validate_spec(text)
         try:
-            data = yaml.safe_load(text)
+            data = _yload(text)
         except yaml.YAMLError as e:
             return [f"<yaml>: {e}"]
         if not isinstance(data, dict) or not data.get("extract", {}).get("parsers"):
@@ -145,14 +147,14 @@ class FakeEngine:
     def compile(self, spec_path) -> dict:
         from runner.store import Store, workspace_dir
         spec_path = Path(spec_path)
-        spec = yaml.safe_load(spec_path.read_text())
+        spec = _yload(spec_path.read_text())
         name, store = spec["name"], Store()
         version = store.latest_version(name) + 1
         vdir = workspace_dir() / "integrations" / name / f"v{version}"
         vdir.mkdir(parents=True)
         shutil.copy(spec_path, vdir / "spec.yaml")
         ex_path = spec_path.with_name("examples.yaml")
-        examples = (yaml.safe_load(ex_path.read_text()) or []) if ex_path.exists() else []
+        examples = (_yload(ex_path.read_text()) or []) if ex_path.exists() else []
         (vdir / "golden.json").write_text(json.dumps([{**e, "missing": e.get("missing", [])} for e in examples]))
         (vdir / "parsers.py").write_text("# fake package\n" + "".join(f"# {p['id']}\n" for p in spec["extract"]["parsers"]))
         (vdir / "contract").mkdir()
@@ -173,8 +175,8 @@ class FakeEngine:
         from agents.scripted import work_dir
         from control import ops
         wd = work_dir(NAME)
-        (wd / "spec.yaml").write_text(yaml.safe_dump(spec or jobs_spec(), sort_keys=False, width=200))
-        (wd / "examples.yaml").write_text(yaml.safe_dump(examples if examples is not None else [golden("lever-1")],
+        (wd / "spec.yaml").write_text(_ydump(spec or jobs_spec(), sort_keys=False, width=200))
+        (wd / "examples.yaml").write_text(_ydump(examples if examples is not None else [golden("lever-1")],
                                                          sort_keys=False, width=200))
         built = self.compile(wd / "spec.yaml")
         ops.deploy(NAME, built["version"])
@@ -207,4 +209,4 @@ def set_learn_policy(policy: str) -> None:
 def active_spec() -> dict:
     from runner.store import Store, workspace_dir
     v = Store().active_version(NAME)
-    return yaml.safe_load((workspace_dir() / "integrations" / NAME / f"v{v}" / "spec.yaml").read_text())
+    return _yload((workspace_dir() / "integrations" / NAME / f"v{v}" / "spec.yaml").read_text())

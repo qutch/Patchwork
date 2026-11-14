@@ -29,9 +29,10 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 import jsonpatch
-import yaml
 
 from agents import learn
+from agents.learn import ydump as _ydump
+from agents.learn import yload as _yload
 from agents.interface import ThreadedAgentService, _Thread, now
 from agents.scripted import FIXTURES, NAME, load_recording, work_dir
 from compiler.compile import CompileError, Example
@@ -125,7 +126,7 @@ class ToolContext:
 
     # ---- helpers -------------------------------------------------------------------------
     def spec_dict(self) -> dict:
-        return yaml.safe_load(self.spec_path.read_text())
+        return _yload(self.spec_path.read_text())
 
     def source_base(self) -> str:
         env = os.environ.get("PATCHWORK_SOURCE_BASE_URL")
@@ -155,7 +156,7 @@ class ToolContext:
         errors = validate_spec(text)
         if errors:
             return errors
-        return lint_spec(yaml.safe_load(text))
+        return lint_spec(_yload(text))
 
     def compile_and_test(self, spec_path: Path) -> dict:
         return ops.compile_and_test(spec_path)
@@ -583,7 +584,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         if not ctx.samples and ctx.spec_path.exists() and is_page_integration(ctx.spec_dict()) \
                 and not os.environ.get("PATCHWORK_CONTROL_URL"):
             ex = ctx.wd / "examples.yaml"  # TEACH: the recorded page is the sample
-            ctx.samples = [e["record"] for e in (yaml.safe_load(ex.read_text()) if ex.exists() else []) or []]
+            ctx.samples = [e["record"] for e in (_yload(ex.read_text()) if ex.exists() else []) or []]
         if not ctx.samples:
             fetch_source_samples(15)
         return ctx.samples
@@ -650,8 +651,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             except (FileNotFoundError, KeyError) as e:
                 return f"ERROR: {e}"
             spec, examples, problems = draft_page_spec(c, name=ctx.name, thread_id=ctx.t.id, html=html)
-            ctx.spec_path.write_text(yaml.safe_dump(spec, sort_keys=False, width=200))
-            (ctx.wd / "examples.yaml").write_text(yaml.safe_dump(examples, sort_keys=False, width=200))
+            ctx.spec_path.write_text(_ydump(spec, sort_keys=False, width=200))
+            (ctx.wd / "examples.yaml").write_text(_ydump(examples, sort_keys=False, width=200))
             ctx.samples = [examples[0]["record"]]
             errors = ctx.validate_spec_text(ctx.spec_path.read_text())
             ctx.svc.emit(ctx.t, "artifact", kind="spec", name=ctx.name, version=None, path=str(ctx.spec_path))
@@ -738,11 +739,11 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                      **({"verify": verify} if verify else {})},
             "on_error": "quarantine", "assumptions": assumptions,
         }
-        errors = validate_spec(yaml.safe_dump(spec))
-        ctx.spec_path.write_text(yaml.safe_dump(spec, sort_keys=False, width=200))
+        errors = validate_spec(_ydump(spec))
+        ctx.spec_path.write_text(_ydump(spec, sort_keys=False, width=200))
         examples = [{"name": f"recorded_{re.sub(r'[^a-z0-9]+', '_', str(record.get(src['record_id'])).lower())}",
                      "record": record, "expect": {"body": sink["body"]}}]
-        (ctx.wd / "examples.yaml").write_text(yaml.safe_dump(examples, sort_keys=False, width=200))
+        (ctx.wd / "examples.yaml").write_text(_ydump(examples, sort_keys=False, width=200))
         ctx.svc.emit(ctx.t, "artifact", kind="spec", name=ctx.name, version=None, path=str(ctx.spec_path))
         return (f"wrote spec.yaml (parser {pid}, {len(fields)} fields, {len(validate)} rules, dedupe {key}"
                 f"{', verify' if verify else ''}) and examples.yaml (1 recorded example). "
@@ -769,10 +770,10 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             new = jsonpatch.apply_patch(old, patch)
         except (jsonpatch.JsonPatchException, jsonpatch.JsonPointerException, TypeError, KeyError) as e:
             return f"REFUSED: patch does not apply: {e}"
-        errors = ctx.validate_spec_text(yaml.safe_dump(new))
+        errors = ctx.validate_spec_text(_ydump(new))
         if errors:
             return "REFUSED (spec unchanged):\n" + "\n".join(f"- {e}" for e in errors)
-        ctx.spec_path.write_text(yaml.safe_dump(new, sort_keys=False, width=200))
+        ctx.spec_path.write_text(_ydump(new, sort_keys=False, width=200))
         ctx.svc.emit(ctx.t, "artifact", kind="spec", name=ctx.name, version=None, path=str(ctx.spec_path))
         return f"applied {len(patch)} operation(s); spec.yaml is valid"
 
@@ -805,9 +806,9 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         except CompileError as e:
             return f"REFUSED: {e}"
         path = ctx.wd / "examples.yaml"
-        examples = [e for e in (yaml.safe_load(path.read_text()) if path.exists() else []) or [] if e["name"] != name]
+        examples = [e for e in (_yload(path.read_text()) if path.exists() else []) or [] if e["name"] != name]
         examples.append(ex)
-        path.write_text(yaml.safe_dump(examples, sort_keys=False, width=200))
+        path.write_text(_ydump(examples, sort_keys=False, width=200))
         return f"added example {name} ({'body' if expect_body is not None else expect_quarantine}); {len(examples)} examples total"
 
     def compile_spec() -> str:
@@ -860,7 +861,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             return "REFUSED: no compiled version has passing tests yet"
         v = passing[-1]["version"]
         vdir = workspace_dir() / "integrations" / ctx.name / f"v{v}"
-        cfg = yaml.safe_load((vdir / "config.yaml").read_text())
+        cfg = _yload((vdir / "config.yaml").read_text())
         is_form = cfg["sink"].get("kind") == "form"  # forms: the runner fills but never submits on dry runs (V5)
         staging = (os.environ.get("PATCHWORK_STAGING_BASE_URL") or cfg["sink"].get("staging_base_url") or "").rstrip("/")
         live = (os.environ.get("PATCHWORK_SINK_BASE_URL") or cfg["sink"].get("base_url") or "").rstrip("/")
@@ -960,12 +961,12 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         active = ctx.active_spec_text()
         if active is None:
             return "ERROR: no active version to migrate from"
-        old_body = sink_values(yaml.safe_load(active))
+        old_body = sink_values(_yload(active))
         new_spec = ctx.spec_dict()
         new_body = sink_values(new_spec)
         as_text = (new_spec.get("sink") or {}).get("kind") == "form"  # values sent to a form are strings (V5)
         by_field = {vs["from"]: k for k, vs in old_body.items() if "from" in vs and "transform" not in vs}
-        examples = yaml.safe_load(path.read_text()) or []
+        examples = _yload(path.read_text()) or []
         changed, problems = 0, []
         for ex in examples:
             body = ex.get("expect", {}).get("body")
@@ -987,7 +988,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                 changed += 1
         if problems:
             return "REFUSED (examples unchanged): " + "; ".join(problems[:5])
-        path.write_text(yaml.safe_dump(examples, sort_keys=False, width=200))
+        path.write_text(_ydump(examples, sort_keys=False, width=200))
         sample = next((e["expect"]["body"] for e in examples if "body" in e.get("expect", {})), None)
         return f"rewrote {changed} expected bodies; e.g. {json.dumps(sample)}"
 
@@ -1027,7 +1028,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                     code_diff += "".join(difflib.unified_diff(
                         (prev_dir / f).read_text().splitlines(True), (vdir / f).read_text().splitlines(True),
                         f"v{prev}/{f}", f"v{version}/{f}"))
-            patch = jsonpatch.make_patch(yaml.safe_load(old_text), yaml.safe_load(new_text)).patch
+            patch = jsonpatch.make_patch(_yload(old_text), _yload(new_text)).patch
         payload: dict[str, Any] = dict(name=ctx.name, version=int(version), summary=summary, spec_diff=spec_diff,
                                        code_diff=code_diff,
                                        tests={"passed": bool(v["tests_passed"]), "summary": v["tests_summary"]})
@@ -1046,7 +1047,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         msg = f"deployed v{version} (previous v{result['previous_version']})"
         replay = getattr(ops, "replay_quarantined", None)
         # page integrations: the control plane replays held pages when it sees `deployed` (contracts V9)
-        if ctx.mode == "repair" and replay is not None and not is_page_integration(yaml.safe_load(new_text)):
+        if ctx.mode == "repair" and replay is not None and not is_page_integration(_yload(new_text)):
             try:
                 r = replay(ctx.name)
                 msg += f"; replayed quarantined records: {_short(r, 300)}"
@@ -1060,7 +1061,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
 
     def _active() -> dict | None:
         text = ctx.active_spec_text()
-        return yaml.safe_load(text) if text else None
+        return _yload(text) if text else None
 
     def _page_spec() -> dict:
         """The spec LEARN extends: the active version's (the work dir is seeded from it)."""
@@ -1218,7 +1219,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                                         all_corroborated=checks["all_corroborated"], ambiguous=ambiguous,
                                         additive=additive)
         p["origin"]["approved_by"] = "auto" if pre_auto else "human"
-        text = yaml.safe_dump(new, sort_keys=False, width=200)
+        text = _ydump(new, sort_keys=False, width=200)
         errors = ctx.validate_spec_text(text)
         if errors:
             return "REFUSED (nothing saved):\n" + "\n".join(f"- {e}" for e in errors)
@@ -1233,10 +1234,10 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                 return f"ERROR: cannot compute {k} for the golden example: {e}"
             body[k] = str(v) if (new.get("sink") or {}).get("kind") == "form" and v is not None else v
         ex_path = ctx.wd / "examples.yaml"
-        examples = (yaml.safe_load(ex_path.read_text()) if ex_path.exists() else None) or []
+        examples = (_yload(ex_path.read_text()) if ex_path.exists() else None) or []
         ex_name = re.sub(r"[^a-z0-9]+", "_", f"learned_{p['id']}_{rec.get('id')}".lower())
         examples = [e for e in examples if e.get("name") != ex_name] + [{"name": ex_name, "record": rec, "expect": {"body": body}}]
-        ex_path.write_text(yaml.safe_dump(examples, sort_keys=False, width=200))
+        ex_path.write_text(_ydump(examples, sort_keys=False, width=200))
         try:
             built = ctx.compile_and_test(ctx.spec_path)
         except (CompileError, SpecError) as e:
@@ -1300,8 +1301,8 @@ def seed_repair_workdir(name: str) -> Path:
     (wd / "spec.yaml").write_text((vdir / "spec.yaml").read_text())
     golden = json.loads((vdir / "golden.json").read_text())
     examples = [{k: v for k, v in ex.items() if not (k == "missing" and not v)} for ex in golden]
-    (wd / "examples.yaml").write_text(yaml.safe_dump(examples, sort_keys=False, width=200))
-    spec = yaml.safe_load((wd / "spec.yaml").read_text())
+    (wd / "examples.yaml").write_text(_ydump(examples, sort_keys=False, width=200))
+    spec = _yload((wd / "spec.yaml").read_text())
     custom = any(str(vs.get("transform", "")).startswith("custom:") for vs in sink_values(spec).values())
     if custom and (vdir / "transforms.py").exists():
         (wd / "transforms.py").write_text((vdir / "transforms.py").read_text())

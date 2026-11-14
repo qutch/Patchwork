@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import jsonpatch
+import yaml
 from selectolax.lexbor import LexborHTMLParser
 
 from runner.html import (canonical_url, css_all, css_first, jsonld_objects, normalize_ws, site_of,
@@ -27,6 +28,18 @@ from runner.lib import (Quarantine, cast, extract_between, extract_css, extract_
                         extract_regex, refine_regex)
 
 PAGE_METHODS = ("css", "jsonld")
+
+# Page specs carry whole pages in their golden examples (a Lever page is ~700 KB): use libyaml when present.
+_YLoader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+_YDumper = getattr(yaml, "CSafeDumper", yaml.SafeDumper)
+
+
+def yload(text: str) -> Any:
+    return yaml.load(text, Loader=_YLoader)  # noqa: S506 - a safe loader
+
+
+def ydump(obj: Any, **kw: Any) -> str:
+    return yaml.dump(obj, Dumper=_YDumper, allow_unicode=kw.pop("allow_unicode", True), **kw)
 # Corroboration sources longer than this (descriptions) only count on an exact match, otherwise any
 # sentence of the posting body would "corroborate" itself.
 CORROBORATION_MAX_SOURCE = 200
