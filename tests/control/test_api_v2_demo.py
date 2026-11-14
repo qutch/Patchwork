@@ -67,6 +67,24 @@ def test_build_name_defaults_for_page_recordings(v2api, tmp_path, monkeypatch):
     assert v2api.post("/api/integrations/build", json={"recording_id": "fixture-jobs"}).json()["thread_id"] == "build-y"
 
 
+def test_build_form_url_retargets_the_recording(v2api, workspace, monkeypatch):
+    """form_url points a page→form recording's candidates at another form (I-2: fixture-jobs → demo Form)."""
+    monkeypatch.setattr(v2api.agent, "start_build", lambda recording_id, name=None: "build-z")
+    url = "https://docs.google.com/forms/d/e/demo/viewform"
+    r = v2api.post("/api/integrations/build", json={"recording_id": "fixture-jobs", "form_url": url})
+    assert r.status_code == 200, r.text
+    written = json.loads((recordings.recording_dir("fixture-jobs") / "candidates.json").read_text())
+    assert written["sink"]["url"] == url and written["sink"]["retargeted_from"] == "http://127.0.0.1:18010/"
+    assert written["mappings"] == recordings._candidates("fixture-jobs")["mappings"]
+    from agents.deep_tools import candidates_for
+    assert candidates_for("fixture-jobs")["sink"]["url"] == url  # what the agents read
+    assert "fixture-jobs" in [x["id"] for x in v2api.get("/api/recordings").json()]
+    bad = v2api.post("/api/integrations/build", json={"recording_id": "fixture-jobs", "form_url": "file:///x"})
+    assert bad.status_code == 422
+    v1 = v2api.post("/api/integrations/build", json={"recording_id": "fixture", "form_url": url})
+    assert v1.status_code == 422 and "not a page" in v1.json()["detail"]
+
+
 def _v1_rows():
     """A deployed v1 integration with a run, records, processed keys, a cursor and an incident."""
     make_v1_integration()

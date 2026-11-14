@@ -154,9 +154,12 @@ class Smoke:
         return f"{entry['site']} code, 0 AI calls, parser {row.get('parser')} v{row.get('version')} ({row.get('routed_by')})"
 
     # -- bootstrap (what I-2 does off camera) --------------------------------------------------
-    def bootstrap(self, retarget: Callable[[], Any] | None = None) -> None:
+    def bootstrap(self, retarget: Callable[[], Any] | None = None, form_url: str | None = None) -> None:
         def teach() -> str:
-            tid = self.c.post("/api/integrations/build", {"recording_id": "fixture-jobs", "name": NAME})["thread_id"]
+            body = {"recording_id": "fixture-jobs", "name": NAME}
+            if form_url:  # teach against this run's form, not the one in the recording (V9 build form_url)
+                body["form_url"] = form_url
+            tid = self.c.post("/api/integrations/build", body)["thread_id"]
             d = self.c.answer_until_deploy(tid, self.timeout)
             moved = retarget() if retarget else None
             return f"v{d.get('version')} from fixture-jobs" + (f"; form URL retargeted to {moved['to']}" if moved else "")
@@ -312,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
         s = Smoke(c, form, timeout=args.timeout, agent=_agent_kind(c))
         print(f"smoke-v2 against {args.control}, {form.kind} form, {s.agent} agent")
         if args.bootstrap:
-            s.bootstrap()
+            s.bootstrap(form_url=(os.environ.get("PATCHWORK_DEMO_FORM_URL") if args.form == "google" else args.form_url))
         s.run()
         if args.form == "google":
             print("  reminder: rename 'Employer' back to 'Company' in the Form editor (docs/demo-v2.md §4)")
@@ -340,7 +343,7 @@ def _in_process(args: argparse.Namespace) -> int:
             c = Control(st.control, timeout=120)
             s = Smoke(c, FixtureForm(st.form, c), timeout=args.timeout, agent="scripted")
             print(f"smoke-v2 in-process: control {st.control}, fixture form {st.form}, scripted agent")
-            s.bootstrap(retarget=lambda: retarget_form(st.form + "/"))
+            s.bootstrap(form_url=st.form + "/", retarget=lambda: retarget_form(st.form + "/"))
             s.run()
     finally:
         if args.workspace is None:

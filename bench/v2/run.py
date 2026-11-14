@@ -126,7 +126,8 @@ def measure_on(c: Control, form_base: str, entries: list[dict], *, timeout: floa
     out["settings"] = c.get("/api/settings")
 
     t = time.monotonic()
-    tid = c.post("/api/integrations/build", {"recording_id": RECORDING, "name": NAME})["thread_id"]
+    tid = c.post("/api/integrations/build", {"recording_id": RECORDING, "name": NAME,
+                                             "form_url": form_base + "/"})["thread_id"]
     out["teach"] = c.answer_until_deploy(tid, timeout, log=out["questions"])
     out["teach"]["seconds"] = time.monotonic() - t
     out["retarget"] = retarget(form_base + "/") if retarget else None

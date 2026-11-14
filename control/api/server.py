@@ -7,7 +7,9 @@ session. JSON everywhere; errors are {"detail": "..."} with a 4xx status.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
@@ -39,6 +41,7 @@ class SettingsUpdate(BaseModel):
 class BuildRequest(BaseModel):
     recording_id: str
     name: str | None = None  # default: "jobs_to_tracker" for page→form recordings, else the agent's choice
+    form_url: str | None = None  # page→form only: teach against this form instead of the one recorded (V9)
 
 
 class ResumeRequest(BaseModel):
@@ -163,11 +166,32 @@ def put_settings(body: SettingsUpdate, request: Request) -> dict[str, Any]:
 
 # -- agent ----------------------------------------------------------------------------------------
 
+def retarget_recording_form(recording_id: str, form_url: str) -> None:
+    """Point a page→form recording's candidates at another form (same questions, different address), e.g. the
+    fixture-jobs recording at the demo Google Form, or at a fixture form on a free port. Writes
+    $WS/recordings/<id>/candidates.json, which the agents read before the shipped fixture (contracts V9)."""
+    if not re.match(r"^https?://", form_url):
+        raise HTTPException(422, "form_url must be an http(s) URL")
+    if not recordings.is_page_form(recording_id):
+        raise HTTPException(422, f"recording {recording_id} is not a page→form recording; form_url does not apply")
+    cands = recordings._candidates(recording_id)
+    if not isinstance(cands, dict) or not isinstance(cands.get("sink"), dict):
+        raise HTTPException(409, f"recording {recording_id} has no candidates yet")
+    if cands["sink"].get("url") != form_url:
+        cands["sink"].setdefault("retargeted_from", cands["sink"].get("url"))
+        cands["sink"]["url"] = form_url
+    out = recordings.recording_dir(recording_id) / "candidates.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(cands, indent=2))
+
+
 @api.post("/integrations/build")
 def build(body: BuildRequest, request: Request) -> dict[str, str]:
     require_ai(request)
     recordings.load_recording(body.recording_id)  # 404 unknown, 409 still recording
     name = body.name or (PAGE_INTEGRATION if recordings.is_page_form(body.recording_id) else None)
+    if body.form_url is not None:
+        retarget_recording_form(body.recording_id, body.form_url)
     svc = agent_service(request)
     if name is not None and _accepts_name(svc.start_build):
         return {"thread_id": svc.start_build(body.recording_id, name)}

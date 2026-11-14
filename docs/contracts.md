@@ -473,7 +473,10 @@ GET  /api/layouts?integration=jobs_to_tracker -> [Layout]
 POST /api/layouts/{parser_id}/revert {integration}
      -> {version, deployed: true}   compiles active spec minus that parser, tests, deploys (no AI). 409 if tests fail or last parser.
 GET/PUT /api/settings                    adds "learn_policy": "auto"|"approve" (default "auto", D2)
-POST /api/integrations/build {recording_id, name?}   name defaults to "jobs_to_tracker" for page→form recordings
+POST /api/integrations/build {recording_id, name?, form_url?}   name defaults to "jobs_to_tracker" for page→form recordings;
+     form_url (page→form only, http(s)) teaches against that form instead of the recorded one: the control plane writes the
+     recording's candidates with sink.url replaced (sink.retargeted_from keeps the old one) to $WS/recordings/<id>/candidates.json,
+     which the agents read first. Used to point fixture-jobs at the demo Google Form (I-2) or at a fixture form on a free port.
 POST /api/demo/form/rename {from, to}    proxies the fixture form ($PATCHWORK_TRACKER_FORM_URL); offline rehearsal only
 POST /api/demo/v2/save-baseline          remember jobs_to_tracker's versions + active pointer as the rehearsal baseline
 POST /api/demo/v2/reset                  restore that baseline; clear pages, jobs_to_tracker runs/records/processed/cursor/incidents

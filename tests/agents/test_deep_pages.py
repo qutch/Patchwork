@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
 
 from agents.learn import run_page_parser
 from runner.store import Store
@@ -40,7 +43,16 @@ def test_draft_spec_from_fixture_jobs(workspace, monkeypatch):
     spec = yaml.safe_load(ctx.spec_path.read_text())
     (p,) = spec["extract"]["parsers"]
     assert p["id"] == "lever" and p["match"] == {"site": "jobs.lever.co"}
-    assert p["fields"] == {"title": {"css": ".posting-headline h2"}, "company": {"jsonld": "hiringOrganization.name"}}
+    # The taught reader follows what the person copied in the recording (W2's fixture-jobs candidates),
+    # so derive the expectation from the candidates, and check that it reads both Lever pages.
+    assert p["fields"]["title"] == {"css": ".posting-headline h2"}
+    from agents.learn import run_page_parser
+    from runner.html import visible_text
+    index = {e["file"]: e for e in json.loads((REPO / "fixtures/pages/index.json").read_text())}
+    for name in ("lever-1.html", "lever-2.html"):
+        html = (REPO / "fixtures/pages" / name).read_text()
+        got = run_page_parser(p, {"html": html, "text": visible_text(html)})
+        assert got == index[name]["expected"], (name, got)
     assert p["origin"]["kind"] == "taught" and p["origin"]["thread_id"] == t.id
     assert spec["source"]["base_url"] == "patchwork://control" and spec["source"]["html_field"] == "html"
     assert spec["source"]["cursor_field"] == "seq" and spec["dedupe"] == {"key": ["record.canonical_url"]}
