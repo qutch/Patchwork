@@ -43,10 +43,10 @@ def runner_env(spec: Any = None) -> dict[str, str]:
     name in `credential_names(spec)` only, PATCHWORK_CRED__<NAME>=<value from .env>. Raises CredentialError
     (message names the credential, never a value) when one is not set or names a model key. Without a spec
     (generated tests, v1/v2 integrations) no credential is added."""
-    from control.credentials import workspace_credentials
+    from control.credentials import known_names
 
     names = credential_names(spec)
-    plain = {*workspace_credentials(), *names}
+    plain = {*known_names(), *names}
     keep = {k: v for k, v in os.environ.items()
             if not SECRET_ENV.search(k) and not k.startswith(CRED_PREFIX) and k not in plain}
     keep["PYTHONPATH"] = str(REPO_ROOT)
@@ -205,6 +205,9 @@ def deploy(name: str, version: int, *, store: Store | None = None, resolve_incid
         raise DeployRefused(f"{name} v{version}: tests have not passed on this version")
     previous = store.active_version(name)
     store.set_active(name, version)
+    from control import drafts
+
+    drafts.mark_live(name)  # a wizard draft becomes live once a version is deployed
     resolved = store.resolve_incidents(name, version) if resolve_incidents else []
     return {"name": name, "active_version": version, "previous_version": previous, "resolved_incidents": resolved}
 

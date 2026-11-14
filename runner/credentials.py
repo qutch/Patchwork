@@ -68,6 +68,21 @@ def headers(auth: Any) -> dict[str, str]:
     return {"Authorization": f"Bearer {value}"}
 
 
+# The control plane registers `known_names` here, so redact() also blanks every credential the workspace
+# knows (specs, UI-added, .env), not only PATCHWORK_CRED__* values. Empty in a runner.
+NAME_PROVIDERS: list[Any] = []
+
+
+def _provided_names() -> list[str]:
+    out: list[str] = []
+    for fn in NAME_PROVIDERS:
+        try:
+            out.extend(fn())
+        except Exception:  # redaction must never fail a caller
+            pass
+    return out
+
+
 def _known_values() -> list[str]:
     vals = [v for k, v in os.environ.items() if k.startswith(CRED_PREFIX) and v]
     return sorted({v for v in vals if len(v) >= 6}, key=len, reverse=True)
@@ -77,7 +92,7 @@ def redact(text: Any, extra: list[str] | None = None, names: list[str] | None = 
     """`text` with every credential value this process holds as PATCHWORK_CRED__*, the values of the named
     credentials (`names`, e.g. every credential a spec references) and `extra`, replaced by ***."""
     s = str(text)
-    named = [os.environ.get(n, "") for n in (names or []) if NAME.match(n or "")]
+    named = [os.environ.get(n, "") for n in (*(names or []), *_provided_names()) if NAME.match(n or "")]
     for v in sorted({*(extra or []), *named, *_known_values()}, key=len, reverse=True):
         if v and len(v) >= 6:
             s = s.replace(v, "***")
@@ -87,7 +102,7 @@ def redact(text: Any, extra: list[str] | None = None, names: list[str] | None = 
 def redact_obj(obj: Any, names: list[str] | None = None) -> Any:
     """`redact` applied to every string (keys and values) inside a JSON-like structure; other values kept.
     Returns `obj` itself when it holds no credential value (the common case: no copy of large records)."""
-    named = [os.environ.get(n, "") for n in (names or []) if NAME.match(n or "")]
+    named = [os.environ.get(n, "") for n in (*(names or []), *_provided_names()) if NAME.match(n or "")]
     vals = sorted({v for v in (*named, *_known_values()) if v and len(v) >= 6}, key=len, reverse=True)
     if not vals:
         return obj

@@ -11,15 +11,15 @@ import json
 import os
 import re
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
-from control import ops
-from control.api import credentials, demo, pages, recordings, sse
+from control import drafts, ops
+from control.api import credentials, demo, drafts as drafts_api, pages, recordings, sse
 from control.api.runs import CredentialMissing, RunManager, RunStartError
 from control.api.settings import Settings, load_dotenv
 from control.autorun import AutoRunner, Busy
@@ -38,12 +38,51 @@ class SettingsUpdate(BaseModel):
     learn_policy: Literal["auto", "approve"] | None = None
 
 
-class Destination(BaseModel):
-    """V14: teach a page→form recording into an Airtable table instead of the recorded form."""
+class AirtableDestination(BaseModel):
+    """V14: teach a page→form recording into an Airtable table instead of the recorded form. The base may be
+    given as its URL (`base_url`): the id in it becomes `base_id`."""
     kind: Literal["airtable"]
-    base_id: str
+    base_id: str | None = None
+    base_url: str | None = None
     table: str
     credential: str = "AIRTABLE_TOKEN"
+
+    @model_validator(mode="after")
+    def _base(self):
+        from control.destinations import base_id_from_url
+        if not self.base_id and self.base_url:
+            self.base_id = base_id_from_url(self.base_url) or self.base_url
+        if not self.base_id:
+            raise ValueError("base_id (or base_url) is required")
+        self.base_url = None
+        return self
+
+
+class FormDestination(BaseModel):
+    kind: Literal["form"]
+    url: str
+
+
+class ApiOperation(BaseModel):
+    method: Literal["POST", "PUT", "PATCH", "post", "put", "patch"]
+    path: str
+
+
+class ApiDestination(BaseModel):
+    kind: Literal["api"]
+    base_url: str
+    operation: ApiOperation
+    credential: str | None = None
+
+
+class SqliteDestination(BaseModel):
+    kind: Literal["sqlite"]
+    path: str
+    table: str
+
+
+Destination = Annotated[Union[AirtableDestination, FormDestination, ApiDestination, SqliteDestination],
+                        Field(discriminator="kind")]
 
 
 class BuildRequest(BaseModel):
@@ -211,30 +250,37 @@ def retarget_recording_form(recording_id: str, form_url: str) -> None:
     out.write_text(json.dumps(cands, indent=2))
 
 
-def retarget_recording_destination(recording_id: str, dest: Destination | None) -> None:
+def retarget_recording_destination(recording_id: str, dest: Any | None) -> None:
     """V14: record (or clear) the destination a page→form recording is taught into, as `destination` in
     $WS/recordings/<id>/candidates.json (the agents read it there). The recorded form (`sink.url`) stays as
     is; matching labels to the table's fields is the TEACH agent's job (it asks about every label without
-    a field of the same name, never guesses)."""
+    a field of the same name, never guesses). `dest` is one of the `Destination` kinds."""
     from spec.models import AIRTABLE_BASE_ID
     from runner.credentials import check_name
     if dest is not None:
         if not recordings.is_page_form(recording_id):
             raise HTTPException(422, f"recording {recording_id} is not a page→form recording; destination does not apply")
-        if not AIRTABLE_BASE_ID.match(dest.base_id):
-            raise HTTPException(422, "destination.base_id must look like appXXXXXXXXXXXXXX (from the base URL)")
-        if not dest.table.strip():
-            raise HTTPException(422, "destination.table must be a table name or id")
-        try:
-            check_name(dest.credential)
-        except ValueError as e:
-            raise HTTPException(422, f"destination.credential: {e}") from None
+        if dest.kind == "airtable":
+            if not AIRTABLE_BASE_ID.match(dest.base_id):
+                raise HTTPException(422, "destination.base_id must look like appXXXXXXXXXXXXXX (from the base URL)")
+            if not dest.table.strip():
+                raise HTTPException(422, "destination.table must be a table name or id")
+            try:
+                check_name(dest.credential)
+            except ValueError as e:
+                raise HTTPException(422, f"destination.credential: {e}") from None
+        else:
+            from control import destinations
+            try:
+                destinations.normalize(dest.model_dump(exclude_none=True))
+            except destinations.DestinationError as e:
+                raise HTTPException(422, f"destination: {e}") from None
     cands = recordings._candidates(recording_id)
     if not isinstance(cands, dict) or not isinstance(cands.get("sink"), dict):
         if dest is None:
             return
         raise HTTPException(409, f"recording {recording_id} has no candidates yet")
-    new = dest.model_dump() if dest is not None else None
+    new = dest.model_dump(exclude_none=True) if dest is not None else None
     if cands.get("destination") == new:
         return
     if new is None:
@@ -336,6 +382,8 @@ def agent_resume(thread_id: str, body: ResumeRequest, request: Request) -> dict[
         svc.resume(thread_id, body.interrupt_id, payload)
     except KeyError as e:
         raise HTTPException(409, str(e).strip("'\"")) from None
+    if pending.get("type") == "request_deploy" and body.decision == "reject":
+        drafts.release_rejected(thread_id)  # a wizard draft goes back to `draft`: it can be taught again
     return _thread_status(svc, thread_id)
 
 
@@ -343,7 +391,7 @@ def agent_resume(thread_id: str, body: ResumeRequest, request: Request) -> dict[
 
 @api.get("/integrations")
 def integrations() -> list[dict[str, Any]]:
-    return ops.list_integrations()
+    return drafts.annotate(ops.list_integrations())
 
 
 @api.get("/integrations/{name}")
@@ -581,4 +629,5 @@ def create_app(*, agent: Any | None = None, dotenv: bool = True) -> FastAPI:
     app.include_router(demo.router)
     app.include_router(pages.router)
     app.include_router(credentials.router)
+    app.include_router(drafts_api.router)
     return app

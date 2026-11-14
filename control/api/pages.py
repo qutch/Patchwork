@@ -22,7 +22,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from control import autorun, layouts, ops, tracker
+from control import autorun, drafts, layouts, ops, tracker
 from control.api.settings import extension_token
 from runner.store import Store
 
@@ -95,15 +95,18 @@ async def post_page(request: Request) -> JSONResponse:
     url, title, html, integration = _parse_page(await _read_capped(request))
     state = request.app.state
     names = await run_in_threadpool(autorun.page_integrations)
-    if integration is not None and integration not in names:
+    waiting = await run_in_threadpool(drafts.waiting_names)  # wizard drafts: pages wait, nothing runs
+    if integration is not None and integration not in names and integration not in waiting:
         raise HTTPException(422, f"integration {integration!r} is not a page integration"
-                                 f" (known: {', '.join(names) or 'none yet'})")
+                                 f" (known: {', '.join(names + waiting) or 'none yet'})")
     page = await run_in_threadpool(state.inbox.add, url, title, html, integration)
     out: dict[str, Any] = {"id": page["id"], "seq": page["seq"], "site": page["site"],
                            "canonical_url": page["canonical_url"], "integration": None, "run_id": None,
                            "queued": False}
     name = integration or (names[0] if names else None)  # V15: only the page's integration runs
-    if name is not None:
+    if name is not None and name in waiting:
+        out.update(integration=name)
+    elif name is not None:
         try:
             started = await run_in_threadpool(state.auto.request, name)
         except Exception as e:  # noqa: BLE001 - the page is stored either way; the next press retries
@@ -147,8 +150,10 @@ def extension(request: Request) -> dict[str, Any]:
     `[{name, intent}]` (default first) and `default_integration` (null until there is one)."""
     store = Store()
     names = autorun.page_integrations(store)
+    waiting = [d for d in drafts.list_all() if d.state != "live" and d.name not in names]
     return {"token": extension_token(), "control_url": control_url(request),
-            "integrations": [{"name": n, "intent": autorun.integration_intent(n, store)} for n in names],
+            "integrations": [{"name": n, "intent": autorun.integration_intent(n, store)} for n in names]
+            + [{"name": d.name, "intent": " ".join(d.intent.split())} for d in waiting],
             "default_integration": names[0] if names else None}
 
 

@@ -47,10 +47,19 @@ class PageHooks:
         if ev.get("type") != "deployed":
             return
         tid, name = str(ev.get("thread_id") or ""), ev.get("name")
-        if not name or not tid.startswith(("learn-", "repair-")):
+        if not name or not (tid.startswith(("learn-", "repair-")) or self._is_draft_build(name, tid)):
             return
         threading.Thread(target=self._after_deploy, args=(name, tid), daemon=True,
                          name=f"after-deploy-{name}").start()
+
+    @staticmethod
+    def _is_draft_build(name: str, tid: str) -> bool:
+        """The BUILD thread the wizard started for a draft (`drafts.thread_id`): once it deploys, the example
+        pages get their first run."""
+        from control import drafts
+
+        d = drafts.get(name) if drafts.NAME.match(str(name)) else None
+        return tid.startswith("build-") and d is not None and d.thread_id == tid
 
     def _after_deploy(self, name: str, thread_id: str) -> None:
         try:
@@ -65,7 +74,7 @@ class PageHooks:
                 except KeyError:
                     break
                 time.sleep(0.05)
-            self.auto.request(name, ("replay", "run"))
+            self.auto.request(name, ("run",) if thread_id.startswith("build-") else ("replay", "run"))
         except Exception:  # noqa: BLE001
             log.exception("replay after deploy of %s failed", name)
 
@@ -98,6 +107,10 @@ class PageHooks:
         return False
 
     def maybe_learn(self, name: str, page_ids: list[str]) -> list[str]:
+        from control import drafts
+
+        if drafts.is_waiting(name):
+            return []  # a wizard draft is not live: its pages wait until it is taught and deployed
         if not page_ids or not self.ai_enabled():
             return []  # AI off: the rows stay held (PARSE_NO_MATCH); turning AI on and replaying learns them
         agent = self.get_agent()

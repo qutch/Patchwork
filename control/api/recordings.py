@@ -84,8 +84,8 @@ def _candidates(recording_id: str) -> dict[str, Any] | None:
 
 def is_page_form(recording_id: str) -> bool:
     """A page→form recording (V11 candidates: source.kind page or sink.kind form)."""
-    if recording_id == FIXTURE_JOBS_ID:
-        return True
+    if recording_id == FIXTURE_JOBS_ID or recording_id.startswith("draft-"):
+        return True  # draft-<name>: the wizard's synthetic recording (control.drafts.write_teach_inputs)
     try:
         cands = _candidates(recording_id)
     except (OSError, ValueError):

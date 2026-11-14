@@ -83,3 +83,53 @@ def test_error_responses_are_redacted(cred_api):
     _no_sentinel(resp.text)
     ok = cred_api.get("/api/health")  # success responses pass through untouched
     assert ok.status_code == 200 and json.loads(ok.text)["status"] == "ok"
+
+
+# ---- adding a credential from the UI ------------------------------------------------------------
+
+@pytest.fixture
+def client(workspace, monkeypatch, tmp_path):
+    monkeypatch.setenv("PATCHWORK_RUN_PACE_MS", "0")
+    monkeypatch.setattr("control.credentials.ENV_PATH", tmp_path / ".env")
+    monkeypatch.setenv("SHOP_TOKEN", "placeholder")  # so monkeypatch restores os.environ afterwards
+    monkeypatch.delenv("SHOP_TOKEN")
+    app = create_app(agent=ScriptedAgentService(pace_s=0), dotenv=False)
+    with _Server(app) as srv, httpx.Client(base_url=srv.url, timeout=60) as c:
+        yield c
+
+
+def test_post_credential_sets_env_and_never_echoes(client, tmp_path, monkeypatch):
+    import os
+    env = tmp_path / ".env"; env.write_text("OTHER=1\n")
+    r = client.post("/api/credentials", json={"name": "SHOP_TOKEN", "value": "sentinel-cred-123456"})
+    assert r.status_code == 201 and "sentinel-cred-123456" not in r.text
+    assert r.json() == {"name": "SHOP_TOKEN", "set": True, "used_by": []}
+    assert os.environ["SHOP_TOKEN"] == "sentinel-cred-123456"
+    assert "SHOP_TOKEN=sentinel-cred-123456" in env.read_text() and "OTHER=1" in env.read_text()
+    assert oct(env.stat().st_mode & 0o777) == "0o600"
+    assert {"name": "SHOP_TOKEN", "set": True}.items() <= next(
+        c for c in client.get("/api/credentials").json() if c["name"] == "SHOP_TOKEN").items()
+
+
+def test_post_credential_refuses_model_and_process_names(client):
+    for bad in ("ANTHROPIC_API_KEY", "PATH", "lower"):
+        assert client.post("/api/credentials", json={"name": bad, "value": "x" * 12}).status_code == 422
+
+
+def test_new_credential_is_redacted_immediately(client):
+    client.post("/api/credentials", json={"name": "SHOP_TOKEN", "value": "sentinel-cred-123456"})
+    from runner.credentials import redact
+    assert redact("x sentinel-cred-123456 y") == "x *** y"
+
+
+def test_replacing_a_credential_rewrites_its_line(client, tmp_path):
+    env = tmp_path / ".env"; env.write_text("SHOP_TOKEN=old-value-0001\n")
+    client.post("/api/credentials", json={"name": "SHOP_TOKEN", "value": "new-value-0002"})
+    assert env.read_text().count("SHOP_TOKEN=") == 1 and "old-value-0001" not in env.read_text()
+
+
+def test_empty_value_is_refused_without_mangling_the_message(client):
+    r = client.post("/api/credentials", json={"name": "lower", "value": ""})
+    assert r.status_code == 422 and "***" not in r.json()["detail"]
+    r = client.post("/api/credentials", json={"name": "SHOP_TOKEN", "value": ""})
+    assert r.status_code == 422

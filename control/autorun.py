@@ -54,6 +54,10 @@ class AutoRunner:
         """Returns {run_id, queued}: the run started now, or queued=True (run_id None) if the
         integration was busy and a follow-up is queued (or was already queued)."""
         kinds = list(kinds)
+        from control import drafts
+
+        if drafts.is_waiting(name):  # a wizard draft is not live: its pages wait, nothing runs
+            return {"run_id": None, "queued": False}
         with self._lock:
             lane = self._lanes.setdefault(name, _Lane())
             if lane.busy:
