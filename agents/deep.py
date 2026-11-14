@@ -342,9 +342,10 @@ class DeepAgentService(ThreadedAgentService):
         return result
 
     def _run_build(self, t: _Thread, recording_id: str) -> Any:
-        ctx = ToolContext(self, t, name=self.name, recording_id=recording_id)
-        work_dir(self.name)
-        return self._drive(t, ctx, prompts.BUILD_TASK.format(recording_id=recording_id, name=self.name))
+        name = t.integration or self.name
+        ctx = ToolContext(self, t, name=name, recording_id=recording_id)
+        work_dir(name)
+        return self._drive(t, ctx, prompts.BUILD_TASK.format(recording_id=recording_id, name=name))
 
     def _run_repair(self, t: _Thread, incident_id: int) -> Any:
         inc = Store().incident(incident_id)
