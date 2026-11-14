@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "mock": "node mock/server.mjs",
-    "dev:mock": "concurrently -k -n mock,vite -c blue,green \"node mock/server.mjs\" \"PATCHWORK_API=http://127.0.0.1:5181 vite\"",
+    "dev:mock": "concurrently -k -n mock,vite -c blue,green \"node mock/server.mjs --port 5182\" \"PATCHWORK_API=http://127.0.0.1:5182 vite --port 5181\"",
+    "press": "node mock/press.mjs",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

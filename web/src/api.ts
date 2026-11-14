@@ -8,7 +8,10 @@ export interface Settings {
   ai_enabled: boolean;
   agent: "scripted" | "deep";
   model: string;
+  /** v2 (V9): use a learned reader as soon as every code check passes ("auto", default), or always ask a person. */
+  learn_policy?: LearnPolicy;
 }
+export type LearnPolicy = "auto" | "approve";
 
 // ---------------------------------------------------------------- recordings
 export interface ElementInfo {
@@ -107,7 +110,7 @@ interface EvBase {
 /** agents.interface.EVENT_TYPES, one variant per type. */
 export type AgentEvent = EvBase &
   (
-    | { type: "status"; state: ThreadState; mode: "build" | "repair" }
+    | { type: "status"; state: ThreadState; mode: ThreadMode }
     | { type: "todos"; todos: Todo[] }
     | { type: "subagent_start"; name: string; task: string }
     | { type: "subagent_end"; name: string; summary: string }
@@ -131,17 +134,37 @@ export type AgentEvent = EvBase &
     | { type: "deployed"; name: string; version: number; previous_version: number | null }
     | { type: "done"; result: unknown }
     | { type: "error"; message: string }
+    | { type: "evidence"; page_id: string; parser_id: string; fields: EvidenceField[]; ok: boolean }
+    | {
+        type: "learned";
+        integration: string;
+        parser_id: string;
+        site: string;
+        version: number | null;
+        deployed: boolean;
+        approval: "auto" | "human" | "pending";
+        reason: string;
+      }
   );
+export type ThreadMode = "build" | "repair" | "learn";
+/** V10 `evidence.fields[]`: one page value the learner proposed, and what code found when it checked it. */
+export interface EvidenceField {
+  name: string;
+  value: string | null;
+  ok: boolean;
+  where: "text" | "html" | "jsonld" | null;
+  extractor: Record<string, unknown> | string | null;
+}
 export type AgentEventType = AgentEvent["type"];
 export const AGENT_EVENT_TYPES: AgentEventType[] = [
   "status", "todos", "subagent_start", "subagent_end", "tool_call", "tool_result", "message",
-  "artifact", "ask_user", "request_deploy", "resumed", "deployed", "done", "error",
+  "artifact", "ask_user", "request_deploy", "resumed", "deployed", "done", "error", "evidence", "learned",
 ];
 export type InterruptEvent = Extract<AgentEvent, { type: "ask_user" | "request_deploy" }>;
 
 export interface ThreadStatus {
   thread_id: string;
-  mode?: "build" | "repair";
+  mode?: ThreadMode;
   subject?: string;
   state: ThreadState;
   pending: InterruptEvent | null;
@@ -357,6 +380,117 @@ export interface DeployResult {
   rolled_back?: boolean;
 }
 
+// ---------------------------------------------------------------- v2: pages, tracker, layouts (contracts V1, V4, V9, V12)
+export const TRACKER = "jobs_to_tracker";
+
+/** V1 page record (`GET /api/pages`); `GET /api/pages/{id}` leaves out `html`. */
+export interface PageRecord {
+  id: string;
+  seq: number;
+  url: string;
+  canonical_url: string;
+  site: string;
+  title: string;
+  html?: string;
+  text: string;
+  captured_at: string;
+  captured_date: string;
+}
+export interface PageAccepted {
+  id: string;
+  seq: number;
+  site: string;
+  canonical_url: string;
+  integration: string | null;
+  run_id: number | null;
+  queued: boolean;
+}
+/** V4 parser provenance. */
+export interface ParserOrigin {
+  kind: "taught" | "learned" | "fixture";
+  at: string | null;
+  thread_id: string | null;
+  approved_by: "auto" | "human" | null;
+}
+export type TrackerStatus = "pending" | "running" | "success" | "duplicate" | "held" | "learning" | "failed";
+export type TrackerLabel = "code" | "learned_now" | "held" | "duplicate";
+/** V9 TrackerRow: one hotkey press and what happened to it. */
+export interface TrackerRow {
+  page_id: string;
+  seq: number;
+  captured_at: string;
+  site: string;
+  url: string;
+  title: string | null;
+  company: string | null;
+  status: TrackerStatus;
+  label: TrackerLabel | null;
+  reason: string | null;
+  detail: string | null;
+  parser: string | null;
+  version: number | null;
+  routed_by: "match" | "fingerprint" | "default" | null;
+  parser_origin: ParserOrigin | null;
+  ai_calls: number;
+  run_id: number | null;
+  learn_thread_id: string | null;
+  incident_id: number | null;
+}
+export interface TrackerTotals {
+  pages: number;
+  ai_calls: number;
+  code: number;
+  learned_now: number;
+  held: number;
+  duplicate: number;
+}
+export interface TrackerResponse {
+  rows: TrackerRow[];
+  totals: TrackerTotals;
+}
+/** V9 Layout: one parser across the integration's versions. */
+export interface Layout {
+  integration: string;
+  parser_id: string;
+  site: string | null;
+  fingerprint: string | null;
+  fields: Record<string, unknown>;
+  origin: ParserOrigin | null;
+  introduced_in: number;
+  active: boolean;
+}
+export interface ExtensionInfo {
+  token: string;
+  control_url: string;
+}
+/** V12 bench/v2/results.json. */
+export interface BenchV2Posting {
+  n: number;
+  file: string;
+  site: string;
+  label: TrackerLabel | string | null;
+  ai_calls: number;
+  seconds: number | null;
+  correct: boolean | null;
+}
+export interface BenchV2Number {
+  name: string;
+  value: number | null;
+  unit: string;
+  kind: BenchKind;
+  source: string;
+  note?: string;
+}
+export interface BenchV2Results {
+  postings: BenchV2Posting[];
+  series: {
+    patchwork_cumulative_ai_calls?: number[];
+    browser_agent_cumulative_ai_calls?: number[];
+  };
+  numbers: BenchV2Number[];
+  generated_at?: string;
+}
+
 // ---------------------------------------------------------------- HTTP
 export class ApiError extends Error {
   constructor(public status: number, public detail: string) {
@@ -370,10 +504,11 @@ export function setApiBase(url: string) {
   base = url.replace(/\/$/, "");
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  const headers: Record<string, string> = { ...(body === undefined ? {} : { "content-type": "application/json" }), ...extraHeaders };
   const res = await fetch(base + path, {
     method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    headers: Object.keys(headers).length ? headers : undefined,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -399,7 +534,7 @@ const enc = encodeURIComponent;
 export const api = {
   health: () => request<unknown>("GET", "/api/health"),
   settings: () => request<Settings>("GET", "/api/settings"),
-  putSettings: (s: { ai_enabled: boolean }) => request<Settings>("PUT", "/api/settings", s),
+  putSettings: (s: { ai_enabled?: boolean; learn_policy?: LearnPolicy }) => request<Settings>("PUT", "/api/settings", s),
 
   startRecording: (b: { intent: string; allowlist: string[]; start_url?: string }) =>
     request<{ id: string }>("POST", "/api/recordings", b),
@@ -408,7 +543,8 @@ export const api = {
   recording: (id: string) => request<Recording>("GET", `/api/recordings/${enc(id)}`),
   findCandidates: (id: string) => request<Candidates>("POST", `/api/recordings/${enc(id)}/candidates`),
 
-  build: (recording_id: string) => request<{ thread_id: string }>("POST", "/api/integrations/build", { recording_id }),
+  build: (recording_id: string, name?: string) =>
+    request<{ thread_id: string }>("POST", "/api/integrations/build", name ? { recording_id, name } : { recording_id }),
   repair: (incident_id: number) => request<{ thread_id: string }>("POST", `/api/incidents/${incident_id}/repair`),
   threads: () => request<ThreadStatus[]>("GET", "/api/agent/threads"),
   thread: (id: string) => request<ThreadStatus>("GET", `/api/agent/${enc(id)}`),
@@ -436,6 +572,24 @@ export const api = {
   accuracy: (integration: string) => request<Accuracy>("GET", `/api/bench/accuracy${qs({ integration })}`),
   /** bench/results.json as written by `make bench`; 404 until it has been run. */
   benchResults: () => request<BenchResults>("GET", "/api/bench/results"),
+
+  // v2 (contracts V9)
+  /** What the extension sends on a hotkey press. The UI only uses it in tests and rehearsal tools. */
+  postPage: (b: { url: string; title: string; html: string }, token: string) =>
+    request<PageAccepted>("POST", "/api/pages", b, { "X-Patchwork-Token": token }),
+  pages: (p: { since?: number; limit?: number } = {}) => request<PageRecord[]>("GET", `/api/pages${qs(p)}`),
+  page: (id: string) => request<{ page: PageRecord; row: TrackerRow }>("GET", `/api/pages/${enc(id)}`),
+  extension: () => request<ExtensionInfo>("GET", "/api/extension"),
+  tracker: (p: { integration?: string; limit?: number } = {}) =>
+    request<TrackerResponse>("GET", `/api/tracker${qs({ integration: p.integration ?? TRACKER, limit: p.limit })}`),
+  layouts: (integration: string = TRACKER) => request<Layout[]>("GET", `/api/layouts${qs({ integration })}`),
+  revertLayout: (parser_id: string, integration: string = TRACKER) =>
+    request<{ version: number; deployed: true }>("POST", `/api/layouts/${enc(parser_id)}/revert`, { integration }),
+  formRename: (from: string, to: string) => request<unknown>("POST", "/api/demo/form/rename", { from, to }),
+  v2SaveBaseline: () => request<unknown>("POST", "/api/demo/v2/save-baseline"),
+  v2Reset: () => request<unknown>("POST", "/api/demo/v2/reset"),
+  /** bench/v2/results.json (W5); 404 until it exists. */
+  benchV2: () => request<BenchV2Results>("GET", "/api/bench/v2"),
 };
 
 // ---------------------------------------------------------------- SSE
