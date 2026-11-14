@@ -563,3 +563,24 @@ smartrecruiters; 12 each. `bench/v2/results.json`:
 `{postings: [{n, file, site, label, ai_calls, seconds, correct}], series: {patchwork_cumulative_ai_calls: [...],
 browser_agent_cumulative_ai_calls: [...]}, numbers: [{name, value, unit, kind, source}]}` with `kind` ∈
 `measured | measured (earlier run) | estimate | extrapolated | not measured` as in v1.
+
+Additive (W5) in `results.json`: each posting also has `platform, status, reason, parser, version, routed_by,
+learn_thread_id, thread_model_calls, ai_calls_kind, asked_person, outcome (right_write|wrong_write|held|dropped), got,
+want, error`; `correct` is `true` (right row), `false` (wrong row or nothing written and not held) or `null` (held for
+a person). `series_meta: {<series key>: {kind, source, note|assumption}}` labels each series (the browser-agent one is
+an `estimate` and must carry its `assumption`); `numbers[]` may have a `note`; plus `schema_version, generated_at,
+command, environment, scenario, questions, summary`. `bench.v2.scoring.check_results` rejects a file that breaks this.
+UIs read `series` + `series_meta` for the chart and `numbers` for cards.
+
+What the harness and `scripts/smoke_v2.py` rely on (W5 reads, others own):
+- `POST /api/integrations/build {recording_id: "fixture-jobs", name: "jobs_to_tracker"}` → a thread answered through
+  `/api/agent/{id}/resume` as in v1; `PUT /api/settings {ai_enabled, learn_policy}`.
+- `TrackerRow.ai_calls` is the only source of a learn's model calls over HTTP (agent status has no `result`), so W4a
+  must fill it from the learn thread's `done.result.model_calls` (V10).
+- After a repair deploys, the held page's row goes `held` → `success` once the replay/run has finished; the smoke waits
+  for `success` on that page id.
+- `GET /api/incidents/{id}` → `detail.contract_errors` (v1 shape) for the form `CONTRACT_CHANGED`.
+- The fixture recording's form URL is whatever W2-3 recorded against (`:18010`); the in-process bench/smoke run the
+  fixture form on a free port and, after TEACH, **retarget** the taught spec's `sink.url` only (compile, test, deploy
+  through `control.ops`, recorded in `results.json` `scenario.retarget`). `POST /api/demo/v2/reset` does not reset the
+  fixture form; the smoke calls the form's `/admin/reset` itself.

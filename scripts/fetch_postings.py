@@ -23,10 +23,9 @@ from __future__ import annotations
 
 import gzip
 import json
-import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +34,7 @@ import httpx
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from runner.html import css_all, jsonld_get, normalize_ws, site_of, visible_text  # noqa: E402
+from runner.html import css_all, jsonld_get, normalize_ws, site_of, visible_text
 
 OUT = REPO / "fixtures" / "postings"
 PLAN = OUT / "plan.json"
@@ -158,7 +157,7 @@ def cmd_list() -> None:
 # render: headless Chromium, rendered DOM
 
 def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def _blocked(html: str, title: str) -> str | None:
