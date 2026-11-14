@@ -237,7 +237,7 @@ function DemoControls({ onChange }: { onChange: () => void }) {
 }
 
 export default function RunsTab() {
-  const { settings, integrationName: name, integrations, incidents, runId, setRunId, act, refresh, go } = useApp();
+  const { settings, integrationName: name, integrations, incidents, runId, setRunId, act, refresh, navigate } = useApp();
   const integ = integrations.find((i) => i.name === name);
   const [dry, setDry] = useState(false);
   const [limit, setLimit] = useState<string>("100");
@@ -305,7 +305,7 @@ export default function RunsTab() {
         <div className="grid gap-6 content-start">
           <Card eyebrow="Run batch" title={integ ? `${name}` : "No integration yet"} right={integ?.active_version != null && <Pill k="success">active v{integ.active_version}</Pill>} bodyClass="card-b grid gap-3">
             {!integ ? (
-              <Empty action={<button className="btn" onClick={() => go("record")}>Go to Record</button>}>Build and approve a version first.</Empty>
+              <Empty action={<button className="btn" onClick={() => navigate({ page: "new" })}>Start a new integration</button>}>Build and approve a version first.</Empty>
             ) : (
               <>
                 <label className="flex items-center gap-2.5 cursor-pointer">

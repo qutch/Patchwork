@@ -6,15 +6,20 @@ import { useApp } from "../state";
 
 /** One page integration at a time. Hidden when there is only one to choose from. */
 export function IntegrationPicker({ big = false, compact = false }: { big?: boolean; compact?: boolean }) {
-  const { pageIntegrations, pageIntegration, setPageIntegration } = useApp();
+  const { pageIntegrations, pageIntegration, setPageIntegration, route, navigate } = useApp();
   if (pageIntegrations.length < 2) return null;
+  // on an integration's own page the choice is the address, so switching goes to the other integration's page
+  const choose = (n: string) => {
+    setPageIntegration(n);
+    if (route.page === "integration") navigate({ page: "integration", name: n, section: route.section });
+  };
   return (
     <label className="flex items-center gap-2 m-0 min-w-0">
       {!compact && <span className={`font-mono ${big ? "text-[14px]" : "text-xs"} text-muted`}>integration</span>}
       <select
         className={`input w-auto ${compact ? "max-w-[230px]" : "max-w-[300px]"} ${big ? "text-[15px]" : "text-[13px]"}`}
         value={pageIntegration}
-        onChange={(e) => setPageIntegration(e.target.value)}
+        onChange={(e) => choose(e.target.value)}
         aria-label="Page integration"
         title={pageIntegration}
       >

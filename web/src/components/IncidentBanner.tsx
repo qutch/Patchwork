@@ -11,7 +11,7 @@ function headline(inc: Incident, isPage: boolean): string {
 
 /** An open incident with the Repair flow. `onStarted` replaces the default jump to Agent Activity. */
 export function IncidentBanner({ id, big = false, onStarted }: { id: number; big?: boolean; onStarted?: (threadId: string) => void }) {
-  const { settings, act, setThreadId, go, refresh, isPageIntegration } = useApp();
+  const { settings, act, setThreadId, navigate, refresh, isPageIntegration } = useApp();
   const [inc, setInc] = useState<Incident | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -29,7 +29,7 @@ export function IncidentBanner({ id, big = false, onStarted }: { id: number; big
       setThreadId(r.thread_id);
       refresh();
       if (onStarted) onStarted(r.thread_id);
-      else go("agent");
+      else navigate({ page: "integration", name: inc.integration, section: "activity" });
     }
   };
   return (

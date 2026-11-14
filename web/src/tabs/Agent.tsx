@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { threadBelongs } from "../lib/integrations";
 import { api, type ThreadStatus } from "../api";
 import type { FeedItem, SubagentSpan } from "../lib/derive";
 import { fmtDuration, fmtTime } from "../lib/derive";
@@ -201,18 +202,23 @@ function FeedRow({ item, threadId }: { item: FeedItem; threadId: string }) {
   }
 }
 
-export default function AgentTab() {
-  const { threads, threadId, setThreadId, go } = useApp();
+export default function AgentTab({ integration }: { integration?: string } = {}) {
+  const { threads: all, threadId: chosenId, setThreadId, navigate } = useApp();
+  const threads = useMemo(() => (integration ? all.filter((t) => threadBelongs(t, integration)) : all), [all, integration]);
+  // a thread of another integration falls back to this integration's newest; one just started (not listed yet) stays
+  const threadId = !integration || (chosenId && (threads.some((t) => t.thread_id === chosenId) || !all.some((t) => t.thread_id === chosenId)))
+    ? chosenId
+    : threads.at(-1)?.thread_id ?? null;
   // follow the newest thread unless one is chosen
   useEffect(() => {
-    if (!threads.length) return;
-    const newest = threads[threads.length - 1].thread_id;
-    if (!threadId) setThreadId(newest);
-    else if (!threads.some((t) => t.thread_id === threadId)) {
+    if (!all.length) return;
+    const newest = all[all.length - 1].thread_id;
+    if (!chosenId) setThreadId(newest);
+    else if (!all.some((t) => t.thread_id === chosenId)) {
       // just started (list not refreshed yet) or gone (e.g. after a reset)?
-      api.thread(threadId).catch(() => setThreadId(newest));
+      api.thread(chosenId).catch(() => setThreadId(newest));
     }
-  }, [threads, threadId, setThreadId]);
+  }, [all, chosenId, setThreadId]);
   const { view, conn, events } = useAgentThread(threadId);
   const feedRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -229,7 +235,7 @@ export default function AgentTab() {
     return (
       <>
         <PageHead eyebrow="Step 3 · watch the agents" title="Agent Activity" />
-        <Empty action={<button className="btn btn-primary" onClick={() => go("record")}>Go to Record</button>}>
+        <Empty action={<button className="btn btn-primary" onClick={() => navigate({ page: "new" })}>Start a new integration</button>}>
           No agent threads yet. Build an integration from a recording, or press “Repair with AI” on an incident.
         </Empty>
       </>

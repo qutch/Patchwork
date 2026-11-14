@@ -14,6 +14,13 @@
 //   GET  /api/layouts?integration=, POST /api/layouts/{id}/revert {integration}
 //   GET  /api/integrations/{name}[/versions/{v}] (spec_yaml names the sink), POST .../replay
 //   POST /api/demo/v2/reset|save-baseline?integration=
+//   POST /api/credentials {name, value}              201 {name, set: true, used_by}; the value is never kept or echoed (Task 1)
+//   POST /api/integrations/new, GET .../{name}/draft  drafts (Task 2); GET /api/integrations gains a state per entry
+//   POST /api/pages {integration: <draft>}            kept for the teach step, never run
+//   PUT  .../{name}/destination, GET /api/destinations/airtable/tables|api/operations   (Task 3)
+//   POST .../{name}/teach {page_ids}                  a build-shaped thread ending in request_deploy + review (Tasks 4-5)
+//   POST /api/agent/{id}/resume {decision, edits}     approve makes the draft live and writes 2 rows
+//   DELETE /api/integrations/{name}?delete_rows=      removes a draft or live integration
 //   POST /api/demo/mock/credential {name, set}   mock only: pretend the value was added to (or removed from) .env
 
 import { canonicalUrl, siteOf, TOKEN } from "./v2.mjs";
@@ -89,13 +96,19 @@ function specYaml(name, def, parsers) {
 export function createV3(h) {
   // h: { send, fail, nowIso, clone, timer, settings: () => settings, base: () => url }
   const credentials = new Map([["AIRTABLE_TOKEN", false]]);
+  const drafts = new Map(); // name -> draft (Task 2), until it goes live
+  const draftPages = new Map(); // page id -> page, for pages sent to a draft
+  const threads = new Map(); // teach threads
   let pageSeq = 900; // page ids distinct from v2's
   const I = {};
   const baselines = {};
 
   const credOf = (def) => def.sink.auth?.credential ?? null;
+  const liveNames = () => Object.keys(I);
+  const openDrafts = () => [...drafts.values()].filter((d) => d.state !== "live");
   const calls = (n) => (h.settings().agent === "deep" ? n : 0);
   const readerOf = (def, pid) => def.readers[pid] ?? def.learned[pid];
+  const usedBy = (name) => [...liveNames().filter((n) => credOf(I[n].def) === name), ...openDrafts().filter((d) => d.destination?.credential === name).map((d) => d.name)];
 
   function fresh(name) {
     const def = DEFS[name];
@@ -137,6 +150,7 @@ export function createV3(h) {
 
   /** Values a reader would extract: the canned ones, else something plausible from the title. */
   function valuesFor(st, page) {
+    if (st.def.valuesFor) return st.def.valuesFor(page);
     for (const list of Object.values(st.def.pages)) {
       const hit = list.find(([u]) => canonicalUrl(u) === page.canonical_url);
       if (hit) return h.clone(hit[2]);
@@ -235,6 +249,334 @@ export function createV3(h) {
     Object.assign(st, { pages: [], rows: new Map(), layouts: b.layouts, versions: b.versions, active: b.active });
   }
 
+  // ---------------------------------------------------------------- new integration wizard (Tasks 1-5)
+  const slug = (intent) => String(intent).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").split("_").slice(0, 5).join("_") || "integration";
+  const CRED_NAME = /^[A-Z][A-Z0-9_]{1,63}$/;
+  const REFUSED_CRED = new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "PATH", "HOME", "SHELL", "USER", "PYTHONPATH"]);
+  const APP_ID = /app[A-Za-z0-9]{14,}/;
+
+  const TABLES = [{ id: "tblProducts000001", name: "Products" }, { id: "tblReadingList0001", name: "Reading list" }];
+  const TABLE_FIELDS = {
+    Products: [{ name: "Product", type: "text", required: true }, { name: "Price", type: "number", required: false },
+      { name: "Store", type: "text", required: false }, { name: "Link", type: "url", required: false }, { name: "Date Added", type: "date", required: false }],
+    "Reading list": [{ name: "Title", type: "text", required: true }, { name: "Authors", type: "text", required: false },
+      { name: "Year", type: "number", required: false }, { name: "Link", type: "url", required: false }, { name: "Added", type: "date", required: false }],
+  };
+  const OPERATIONS = [
+    { method: "POST", path: "/papers", summary: "Add a paper", fields: ["title", "venue.name", "year", "url"] },
+    { method: "PUT", path: "/papers/{id}", summary: "Replace a paper", fields: ["title", "venue.name", "year", "url"] },
+    { method: "PATCH", path: "/papers/{id}", summary: "Update a paper", fields: ["title", "year"] },
+  ];
+  const typeOf = (n) => (/year|count|price/i.test(n) ? "number" : /date|added|seen/i.test(n) ? "date" : /url|link/i.test(n) ? "url" : "text");
+
+  class Refused extends Error {}
+  /** Task 3 `control.destinations.check`: what the destination wants, or what to do next. */
+  function checkDestination(d) {
+    if (d.kind === "airtable") {
+      const baseId = d.base_id ?? String(d.base_url ?? "").match(APP_ID)?.[0];
+      if (!baseId) throw new Refused("Couldn't find a base id (app...) in what was entered. Paste the base's URL or id.");
+      if (!d.credential) throw new Refused("Choose the credential Airtable should use.");
+      if (!credentials.get(d.credential)) throw new Refused(`Airtable rejected the credential ${d.credential}: it is not set. Add it under Credentials, then check again.`);
+      const t = TABLES.find((x) => x.name === d.table || x.id === d.table);
+      if (!t) throw new Refused(`The table ${d.table} wasn't found in base ${baseId}. Tables there: ${TABLES.map((x) => x.name).join(", ")}.`);
+      return { dest: { ...d, base_id: baseId, base_url: undefined }, check: { kind: "airtable", title: `${t.name} (Airtable)`, fields: h.clone(TABLE_FIELDS[t.name]) } };
+    }
+    if (d.kind === "form") {
+      if (!/^https?:\/\//.test(d.url ?? "") || String(d.url).includes("nowhere.invalid")) throw new Refused(`Couldn't reach ${d.url}. Check the address and try again.`);
+      return { dest: d, check: { kind: "form", title: "Web form", fields: TABLE_FIELDS.Products.map((f) => ({ ...f, name: f.name === "Date Added" ? "Date seen" : f.name })) } };
+    }
+    if (d.kind === "api") {
+      if (!/^https?:\/\//.test(d.base_url ?? "")) throw new Refused(`Couldn't reach ${d.base_url}. Check the address and try again.`);
+      const op = OPERATIONS.find((o) => o.method === d.operation?.method && o.path === d.operation?.path);
+      if (!op) throw new Refused("Choose which operation Patchwork should call.");
+      return { dest: d, check: { kind: "api", title: `${op.method} ${op.path}`, fields: op.fields.map((n) => ({ name: n, type: typeOf(n), required: n === "title" })), operations: h.clone(OPERATIONS) } };
+    }
+    if (d.kind === "sqlite") {
+      if (!d.path || !d.table) throw new Refused("Enter the database file and the table.");
+      return { dest: d, check: { kind: "sqlite", title: `${d.table} (SQLite)`, fields: [{ name: "title", type: "text", required: true }, { name: "url", type: "text", required: false }, { name: "added", type: "date", required: false }] } };
+    }
+    throw new Refused(`Unknown destination kind ${d.kind}.`);
+  }
+
+  // ---- the teach thread: a real agent thread's shape (todos, subagents, tools, then a review)
+  const threadStatus = (t) => ({ thread_id: t.id, mode: "build", subject: t.subject, integration: t.draft, state: t.state, pending: t.pending, last_seq: t.events.length, created_at: t.created_at });
+  function emit(t, ev) {
+    const e = { ...ev, seq: t.events.length + 1, t: new Date().toISOString(), thread_id: t.id };
+    t.events.push(e);
+    if (e.type === "status") t.state = e.state;
+    h.broadcast(t.listeners, { id: e.seq, event: e.type, data: e });
+    return e;
+  }
+  const PRODUCT_NAME = /name|product|title|item/i, PRICE = /price|cost|amount/i, LINK = /link|url/i, DATE = /date|added|seen/i, STORE = /store|shop|seller|merchant/i;
+  const productValues = (page) => {
+    const n = [...page.canonical_url].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 9973, 7);
+    const t = page.title.split(/ [-|:] /)[0].trim() || page.title;
+    return { product: t, price: Math.round(n) / 100 + 9, store: page.site.split(".")[0].replace(/^./, (c) => c.toUpperCase()) };
+  };
+  /** Task 5 `request_deploy.review[]` for the examples and the destination's fields. */
+  function buildReview(draft, pages) {
+    const byPage = (f) => Object.fromEntries(pages.map((p) => [p.id, f(p)]));
+    return draft.destination.fields.map((f) => {
+      const n = f.name;
+      if (STORE.test(n))
+        return { dest_field: n, source: "constant: Acme", values: byPage(() => "Acme"), ai_proposed: true, status: "needs_you",
+          alternatives: ["reader: offers.seller.name", "the site's name"] };
+      if (PRODUCT_NAME.test(n))
+        return { dest_field: n, source: "reader: h1.product-title", values: byPage((p) => productValues(p).product), ai_proposed: true, status: "checked",
+          alternatives: ["reader: og:title", "reader: jsonld name"] };
+      if (PRICE.test(n))
+        return { dest_field: n, source: "reader: jsonld offers.price", values: byPage((p) => String(productValues(p).price)), ai_proposed: true, status: "checked",
+          alternatives: ["reader: .price"] };
+      if (LINK.test(n)) return { dest_field: n, source: "the page's canonical URL", values: byPage((p) => p.canonical_url), ai_proposed: false, status: "checked", alternatives: [] };
+      if (DATE.test(n)) return { dest_field: n, source: "today's date", values: byPage(() => new Date().toISOString().slice(0, 10)), ai_proposed: false, status: "checked", alternatives: [] };
+      return { dest_field: n, source: "skipped", values: byPage(() => null), ai_proposed: false, status: "checked", alternatives: [] };
+    });
+  }
+  function startTeach(draft) {
+    const id = `build-${Math.random().toString(16).slice(2, 12)}`;
+    const pages = draft.example_page_ids.map((pid) => draftPages.get(pid)).filter(Boolean);
+    const sites = [...new Set(pages.map((p) => p.site))];
+    const t = { id, draft: draft.name, subject: `draft-${draft.name}`, state: "running", pending: null, events: [], created_at: h.nowIso(), listeners: new Set(), pages, review: null };
+    threads.set(id, t);
+    const A = (agent) => (ev) => ({ agent, ...ev });
+    const steps = [
+      { type: "status", state: "running", mode: "build" },
+      { type: "todos", todos: [
+        { content: "Map each destination field to what the example pages show", status: "in_progress" },
+        { content: "Check every reader on every example site", status: "pending" },
+        { content: "Compile, test and ask you to approve", status: "pending" }] },
+      { type: "subagent_start", name: "mapper", task: `Map ${draft.destination.fields.length} destination fields to the first example` },
+      A("mapper")({ type: "tool_call", tool: "propose_mapping", args: { fields: draft.destination.fields.map((f) => f.name) } }),
+      A("mapper")({ type: "tool_result", tool: "propose_mapping", ok: true, summary: "OK: every reader found its value on the first example" }),
+      { type: "subagent_end", name: "mapper", summary: "Proposed a reader for each field; each value checked by code." },
+      { type: "todos", todos: [
+        { content: "Map each destination field to what the example pages show", status: "completed" },
+        { content: "Check every reader on every example site", status: "in_progress" },
+        { content: "Compile, test and ask you to approve", status: "pending" }] },
+      { type: "subagent_start", name: "learner", task: `Check the readers on ${sites.length} example site${sites.length === 1 ? "" : "s"}` },
+      ...sites.slice(1).flatMap((s) => [
+        A("learner")({ type: "tool_call", tool: "add_site_parser", args: { page_id: pages.find((p) => p.site === s).id } }),
+        A("learner")({ type: "tool_result", tool: "add_site_parser", ok: true, summary: `OK: a reader for ${s} (never a catch-all)` }),
+      ]),
+      { type: "subagent_end", name: "learner", summary: "Every reader matches its own site only." },
+      { type: "subagent_start", name: "builder", task: "Compile the spec and run the tests" },
+      A("builder")({ type: "tool_call", tool: "compile_spec", args: {} }),
+      A("builder")({ type: "tool_result", tool: "compile_spec", ok: true, summary: "compiled v1" }),
+      A("builder")({ type: "tool_call", tool: "run_tests", args: { version: 1 } }),
+      A("builder")({ type: "tool_result", tool: "run_tests", ok: true, summary: "12 passed" }),
+      { type: "subagent_end", name: "builder", summary: "v1 compiled, 12 tests passed." },
+      { type: "message", agent: "supervisor", text: "Everything below is checked by code. Rows marked AI were proposed by the model; confirm the ones that need you." },
+    ];
+    let i = 0;
+    const next = () => {
+      if (i < steps.length) {
+        emit(t, steps[i++]);
+        return h.timer(i < 3 ? 250 : 200, next);
+      }
+      t.review = buildReview(draft, pages);
+      const ev = emit(t, { type: "request_deploy", interrupt_id: `int-${id.slice(6, 12)}`, name: draft.name, version: 1,
+        summary: `${draft.name} v1: ${pages.length} example page${pages.length === 1 ? "" : "s"}, ${sites.length} site${sites.length === 1 ? "" : "s"}`,
+        spec_diff: `--- /dev/null\n+++ spec.yaml\n+name: ${draft.name}\n`, code_diff: "", tests: { passed: true, summary: "12 passed" }, review: t.review });
+      t.pending = ev;
+      emit(t, { type: "status", state: "waiting", mode: "build" });
+    };
+    h.timer(150, next);
+    return t;
+  }
+
+  /** Approve with edits (Task 5 `apply_review_edits`): only an offered alternative, a constant or a skip. */
+  function applyEdits(review, edits) {
+    const out = h.clone(review);
+    for (const e of edits ?? []) {
+      const row = out.find((r) => r.dest_field === e.dest_field);
+      if (!row) throw new Refused(`no row ${e.dest_field}`);
+      const c = e.choice;
+      if (c && typeof c === "object" && "const" in c) Object.assign(row, { source: `constant: ${c.const}`, values: Object.fromEntries(Object.keys(row.values).map((k) => [k, String(c.const)])), status: "checked", ai_proposed: false });
+      else if (c && typeof c === "object" && c.skip === true) Object.assign(row, { source: "skipped", values: Object.fromEntries(Object.keys(row.values).map((k) => [k, null])), status: "checked", ai_proposed: false });
+      else if (row.alternatives.some((a) => JSON.stringify(a) === JSON.stringify(c))) Object.assign(row, { source: c, status: "checked" });
+      else throw new Refused(`${e.dest_field}: ${JSON.stringify(c)} is not one of the offered alternatives`);
+    }
+    return out;
+  }
+
+  /** The approved draft becomes a live page integration with its example pages written (2 rows). */
+  function goLive(t, draft, review) {
+    const pages = t.pages;
+    const sinkFields = {};
+    const fieldNames = [];
+    const vals = new Map(); // page id -> {field: value}
+    for (const r of review) {
+      const n = r.dest_field;
+      if (r.source === "skipped") continue;
+      if (r.source === "the page's canonical URL") sinkFields[n] = { from: "record.canonical_url" };
+      else if (r.source === "today's date") sinkFields[n] = { from: "record.captured_date" };
+      else if (String(r.source).startsWith("constant: ")) sinkFields[n] = { const: String(r.source).slice(10) };
+      else {
+        const f = n.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+        fieldNames.push(f);
+        sinkFields[n] = { from: f };
+      }
+      for (const [pid, v] of Object.entries(r.values)) vals.set(pid, { ...(vals.get(pid) ?? {}), [n]: v });
+    }
+    const dest = draft.destination;
+    const sink = dest.kind === "airtable" ? { kind: "airtable", base_id: dest.base_id, table: dest.table, auth: { scheme: "bearer", credential: dest.credential } }
+      : dest.kind === "form" ? { kind: "form", url: dest.url, submit: "Save" }
+      : dest.kind === "api" ? { kind: "api", base_url: dest.base_url, operation: dest.operation, ...(dest.credential ? { auth: { scheme: "bearer", credential: dest.credential } } : {}) }
+      : { kind: "sqlite", path: dest.path, table: dest.table };
+    const readers = {};
+    for (const p of pages) {
+      const pid = p.site.split(".")[0];
+      readers[pid] ??= { site: p.site, fields: Object.fromEntries(fieldNames.map((f) => [f, { css: `[itemprop="${f}"]` }])) };
+    }
+    const def = { intent: draft.intent, field_names: fieldNames, sink, sink_fields: sinkFields, readers, learned: {}, pages: {},
+      valuesFor: (page) => {
+        const src = pages.find((x) => x.canonical_url === page.canonical_url);
+        const row = src ? vals.get(src.id) : null;
+        const base = productValues(page);
+        return Object.fromEntries(fieldNames.map((f) => {
+          const dn = Object.keys(sinkFields).find((k) => sinkFields[k].from === f);
+          const v = row?.[dn] ?? base[f] ?? base[Object.keys(base).find((b) => f.includes(b)) ?? ""] ?? null;
+          return [f, /^[0-9.]+$/.test(String(v)) && PRICE.test(f) ? Number(v) : v];
+        }));
+      } };
+    DEFS[draft.name] = def;
+    const st = fresh(draft.name);
+    I[draft.name] = st;
+    baselines[draft.name] = h.clone({ layouts: st.layouts, versions: st.versions, active: st.active });
+    for (const p of pages.slice(0, 2)) {
+      const page = ingest(st, { url: p.url, title: p.title, html: p.html });
+      processRow(st, st.rows.get(page.id));
+    }
+    draft.state = "live"; // the draft record stays (state live), as the control plane keeps it
+    return st;
+  }
+
+  function resumeTeach(t, body) {
+    if (!t.pending || t.pending.interrupt_id !== body.interrupt_id) return [409, `no pending interrupt ${body.interrupt_id} on ${t.id}`];
+    if (!["approve", "reject"].includes(body.decision)) return [422, "decision must be approve or reject"];
+    const draft = drafts.get(t.draft);
+    let review = t.review;
+    if (body.decision === "approve") {
+      try {
+        review = applyEdits(t.review, body.edits);
+      } catch (e) {
+        return [422, e.message];
+      }
+    }
+    const pending = t.pending;
+    t.pending = null;
+    emit(t, { type: "resumed", interrupt_id: pending.interrupt_id, payload: { decision: body.decision, comment: body.comment ?? "", ...(body.edits ? { edits: body.edits } : {}) } });
+    emit(t, { type: "status", state: "running", mode: "build" });
+    h.timer(200, () => {
+      if (body.decision === "approve" && draft) {
+        goLive(t, draft, review);
+        emit(t, { type: "deployed", name: t.draft, version: 1, previous_version: null });
+        emit(t, { type: "done", result: { deployed: true, version: 1 } });
+      } else {
+        if (draft) Object.assign(draft, { state: "draft", thread_id: null });
+        emit(t, { type: "done", result: { deployed: false, version: 1 } });
+      }
+      emit(t, { type: "status", state: "done", mode: "build" });
+    });
+    return [200, threadStatus(t)];
+  }
+
+  /** Everything the wizard calls. Returns true when it answered. */
+  function handleWizard(req, res, url, M, p, body) {
+    const { send, fail } = h;
+    let mm;
+    if (p === "/api/credentials" && M === "POST") {
+      const name = String(body.name ?? "");
+      if (!CRED_NAME.test(name) || REFUSED_CRED.has(name)) return fail(res, 422, `${name || "(empty)"} is not an allowed credential name: use capitals, digits and underscores (not a model key or process variable)`), true;
+      if (typeof body.value !== "string" || body.value.length < 8) return fail(res, 422, "the value is too short to be a credential"), true;
+      credentials.set(name, true); // the value is never kept: a mock has nothing to store it for
+      return send(res, 201, { name, set: true, used_by: usedBy(name) }), true;
+    }
+    if (p === "/api/integrations/new" && M === "POST") {
+      const intent = String(body.intent ?? "").trim();
+      if (!intent) return fail(res, 422, "intent is required"), true;
+      const name = body.name ? String(body.name) : slug(intent);
+      if (drafts.has(name) || I[name] || name === JOBS || name === "po_to_stockroom") return fail(res, 409, `an integration named ${name} already exists`), true;
+      const d = { name, intent, state: "draft", destination: null, example_page_ids: [], thread_id: null, created_at: h.nowIso() };
+      drafts.set(name, d);
+      return send(res, 201, d), true;
+    }
+    if (p === "/api/destinations/airtable/tables" && M === "GET") {
+      const cred = url.searchParams.get("credential");
+      if (!cred || !credentials.get(cred)) return fail(res, 422, `Airtable rejected the credential ${cred}: it is not set. Add it under Credentials, then try again.`), true;
+      return send(res, 200, TABLES), true;
+    }
+    if (p === "/api/destinations/api/operations" && M === "GET") {
+      if (!/^https?:\/\//.test(url.searchParams.get("base_url") ?? "")) return fail(res, 422, "Couldn't reach that address. Check it and try again."), true;
+      return send(res, 200, OPERATIONS), true;
+    }
+    if ((mm = p.match(/^\/api\/integrations\/([^/]+)\/(draft|destination|teach)$/))) {
+      const name = decodeURIComponent(mm[1]);
+      const d = drafts.get(name);
+      if (!d) return false; // a live integration: the older handlers answer
+      if (mm[2] === "draft" && M === "GET") return send(res, 200, d), true;
+      if (mm[2] === "destination" && M === "PUT") {
+        try {
+          const { dest, check } = checkDestination(body);
+          d.destination = { ...JSON.parse(JSON.stringify(dest)), fields: check.fields };
+          return send(res, 200, check), true;
+        } catch (e) {
+          if (e instanceof Refused) return fail(res, 422, e.message), true;
+          throw e;
+        }
+      }
+      if (mm[2] === "teach" && M === "POST") {
+        if (d.state !== "draft") return fail(res, 409, `${name} is ${d.state}: it can only be taught once`), true;
+        const ids = Array.isArray(body.page_ids) ? body.page_ids : [];
+        if (!d.destination) return fail(res, 422, "choose a destination first"), true;
+        if (!ids.length || ids.some((x) => !draftPages.has(x))) return fail(res, 422, "send at least one example page first"), true;
+        if (!h.settings().ai_enabled) return fail(res, 409, "AI is off. Turn AI on to let Patchwork propose a mapping."), true;
+        d.example_page_ids = ids;
+        const t = startTeach(d);
+        Object.assign(d, { state: "teaching", thread_id: t.id });
+        return send(res, 200, { thread_id: t.id }), true;
+      }
+    }
+    if (M === "DELETE" && (mm = p.match(/^\/api\/integrations\/([^/]+)$/))) {
+      const name = decodeURIComponent(mm[1]);
+      if (!drafts.has(name) && !I[name]) return false;
+      const rows = I[name] ? [...I[name].rows.values()].filter((r) => r.status === "success").length : 0;
+      drafts.delete(name);
+      delete I[name];
+      for (const [id, pg] of draftPages) if (pg.integration === name) draftPages.delete(id);
+      return send(res, 200, { deleted: name, rows_deleted: url.searchParams.get("delete_rows") === "true" ? rows : 0 }), true;
+    }
+    if ((mm = p.match(/^\/api\/agent\/([^/]+)(\/[a-z]+)?$/))) {
+      const t = threads.get(decodeURIComponent(mm[1]));
+      if (!t) return false;
+      if (M === "GET" && !mm[2]) return send(res, 200, threadStatus(t)), true;
+      if (M === "GET" && mm[2] === "/stream")
+        return h.sse(req, res, url, {
+          listeners: t.listeners,
+          items: () => t.events.map((e) => ({ id: e.seq, event: e.type, data: e })),
+          terminal: (x) => x.event === "status" && (x.data.state === "done" || x.data.state === "failed"),
+          isOver: () => t.state === "done" || t.state === "failed",
+        }), true;
+      if (M === "POST" && mm[2] === "/resume") {
+        const [code, out] = resumeTeach(t, body);
+        return (code === 200 ? send(res, 200, out) : fail(res, code, out)), true;
+      }
+    }
+    return false;
+  }
+
+  /** A page sent to a draft is kept for the teach step and never run (Task 2). */
+  function ingestForDraft(d, body) {
+    const seq = ++pageSeq;
+    const id = `pg-${String(seq).padStart(6, "0")}`;
+    const at = new Date().toISOString().replace(/\.\d+Z$/, "+00:00");
+    const page = { id, seq, url: body.url, canonical_url: canonicalUrl(body.url), site: siteOf(body.url), title: String(body.title ?? ""), html: String(body.html ?? ""),
+      text: "", captured_at: at, captured_date: at.slice(0, 10), integration: d.name };
+    draftPages.set(id, page);
+    d.example_page_ids.push(id);
+    return page;
+  }
+
   // ---------------------------------------------------------------- routes
   const totals = (rows) => ({
     pages: rows.length,
@@ -244,7 +586,7 @@ export function createV3(h) {
     held: rows.filter((r) => r.label === "held").length,
     duplicate: rows.filter((r) => r.label === "duplicate").length,
   });
-  const summary = (st) => ({ name: st.name, intent: st.def.intent, active_version: st.active, latest_version: st.versions.at(-1).version, open_incidents: 0 });
+  const summary = (st) => ({ name: st.name, state: "live", intent: st.def.intent, active_version: st.active, latest_version: st.versions.at(-1).version, open_incidents: 0 });
   const which = (url, body) => {
     const n = url.searchParams.get("integration") ?? body?.integration;
     return n && I[n] ? I[n] : null;
@@ -253,16 +595,26 @@ export function createV3(h) {
   function handle(req, res, url, M, p, body) {
     const { send, fail } = h;
     let mm;
+    if (handleWizard(req, res, url, M, p, body)) return true;
     if (p === "/api/extension" && M === "GET")
       return send(res, 200, { token: TOKEN, control_url: h.base(), default_integration: JOBS,
-        integrations: [{ name: JOBS, intent: JOBS_INTENT }, ...V3_NAMES.map((n) => ({ name: n, intent: DEFS[n].intent }))] }), true;
+        integrations: [{ name: JOBS, intent: JOBS_INTENT }, ...liveNames().map((n) => ({ name: n, intent: I[n].def.intent })),
+          ...openDrafts().map((d) => ({ name: d.name, intent: d.intent }))] }), true;
     if (p === "/api/credentials" && M === "GET")
-      return send(res, 200, [...credentials].map(([name, set]) => ({ name, set, used_by: V3_NAMES.filter((n) => credOf(DEFS[n]) === name) }))), true;
+      return send(res, 200, [...credentials].map(([name, set]) => ({ name, set, used_by: usedBy(name) }))), true;
     if (p === "/api/demo/mock/credential" && M === "POST") {
       if (!credentials.has(body.name)) return fail(res, 404, `unknown credential ${body.name}`), true;
       credentials.set(body.name, !!body.set);
       return send(res, 200, { name: body.name, set: !!body.set }), true;
     }
+    if (p === "/api/pages" && M === "POST" && openDrafts().some((d) => d.name === body.integration)) {
+      if (req.headers["x-patchwork-token"] !== TOKEN) return fail(res, 401, "bad or missing X-Patchwork-Token"), true;
+      if (typeof body.url !== "string" || typeof body.html !== "string") return fail(res, 422, "url, title and html are required"), true;
+      const page = ingestForDraft(drafts.get(body.integration), body);
+      return send(res, 201, { id: page.id, seq: page.seq, site: page.site, canonical_url: page.canonical_url, integration: page.integration, run_id: null, queued: false }), true;
+    }
+    if (p === "/api/pages" && M === "GET" && openDrafts().some((d) => d.name === url.searchParams.get("integration")))
+      return send(res, 200, [...draftPages.values()].filter((x) => x.integration === url.searchParams.get("integration")).map(({ html, ...pg }) => pg)), true; // eslint-disable-line no-unused-vars
     if (p === "/api/pages" && M === "POST") {
       const st = which(url, body);
       if (!st) return false;
@@ -339,5 +691,10 @@ export function createV3(h) {
     return false;
   }
 
-  return { handle, integrations: () => V3_NAMES.map((n) => summary(I[n])) };
+  return {
+    handle,
+    integrations: () => [...liveNames().map((n) => summary(I[n])),
+      ...openDrafts().map((d) => ({ name: d.name, state: d.state, intent: d.intent, active_version: null, latest_version: 0, open_incidents: 0 }))],
+    threads: () => [...threads.values()].map(threadStatus),
+  };
 }

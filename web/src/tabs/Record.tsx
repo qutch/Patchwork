@@ -15,7 +15,7 @@ const KIND_COLOR: Record<string, string> = {
 };
 
 export default function RecordTab() {
-  const { recordingId, setRecordingId, setThreadId, go, act, settings, refresh } = useApp();
+  const { recordingId, setRecordingId, setThreadId, navigate, integrationName, act, settings, refresh } = useApp();
   const [intent, setIntent] = useState(DEFAULT_INTENT);
   const [allow, setAllow] = useState(DEFAULT_ALLOW);
   const [startUrl, setStartUrl] = useState(DEFAULT_URL);
@@ -98,7 +98,7 @@ export default function RecordTab() {
     if (r) {
       setThreadId(r.thread_id);
       refresh();
-      go("agent");
+      navigate({ page: "integration", name: integrationName, section: "activity" });
     }
   };
   const reset = () => {

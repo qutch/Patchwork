@@ -142,7 +142,7 @@ function DiffView({ name, versions }: { name: string; versions: number[] }) {
 }
 
 export default function IntegrationTab() {
-  const { integrationName: name, integrations, act, refresh, go } = useApp();
+  const { integrationName: name, integrations, act, refresh, navigate } = useApp();
   const exists = integrations.some((i) => i.name === name);
   const status = usePoll(() => api.integration(name), exists ? 2000 : 0, [name, exists]);
   const [sel, setSel] = useState<number | null>(null);
@@ -174,7 +174,7 @@ export default function IntegrationTab() {
     return (
       <>
         <PageHead eyebrow="Step 4 · the program" title="Integration" />
-        <Empty action={<button className="btn btn-primary" onClick={() => go("record")}>Go to Record</button>}>
+        <Empty action={<button className="btn btn-primary" onClick={() => navigate({ page: "new" })}>Start a new integration</button>}>
           No integration yet. Once the BUILD agent compiles a version it shows up here with its generated code and tests.
         </Empty>
       </>

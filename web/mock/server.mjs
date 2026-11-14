@@ -3,7 +3,8 @@
 //   node mock/server.mjs [--port 5182] [--pace 1] [--agent scripted|deep]
 //
 // v2 (jobs -> tracker form: pages, tracker, layouts, LEARN, bench v2) lives in mock/v2.mjs.
-// v3 (other page integrations, Airtable destination, credentials: contracts V13-V15) lives in mock/v3.mjs.
+// v3 (other page integrations, Airtable destination, credentials: contracts V13-V15, and the new-integration
+// wizard: drafts, destination checks, teach thread with a review) lives in mock/v3.mjs.
 //
 // No dependencies beyond Node's stdlib. Canned data in mock/data.json comes from a real run
 // of the compiler, runner and ScriptedAgentService (see mock/collect.py). The server keeps
@@ -717,7 +718,7 @@ async function route(req, res) {
     return code === 200 ? send(res, 200, out) : fail(res, code, out);
   }
   if (M === "GET" && p === "/api/agent/threads")
-    return send(res, 200, [...[...S.threads.values()].map(threadStatus), ...V2.threads()].sort((a, b) => a.created_at.localeCompare(b.created_at)));
+    return send(res, 200, [...[...S.threads.values()].map(threadStatus), ...V2.threads(), ...V3.threads()].sort((a, b) => a.created_at.localeCompare(b.created_at)));
   if ((mm = m(/^\/api\/agent\/([^/]+)(\/[a-z]+)?$/))) {
     const t = S.threads.get(decodeURIComponent(mm[1]));
     if (!t) return fail(res, 404, `thread ${mm[1]} not found`);
@@ -850,7 +851,7 @@ const V2 = createV2({
 });
 
 const V3 = createV3({
-  send, fail, nowIso, clone,
+  send, fail, sse, broadcast, nowIso, clone,
   timer: later,
   settings: () => S.settings,
   base: () => `http://127.0.0.1:${server.address()?.port ?? PORT}`,

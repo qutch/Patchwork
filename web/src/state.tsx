@@ -5,18 +5,8 @@ import {
   type Settings, type ThreadStatus,
 } from "./api";
 import { deriveThread, mergeEvents } from "./lib/derive";
+import { parseHash, toHash, type Route } from "./routes";
 import { defaultIntegration, pageIntegrations, pickIntegration, specInfo, V1_INTEGRATION, type SpecInfo } from "./lib/integrations";
-
-export type Tab = "tracker" | "record" | "review" | "agent" | "integration" | "runs" | "bench";
-export const TABS: { id: Tab; label: string }[] = [
-  { id: "tracker", label: "Tracker" },
-  { id: "record", label: "Record" },
-  { id: "review", label: "Review" },
-  { id: "agent", label: "Agent Activity" },
-  { id: "integration", label: "Integration" },
-  { id: "runs", label: "Runs" },
-  { id: "bench", label: "Benchmark" },
-];
 
 const store = {
   get(k: string): string | null {
@@ -71,8 +61,11 @@ export function usePoll<T>(fn: () => Promise<T>, ms: number, deps: unknown[] = [
 }
 
 interface Ctx {
-  tab: Tab;
-  go: (t: Tab) => void;
+  route: Route;
+  navigate: (r: Route) => void;
+  /** the Credentials drawer (opened from the header, Home and the wizard) */
+  credsOpen: boolean;
+  setCredsOpen: (open: boolean) => void;
   settings: Settings | null;
   setAi: (on: boolean) => Promise<void>;
   apiDown: boolean;
@@ -111,21 +104,32 @@ export const useApp = () => {
   return c;
 };
 
-function tabFromHash(): Tab {
-  const h = (typeof location !== "undefined" ? location.hash : "").replace("#", "");
-  return (TABS.find((t) => t.id === h)?.id ?? "tracker") as Tab;
+function routeFromHash(): Route {
+  const h = typeof location !== "undefined" ? location.hash : "";
+  return parseHash(h, store.get("pw-page-integration") ?? undefined);
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [tab, setTab] = useState<Tab>(tabFromHash);
+  const [route, setRoute] = useState<Route>(routeFromHash);
+  const [credsOpen, setCredsOpen] = useState(false);
   useEffect(() => {
-    const on = () => setTab(tabFromHash());
+    // an old tab hash (#tracker, #agent, ...) is rewritten to its new address
+    const canon = toHash(route);
+    if (typeof location !== "undefined" && location.hash && location.hash !== canon) history.replaceState(null, "", canon);
+    const on = () => {
+      const r = routeFromHash();
+      const c = toHash(r);
+      if (location.hash !== c) history.replaceState(null, "", c); // `#tracker` typed mid-session lands on the new address too
+      setRoute(r);
+    };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const go = useCallback((t: Tab) => {
-    if (location.hash !== `#${t}`) location.hash = t;
-    setTab(t);
+  const navigate = useCallback((r: Route) => {
+    const h = toHash(r);
+    if (location.hash !== h) location.hash = h;
+    setRoute(r);
     window.scrollTo({ top: 0 });
   }, []);
 
@@ -172,7 +176,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void incidentsQ.reload();
     void integrationsQ.reload();
     void settingsQ.reload();
-  }, [threadsQ, incidentsQ, integrationsQ, settingsQ]);
+    void credentialsQ.reload();
+  }, [threadsQ, incidentsQ, integrationsQ, settingsQ, credentialsQ]);
 
   const setAi = useCallback(async (on: boolean) => {
     const prev = settingsQ.data;
@@ -192,13 +197,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const wanted = urlPage ?? storedPage;
   // until the extension info has loaded, keep the wanted name so a reload doesn't flash the default integration
   const loaded = extensionQ.data !== null || extensionQ.error !== null;
-  const pageIntegration = loaded ? pickIntegration(wanted, pageList, defaultIntegration(extensionQ.data, pageList)) : wanted ?? pageList[0].name;
+  const routedName = route.page === "integration" ? route.name : null;
+  const chosenIntegration = loaded ? pickIntegration(wanted, pageList, defaultIntegration(extensionQ.data, pageList)) : wanted ?? pageList[0].name;
+  // the integration page being shown wins over the remembered choice (the Tracker, Layouts and Presenter follow it)
+  const pageIntegration = routedName ?? chosenIntegration;
   const setPageIntegration = useCallback((n: string) => {
     setUrlPage(null);
     setStoredPage(n);
   }, [setStoredPage]);
   const value: Ctx = {
-    tab, go,
+    route, navigate, credsOpen, setCredsOpen,
     settings: settingsQ.data,
     setAi,
     apiDown: !!settingsQ.error && !settingsQ.data,
@@ -209,7 +217,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     incidents: incidentsQ.data ?? [],
     integrations,
     // v1 tabs (Review, Integration, Runs) follow the v1 integration; the Tracker tab follows the chosen page integration
-    integrationName: integrations.find((i) => i.name === V1_INTEGRATION)?.name ?? integrations.find((i) => !pageNames.has(i.name))?.name ?? V1_INTEGRATION,
+    integrationName: routedName ?? integrations.find((i) => i.name === V1_INTEGRATION)?.name ?? integrations.find((i) => !pageNames.has(i.name))?.name ?? V1_INTEGRATION,
     extension: extensionQ.data,
     extensionError: extensionQ.error,
     pageIntegrations: pageList,
