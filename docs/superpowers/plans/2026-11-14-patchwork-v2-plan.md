@@ -26,6 +26,8 @@ Part 2 (V0–V12). Every task implicitly includes the contract sections it names
 - `ScriptedAgentService` gets matching scripts only as the stage fallback, emitting the same events.
 - The runner stays AI-free: subprocess, stripped env, no model keys, refuses to start with AI modules loaded.
 - Never silently write a wrong row; when in doubt hold the record for a person. Every AI-produced value is checked by code and labelled in the UI.
+- The runner must keep running packages already compiled by the v1 templates (the owner's live demo may run them
+  through this checkout's runner); new template outputs may differ.
 - v1 (`po_to_stockroom`) keeps working unchanged; `.venv/bin/python -m pytest -q` stays at ≥ 136 passed (2 skipped) plus
   new tests; `cd web && npm test` ≥ 34 passed; `npm run typecheck` and `npm run build` clean.
 - Never bind, kill or reset ports 8000–8003 or 5180. Use free ports, in-process servers and a separate `PATCHWORK_WORKSPACE`.
@@ -128,9 +130,9 @@ Merge order: W1 → W3 → W4a → W2 → W4b → W5, full suites after each (Ta
 **Files:** Modify `compiler/templates/parsers.py.j2`, `compiler/compile.py` (manifest `parsers`), `runner/pipeline.py`
 (`Outcome.routed_by`), `runner/store.py` (`records.routed_by` column via `_add_column`); Test `tests/engine/test_compile_pages.py`.
 
-**Interfaces:** Consumes W0-1 helpers. Produces `route(record) -> (parser_id, fn, routed_by)` in generated `parsers.py`;
-`integ.extract(record) -> (parser_id, fields)` unchanged for callers, plus `integ.last_routed_by`-free design: generated
-`extract` returns `(parser_id, fields)` and the pipeline reads `routed_by` from `parsers.route` (keep v1 call sites working).
+**Interfaces:** Consumes W0-1 helpers. Produces `route(record) -> (parser_id, fn, routed_by)` in generated `parsers.py`
+and `extract(record) -> (parser_id, fields, routed_by)` in generated `integration.py`. The pipeline accepts both the
+3-tuple and v1's 2-tuple (`routed_by = None`), because packages already compiled by v1 templates must keep running.
 
 - [ ] **Step 1: Failing tests:** `test_fixture_pages_extract` (compile `fixtures/jobs`, load, `extract` on the 6
   lever/greenhouse/ashby pages equals `index.json` expected, `routed_by == "match"`);
