@@ -22,12 +22,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SECRET_ENV = re.compile(r"(API_KEY|_TOKEN|SECRET|ANTHROPIC|OPENAI|LANGCHAIN|LANGSMITH)", re.I)
 RUN_TIMEOUT_S = 300
 
+# The control plane's own base URL (contracts V7: `patchwork://control`). The API sets it from the
+# address it is serving on; an explicit PATCHWORK_CONTROL_URL in the environment wins.
+CONTROL_URL: str | None = None
+
 
 def runner_env() -> dict[str, str]:
-    """Stripped environment for the runner: no model keys, no secrets, explicit paths."""
+    """Stripped environment for the runner: no model keys, no secrets, explicit paths, and
+    PATCHWORK_CONTROL_URL so `patchwork://control` sources resolve."""
     keep = {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k)}
     keep["PYTHONPATH"] = str(REPO_ROOT)
     keep["PATCHWORK_WORKSPACE"] = str(workspace_dir())
+    if not keep.get("PATCHWORK_CONTROL_URL") and CONTROL_URL:
+        keep["PATCHWORK_CONTROL_URL"] = CONTROL_URL
     return keep
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import threading
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,8 @@ from typing import Any
 from runner.store import workspace_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+LEARN_POLICIES = ("auto", "approve")
+DEFAULT_LEARN_POLICY = "auto"
 
 
 def load_dotenv(path: Path | None = None) -> list[str]:
@@ -40,6 +43,9 @@ def load_dotenv(path: Path | None = None) -> list[str]:
 
 
 class Settings:
+    """`Settings().ai_enabled` / `Settings().learn_policy` read the file each time (no FastAPI import),
+    so the agents' tools can use them too."""
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
 
@@ -58,9 +64,40 @@ class Settings:
     def ai_enabled(self) -> bool:
         return bool(self._read()["ai_enabled"])
 
+    @property
+    def learn_policy(self) -> str:
+        """D2: "auto" (deploy a learned reader when every code check passes) or "approve" (always ask)."""
+        value = self._read().get("learn_policy", DEFAULT_LEARN_POLICY)
+        return value if value in LEARN_POLICIES else DEFAULT_LEARN_POLICY
+
     def update(self, **changes: Any) -> dict[str, Any]:
         with self._lock:
             data = {**self._read(), **changes}
             self._path().parent.mkdir(parents=True, exist_ok=True)
             self._path().write_text(json.dumps(data, indent=2))
             return data
+
+
+def extension_token() -> str:
+    """The token the extension sends as X-Patchwork-Token (V9). Kept in $PATCHWORK_WORKSPACE/extension_token,
+    created on first use (mode 0600); `PATCHWORK_EXTENSION_TOKEN` overrides it. The runner never sees it
+    (`control.ops.runner_env` strips *_TOKEN variables, and it reads pages without one)."""
+    override = os.environ.get("PATCHWORK_EXTENSION_TOKEN")
+    if override:
+        return override
+    path = workspace_dir() / "extension_token"
+    try:
+        token = path.read_text().strip()
+        if token:
+            return token
+    except OSError:
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_urlsafe(24)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:  # created by someone else between our read and now
+        return path.read_text().strip() or token
+    with os.fdopen(fd, "w") as f:
+        f.write(token)
+    return token

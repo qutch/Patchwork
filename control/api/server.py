@@ -17,22 +17,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from control import ops
-from control.api import demo, recordings, sse
+from control.api import demo, pages, recordings, sse
 from control.api.runs import RunManager, RunStartError
 from control.api.settings import Settings, load_dotenv
+from control.autorun import AutoRunner, Busy
+from control.page_hooks import PageHooks
+from control.pages import PageInbox
 from runner.store import Store, workspace_dir
 
 CORS_ORIGIN_REGEX = r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?"
+EXTENSION_ORIGIN_REGEX = r"chrome-extension://[a-z0-9]+"
 
 
 # ---- request bodies ---------------------------------------------------------------------------
 
 class SettingsUpdate(BaseModel):
-    ai_enabled: bool
+    ai_enabled: bool | None = None
+    learn_policy: Literal["auto", "approve"] | None = None
 
 
 class BuildRequest(BaseModel):
     recording_id: str
+    name: str | None = None  # default: "jobs_to_tracker" for page→form recordings, else the agent's choice
 
 
 class ResumeRequest(BaseModel):
@@ -55,18 +61,36 @@ class RunRequest(BaseModel):
 
 # ---- helpers ----------------------------------------------------------------------------------
 
-def agent_service(request: Request):
-    state = request.app.state
+def resolve_agent(state):
+    """The app's AgentService, created on first use and subscribed to by the page hooks."""
     if state.agent is None:
         from agents import get_agent_service
         state.agent = get_agent_service()
+    state.hooks.attach(state.agent)
     return state.agent
+
+
+def agent_service(request: Request):
+    return resolve_agent(request.app.state)
 
 
 def agent_kind(svc: Any | None) -> str:
     if svc is None:
         return os.environ.get("PATCHWORK_AGENT", "scripted")
     return "scripted" if "Scripted" in type(svc).__name__ else "deep"
+
+
+PAGE_INTEGRATION = "jobs_to_tracker"
+
+
+def _accepts_name(fn) -> bool:
+    """V10 `start_build(recording_id, name=None)`; agents from before W3 take only the recording id."""
+    import inspect
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return "name" in params or any(p.kind is p.VAR_POSITIONAL for p in params.values()) or len(params) >= 2
 
 
 def require_ai(request: Request) -> None:
@@ -124,12 +148,16 @@ def health(request: Request) -> dict[str, Any]:
 def get_settings(request: Request) -> dict[str, Any]:
     kind = agent_kind(request.app.state.agent)
     model = "scripted" if kind == "scripted" else os.environ.get("PATCHWORK_MODEL", "")
-    return {"ai_enabled": request.app.state.settings.ai_enabled, "agent": kind, "model": model}
+    settings = request.app.state.settings
+    return {"ai_enabled": settings.ai_enabled, "agent": kind, "model": model, "learn_policy": settings.learn_policy}
 
 
 @api.put("/settings")
 def put_settings(body: SettingsUpdate, request: Request) -> dict[str, Any]:
-    request.app.state.settings.update(ai_enabled=body.ai_enabled)
+    changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not changes:
+        raise HTTPException(422, "send ai_enabled and/or learn_policy")
+    request.app.state.settings.update(**changes)
     return get_settings(request)
 
 
@@ -139,7 +167,11 @@ def put_settings(body: SettingsUpdate, request: Request) -> dict[str, Any]:
 def build(body: BuildRequest, request: Request) -> dict[str, str]:
     require_ai(request)
     recordings.load_recording(body.recording_id)  # 404 unknown, 409 still recording
-    return {"thread_id": agent_service(request).start_build(body.recording_id)}
+    name = body.name or (PAGE_INTEGRATION if recordings.is_page_form(body.recording_id) else None)
+    svc = agent_service(request)
+    if name is not None and _accepts_name(svc.start_build):
+        return {"thread_id": svc.start_build(body.recording_id, name)}
+    return {"thread_id": svc.start_build(body.recording_id)}
 
 
 @api.post("/incidents/{incident_id}/repair")
@@ -369,6 +401,53 @@ def get_incident(incident_id: int) -> dict[str, Any]:
 
 # ---- app ----------------------------------------------------------------------------------------
 
+class ControlURLMiddleware:
+    """Learns the control plane's own base URL from the socket it serves on (V7: the runner resolves
+    `patchwork://control` through PATCHWORK_CONTROL_URL). An explicit PATCHWORK_CONTROL_URL wins."""
+
+    def __init__(self, app, state):
+        self.app, self.state = app, state
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and getattr(self.state, "control_url", None) is None:
+            server = scope.get("server")
+            if server and server[1]:
+                host = server[0]
+                host = f"[{host}]" if ":" in host else host
+                self.state.control_url = f"http://{host}:{server[1]}"
+                ops.CONTROL_URL = os.environ.get("PATCHWORK_CONTROL_URL") or self.state.control_url
+        await self.app(scope, receive, send)
+
+
+def _extension_route(path: str, method: str) -> bool:
+    """POST /api/pages (send a page) and GET /api/pages/{id} (poll its outcome); not the html-bearing list."""
+    if path == "/api/pages":
+        return method == "POST"
+    return path.startswith("/api/pages/") and path.count("/") == 3 and method == "GET"
+
+
+class ExtensionCORSMiddleware:
+    """CORS for chrome-extension:// origins on the extension's routes only (POST /api/pages and
+    GET /api/pages/{id}); everything else keeps the localhost-only policy."""
+
+    def __init__(self, app):
+        self.app = app
+        self.cors = CORSMiddleware(app, allow_origin_regex=EXTENSION_ORIGIN_REGEX, allow_credentials=False,
+                                   allow_methods=["GET", "POST"], allow_headers=["Content-Type", "X-Patchwork-Token"])
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers") or [])
+            method = scope.get("method", "")
+            if method == "OPTIONS":
+                method = headers.get(b"access-control-request-method", b"").decode("latin-1").upper()
+            if headers.get(b"origin", b"").startswith(b"chrome-extension://") and _extension_route(
+                    scope.get("path", ""), method):
+                await self.cors(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
 def create_app(*, agent: Any | None = None, dotenv: bool = True) -> FastAPI:
     """`agent`: an AgentService to use (tests pass a ScriptedAgentService(pace_s=0)); default is
     `agents.get_agent_service()`, resolved on first use."""
@@ -387,9 +466,30 @@ def create_app(*, agent: Any | None = None, dotenv: bool = True) -> FastAPI:
     app.state.agent = agent
     app.state.settings = Settings()
     app.state.runs = runs
+    app.state.control_url = None
+    # v2: page inbox, run on arrival (one run + one queued follow-up per integration), learn trigger
+    app.state.inbox = PageInbox()
+
+    def auto_start(name: str, kind: str) -> int:
+        try:
+            return runs.start(name, replay=kind == "replay")
+        except RunStartError:
+            raise
+        except RuntimeError as e:  # a run of this integration is already in progress
+            raise Busy(str(e)) from None
+
+    app.state.auto = AutoRunner(auto_start, runs.wait)
+    app.state.hooks = PageHooks(app.state.inbox, app.state.auto, lambda: app.state.settings.ai_enabled,
+                                lambda: resolve_agent(app.state))
+    runs.on_finish(app.state.hooks.on_run_finished)
+    if agent is not None:
+        app.state.hooks.attach(agent)
     app.add_middleware(CORSMiddleware, allow_origin_regex=CORS_ORIGIN_REGEX, allow_credentials=True,
                        allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(ExtensionCORSMiddleware)  # outermost: answers extension preflights itself
+    app.add_middleware(ControlURLMiddleware, state=app.state)
     app.include_router(api)
     app.include_router(recordings.router)
     app.include_router(demo.router)
+    app.include_router(pages.router)
     return app

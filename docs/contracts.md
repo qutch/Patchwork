@@ -507,6 +507,46 @@ if AI is off, the row stays `held`. When a learn or repair thread emits `deploye
 quarantined records, then run once more (pages blocked by preflight were never fetched past the cursor). Repairs of
 `CONTRACT_CHANGED` still start from a person's click (as in v1).
 
+**Details fixed while building W4a (additive; nothing above was removed or renamed):**
+- Token: `$PATCHWORK_WORKSPACE/extension_token` (created on first use, mode 0600; `PATCHWORK_EXTENSION_TOKEN` overrides).
+  Wrong or missing → 401. Body > 15 MB is refused before parsing, then `html` > 5 MB (UTF-8 bytes) → 413. 422 messages
+  never echo the body.
+- `POST /api/pages` may add `run_error` (the page is stored, the runner failed before `started`). `integration` is the
+  first page integration (`jobs_to_tracker` first); every page integration gets a run. `run_id` is null whenever `queued`.
+- CORS for `chrome-extension://<id>` origins only on `POST /api/pages` and `GET /api/pages/{id}` (not the html-bearing list).
+- `PATCHWORK_CONTROL_URL`: an explicit env value wins; otherwise the control plane uses the address it is serving on
+  (learned from the first request). `control.ops.runner_env()` adds it, so `run_sandboxed`/`replay_quarantined` get it too.
+- `GET /api/pages/{id}` takes optional `?integration=`. `GET /api/pages?since=` also accepts `None`/`null` as 0; a
+  non-integer → 422; `limit` 1–1000.
+- Page ids are never reused in a workspace (the seq counter survives `/api/demo/v2/reset`).
+- TrackerRow: a page with no record yet whose latest run (started after the page) was `blocked` by preflight is
+  `status: held, label: held, reason: "CONTRACT_CHANGED"` with that run's `incident_id`; after a `failed`/`tripped` run it
+  is `status: failed`. A quarantined page whose learn thread is running/waiting is `status: learning` (label null); one
+  whose learn deployed but whose replay hasn't finished is `status: running`. `totals` count every page in the inbox
+  (not just `limit`). Which page started which learn thread is kept in `pages.db` (`learns`), so labels survive a restart.
+- Learn trigger: a page is learned from at most once (a later replay of it never starts a second thread); one active
+  (running/waiting) learn per `site`. Agents without `start_learn` or with AI off → rows stay `held`. Only `deployed`
+  events from `learn-*`/`repair-*` threads trigger the replay + run, after that thread has finished.
+- Layouts: active parsers first (active spec order), then removed ones (newest first). Revert also answers
+  `name, previous_version, removed_parser, dropped_examples` (golden examples the removed parser handled are dropped);
+  404 for an unknown integration or parser.
+- Settings: `PUT /api/settings` takes `ai_enabled` and/or `learn_policy` (both optional, at least one; other values 422).
+  Agents read it with `control.api.settings.Settings().learn_policy` (no FastAPI import).
+- Build: with no `name`, page→form recordings (`fixture-jobs`, or candidates with `sink.kind: form` / `source.kind: page`)
+  get `jobs_to_tracker`; others call `start_build(recording_id)` as in v1. Agents whose `start_build` takes only the
+  recording id still work.
+- Recordings: `fixture-jobs` (`fixtures/recording_jobs/recording.json`) is listed after `fixture`, with `fixture: true`,
+  only once that file exists; its candidates come from `fixtures/recording_jobs/candidates.json` until re-matched.
+- `POST /api/demo/v2/save-baseline [{integration}]` → `{integration, active_version, versions, has_work, saved_at}` (404
+  unknown integration, 409 no active version); it also snapshots `integrations/<name>/work/` (the agent's files).
+  `POST /api/demo/v2/reset` → `{ok, integration, active_version, removed: {runs, records, processed, incidents, versions,
+  pages}, stopped_runs, cancelled_threads, form?}`; 409 before a baseline is saved. It deletes versions newer than the
+  baseline (rows and package dirs), restores the work dir, and resets the fixture form (`/admin/reset`) only when
+  `PATCHWORK_TRACKER_FORM_URL` is set. Agents with a `cancel(thread_id)` method are asked to cancel; otherwise the
+  ThreadedAgentService threads are cancelled the way `reset()` does, but only the integration's learn/repair threads.
+- `POST /api/demo/form/rename` passes the form's status/JSON through (502 unreachable, 422 without `from`/`to`).
+  `GET /api/bench/v2`: `PATCHWORK_BENCH_V2_RESULTS` overrides the path.
+
 ## V10. Agents (W3): LEARN mode and the TEACH/REPAIR additions
 
 ```python
