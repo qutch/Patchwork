@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from runner.credentials import redact, redact_obj  # V13: what the DB keeps never shows a credential value
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS integrations (
   name TEXT PRIMARY KEY,
@@ -189,7 +191,8 @@ class Store:
                    incident_id: int | None = None, message: str | None = None) -> None:
         self.db.execute(
             "UPDATE runs SET status=?, finished_at=?, duration_s=?, counts=?, incident_id=?, message=? WHERE id=?",
-            (status, now(), round(duration_s, 3), json.dumps(counts), incident_id, message, run_id),
+            (status, now(), round(duration_s, 3), json.dumps(counts), incident_id,
+             redact(message) if message is not None else None, run_id),
         )
 
     def run(self, run_id: int) -> dict | None:
@@ -211,9 +214,10 @@ class Store:
         self.db.execute(
             "INSERT OR REPLACE INTO records(run_id, record_id, status, reason, detail, parser, route_value,"
             " dedupe_key, sink_body, raw, routed_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (run_id, outcome.record_id, outcome.status, outcome.reason, outcome.detail, outcome.parser,
+            (run_id, outcome.record_id, outcome.status, outcome.reason,
+             redact(outcome.detail) if outcome.detail is not None else None, outcome.parser,
              outcome.route_value, outcome.key,
-             json.dumps(outcome.body) if outcome.body is not None else None, json.dumps(raw),
+             json.dumps(redact_obj(outcome.body)) if outcome.body is not None else None, json.dumps(redact_obj(raw)),
              getattr(outcome, "routed_by", None)),
         )
 
@@ -273,9 +277,9 @@ class Store:
         cur = self.db.execute(
             "INSERT INTO incidents(integration, version, run_id, type, reason_codes, summary, detail, samples,"
             " old_openapi, new_openapi, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (name, version, run_id, type, json.dumps(reason_codes), summary,
-             json.dumps(detail) if detail is not None else None,
-             json.dumps(samples) if samples is not None else None,
+            (name, version, run_id, type, json.dumps(reason_codes), redact(summary),
+             json.dumps(redact_obj(detail)) if detail is not None else None,
+             json.dumps(redact_obj(samples)) if samples is not None else None,
              json.dumps(old_openapi) if old_openapi is not None else None,
              json.dumps(new_openapi) if new_openapi is not None else None, now()),
         )

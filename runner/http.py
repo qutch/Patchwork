@@ -4,6 +4,9 @@
 v2 (contracts V5, V7):
   * source `patchwork://control` resolves to $PATCHWORK_CONTROL_URL (required; the control plane sets
     it for every runner it launches). PATCHWORK_SOURCE_BASE_URL does not apply to it.
+  * auth (contracts V13): config.yaml's `source.auth` / `sink.auth` blocks name a credential; its value comes
+    from PATCHWORK_CRED__<NAME> (set by control.ops.runner_env) and is sent as a header on every request to
+    that target. A missing value is a ConfigError (a failed run that names the credential, never a value).
   * form sinks (config sink.kind == "form") have no base URL, no staging URL and ignore
     PATCHWORK_SINK_BASE_URL; `form_submit` / `form_contract` drive the run's one headless browser.
     A dry run (`staging=True`) fills forms but never submits (runner/forms.py enforces it).
@@ -13,8 +16,11 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
+
+from runner import credentials
 
 CONTROL_SCHEME = "patchwork://control"
 
@@ -50,11 +56,27 @@ class Http:
         else:
             sink = os.environ.get("PATCHWORK_SINK_BASE_URL") or config["sink"]["base_url"]
             self.base["sink"] = sink.rstrip("/")
+        self.auth = {"source": config["source"].get("auth"),
+                     "sink": None if self.sink_kind == "form" else config["sink"].get("auth")}
+        try:
+            self.headers = {t: credentials.headers(a) for t, a in self.auth.items()}
+        except (credentials.CredentialError, ValueError) as e:
+            raise ConfigError(str(e)) from None
         self.client = httpx.Client(timeout=timeout)
+
+    @property
+    def sink_credential(self) -> str | None:
+        """The credential name the sink requests carry (for AUTH quarantine details), else None."""
+        return (self.auth.get("sink") or {}).get("credential")
+
+    @property
+    def sink_label(self) -> str:
+        return urlparse(self.base.get("sink", "")).netloc or "the destination"
 
     def request(self, target: str, method: str, path: str, *, params: dict | None = None,
                 json: Any = None) -> httpx.Response:
-        return self.client.request(method, self.base[target] + path, params=params, json=json)
+        return self.client.request(method, self.base[target] + path, params=params, json=json,
+                                   headers=self.headers.get(target) or None)
 
     # -- form sinks -----------------------------------------------------------------------------
     @property

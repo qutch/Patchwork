@@ -24,6 +24,20 @@ from typing import Any, Callable, Literal, Protocol
 
 from runner.store import workspace_dir
 
+
+def _redact_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Every credential value the workspace's specs reference, replaced by *** (contracts V13)."""
+    try:
+        from control.credentials import redact_obj
+    except ImportError:  # pragma: no cover - the agents always run inside the control plane
+        return payload
+    try:
+        return redact_obj(payload)
+    except Exception:  # noqa: BLE001 - redaction must not break an agent thread; fall back to the env values
+        from runner.credentials import redact_obj as runner_redact_obj
+        return runner_redact_obj(payload)
+
+
 Mode = Literal["build", "repair", "learn"]
 ThreadState = Literal["running", "waiting", "done", "failed"]
 
@@ -180,6 +194,7 @@ class ThreadedAgentService:
         with self._lock:
             if t.cancelled:  # checked under the lock reset() takes, so no write follows a reset
                 raise ThreadCancelled(t.id)
+            payload = _redact_payload(payload)  # V13: events reach the UI; never a credential value
             line = json.dumps({"seq": len(t.events) + 1, "t": now(), "thread_id": t.id, "type": type, **payload},
                               default=str)
             # Store a snapshot, not the caller's objects: an agent that later mutates a list it
