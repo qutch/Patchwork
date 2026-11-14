@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Patchwork extension options</title>
+  <style>
+    :root { color-scheme: light dark; --fg: #111827; --muted: #6b7280; --bg: #ffffff; --line: #d1d5db; --accent: #4f46e5; }
+    @media (prefers-color-scheme: dark) { :root { --fg: #f3f4f6; --muted: #9ca3af; --bg: #111827; --line: #374151; --accent: #818cf8; } }
+    body { font: 14px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); max-width: 520px; margin: 32px auto; padding: 0 16px; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p { color: var(--muted); margin: 0 0 20px; }
+    label { display: block; font-weight: 600; margin: 16px 0 4px; }
+    input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
+    .row { display: flex; gap: 8px; margin-top: 20px; }
+    button { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    #status { margin-top: 14px; min-height: 1.5em; color: var(--muted); }
+    kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Patchwork</h1>
+  <p>Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> (or click the toolbar button) on a job posting to send that page to Patchwork. Nothing is sent otherwise.</p>
+  <label for="controlUrl">Patchwork address</label>
+  <input id="controlUrl" type="url" placeholder="http://127.0.0.1:8000" autocomplete="off">
+  <label for="token">Extension token</label>
+  <input id="token" type="text" placeholder="paste it from Patchwork's setup panel" autocomplete="off" spellcheck="false">
+  <div class="row">
+    <button id="save" class="primary">Save</button>
+    <button id="fetch" title="Read the token from Patchwork at the address above">Get token from Patchwork</button>
+  </div>
+  <div id="status" role="status"></div>
+  <script src="options.js"></script>
+</body>
+</html>

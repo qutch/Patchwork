@@ -19,7 +19,13 @@
       window.pwRecord(ev).catch(() => {});
     } else {
       queue.push(ev);
+      setTimeout(drain, 100);
     }
+  }
+  function drain() {
+    if (!queue.length) return;
+    if (typeof window.pwRecord === 'function') while (queue.length) window.pwRecord(queue.shift()).catch(() => {});
+    else setTimeout(drain, 100);
   }
 
   // ---------- redaction ----------
@@ -130,7 +136,8 @@
     const tag = el.tagName.toLowerCase();
     const aname = accessibleName(el);
     const nameAttr = el.getAttribute('name');
-    return {
+    const q = (CONTROLS.has(tag) || el.isContentEditable) ? questionOf(el) : null;
+    const d = {
       tag,
       role: role(el),
       name: (CONTROLS.has(tag) && nameAttr) ? nameAttr : aname,
@@ -141,7 +148,103 @@
       id: el.id || null,
       accessible_name: aname,
     };
+    if (q) d.question = q;
+    return d;
   }
+
+  // ---------- v2 (docs/contracts.md V11): element paths, form questions, confirmation ----------
+  const GENERATED_ID = /\d{3,}|^[a-z]{0,2}\d+$|^(ember|react|radix|:r)|[0-9a-f]{8,}/i;
+  const UNSTABLE_CLASS = /^(css|sc|jsx|emotion|svelte)-|[0-9a-f]{6,}|\d{3,}|^(is-|has-)?(active|hover|focus|focused|selected|open|visible|hidden|highlighted)$/i;
+
+  function uniqueIs(sel, el) {
+    try { const l = document.querySelectorAll(sel); return l.length === 1 && l[0] === el; } catch (e) { return false; }
+  }
+  function idSel(e) {
+    return e.id && !GENERATED_ID.test(e.id) ? '#' + CSS.escape(e.id) : null;
+  }
+  function segment(e) {
+    const tag = e.tagName.toLowerCase();
+    const s = tag + Array.from(e.classList).filter(c => !UNSTABLE_CLASS.test(c)).slice(0, 3).map(c => '.' + CSS.escape(c)).join('');
+    const p = e.parentElement;
+    if (!p) return s;
+    const sameTag = Array.from(p.children).filter(c => c.tagName === e.tagName);
+    let alike;
+    try { alike = sameTag.filter(c => c.matches(s)); } catch (err) { alike = sameTag; }
+    return alike.length > 1 ? `${s}:nth-of-type(${sameTag.indexOf(e) + 1})` : s;
+  }
+  // A stable CSS path: #id if unique, else tag + stable classes (+ :nth-of-type when siblings look alike),
+  // walking up until the path selects exactly this element.
+  function elementPath(el) {
+    if (!el || el.nodeType !== 1) return null;
+    const own = idSel(el);
+    if (own && uniqueIs(own, el)) return own;
+    const parts = [];
+    for (let cur = el; cur && cur.nodeType === 1; cur = cur.parentElement) {
+      const id = cur !== el ? idSel(cur) : null;
+      const anchored = id && document.querySelectorAll(id).length === 1;
+      parts.unshift(anchored ? id : segment(cur));
+      const sel = parts.join(' > ');
+      if (uniqueIs(sel, el) || anchored) return sel;
+    }
+    return parts.join(' > ');
+  }
+
+  function headingText(h) {
+    const c = h.cloneNode(true);
+    c.querySelectorAll('[aria-label="Required question"]').forEach(x => x.remove());
+    return clean((c.textContent || '').replace(/\s*(\*|\(required\))\s*$/i, ''), 200);
+  }
+  function questionOf(el) {
+    const item = el.closest && el.closest('[role=listitem]');
+    const h = item && item.querySelector('[role=heading]');
+    return h ? headingText(h) : null;
+  }
+  const QUESTION_CONTROLS = 'input:not([type=hidden]),textarea,select,[role=radio],[role=checkbox],[role=listbox]';
+  function inputKind(c) {
+    const r = c.getAttribute('role');
+    if (r === 'radio' || r === 'checkbox') return r;
+    if (r === 'listbox') return 'select';
+    const tag = c.tagName.toLowerCase();
+    if (tag === 'textarea' || tag === 'select') return tag;
+    const t = (c.type || 'text').toLowerCase();
+    return ['email', 'url', 'date', 'number', 'radio', 'checkbox'].includes(t) ? t : 'text';
+  }
+  // Google-Forms-like question list: role=listitem holding a role=heading and a control.
+  function formQuestions() {
+    const out = [];
+    document.querySelectorAll('[role=listitem]').forEach(li => {
+      const h = li.querySelector('[role=heading]');
+      const c = li.querySelector(QUESTION_CONTROLS);
+      if (!h || !c) return;
+      const label = headingText(h);
+      if (!label) return;
+      out.push({ label, required: !!li.querySelector('[aria-label="Required question"],[required],[aria-required=true]'),
+                 input: inputKind(c) });
+    });
+    return out;
+  }
+  function snapshotHtml() {
+    const root = document.documentElement.cloneNode(true);
+    root.querySelectorAll('input,textarea').forEach(i => {
+      if (isSensitive(i)) { i.removeAttribute('value'); i.textContent = ''; }
+    });
+    return root.outerHTML;
+  }
+
+  const MARK = '__pwSubmittedAt';
+  function markSubmitted() { try { sessionStorage.setItem(MARK, String(Date.now())); } catch (e) { /* no storage */ } }
+  // After a form submit click, the next page on the same origin (within 60 s) is the confirmation page.
+  function checkConfirmation() {
+    let t = 0;
+    try { t = Number(sessionStorage.getItem(MARK) || 0); } catch (e) { return; }
+    if (!t || Date.now() - t > 60000 || formQuestions().length) return;
+    try { sessionStorage.removeItem(MARK); } catch (e) { /* ignore */ }
+    const text = document.body ? document.body.innerText : '';
+    const lines = text.split('\n').map(x => clean(x, 200)).filter(Boolean).slice(0, 20);
+    send({ type: 'confirmation', lines, title: document.title });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', checkConfirmation, { once: true });
+  else checkConfirmation();
 
   const isField = el => el && /^(input|select|textarea)$/i.test(el.tagName) || (el && el.isContentEditable);
   const isChoice = el => /^select$/i.test(el.tagName) || (/^input$/i.test(el.tagName) && /^(checkbox|radio|file|range|color|date|time|datetime-local|month|week)$/i.test(el.type));
@@ -209,7 +312,12 @@
     if (!raw) return;
     const el = raw.closest('a,button,input,select,textarea,label,summary,[role],[onclick],[data-testid]') || raw;
     if (isSensitive(el)) return;
-    send({ type: 'click', el: describe(el) });
+    const ev = { type: 'click', el: describe(el) };
+    if (role(el) === 'button') {
+      const questions = formQuestions();
+      if (questions.length) { ev.form = { questions, title: document.title }; markSubmitted(); }
+    }
+    send(ev);
   }, true);
 
   document.addEventListener('keydown', e => {
@@ -254,7 +362,8 @@
     if (!text || (el && isSensitive(el))) return;
     const desc = describe(el);
     if (desc && near) desc.nearby = near;
-    send({ type: 'copy', text, el: desc });
+    if (desc) desc.path = elementPath(el);
+    send({ type: 'copy', text, el: desc, html: snapshotHtml() });
   }, true);
 
   document.addEventListener('paste', e => {

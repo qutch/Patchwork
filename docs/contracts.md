@@ -545,6 +545,32 @@ time, saved in the recording dir). Allowlist entries may be bare hosts (`docs.go
 Fixture recording for everyone: `fixtures/recording_jobs/` (`recording.json`, `candidates.json`, `snapshots/`), recording
 id `fixture-jobs` in the control plane, recorded against `fixtures/pages/lever-1.html` and the fixture tracker form.
 
+**Additions made while building W2 (all additive):**
+- Recorder events: controls inside a Google-Forms-like `role=listitem` add `el.question` (the heading text, required
+  marker removed; absent elsewhere, so v1 shapes are unchanged). A click on a `role=button` element of such a form adds
+  `form: {questions: [{label, required, input}], title}` (`input` uses V6's `x-input` names). The next page on the same
+  origin within 60 s of that click emits `{type: "confirmation", lines: [visible text lines, ≤ 20], title}`.
+  Snapshots drop the `value` of password / cc-* / one-time-code inputs; an unchanged DOM is stored once.
+- `matcher.match(recording, base_dir=None)`: `base_dir` (the recording dir) lets the matcher read snapshots; the
+  recorder and `python -m matcher <path>` pass it. Without it, css mappings fall back to the recorded `el.path`.
+  The matcher may import `runner.html` (pure, no network).
+- Page→form candidates also carry `source.canonical_url`, `source.title` (document title at the source),
+  `sink.title` and `sink.questions` (`[{label, required, input}]`). Mapping kinds: `css` (`css`, `attr`, `regex`
+  refine, `copied`), `jsonld` (`jsonld`, optional `jsonld_type` when not `JobPosting`; a value typed by hand that the
+  page shows), `record` (`from`), `const` (typed, found nowhere). A pasted value found nowhere is `unexplained`.
+  `alternatives` hold other readers that give exactly the same value: `{"jsonld": path[, "jsonld_type"]}` or
+  `{"css": "meta[property=\"og:title\"]", "attr": "content"}`.
+- In `fixtures/recording_jobs/` the form is reached as `http://127.0.0.1:18010/` (V0's fixture-form dev port, routed by
+  Playwright in the script, never bound), so `sink.url` is stable; point it at your own form in tests.
+  The copied company comes from Lever's footer link (`css` + `regex: "^(.+?) Home Page$"`, alternative
+  `{"jsonld": "hiringOrganization.name"}`). Regenerate with `scripts/make_recording_jobs.py`.
+- Extension: badge `dup` for `label: duplicate` (V9), and `!` also for wrong token / unreachable control plane / non-web
+  tab (the button's tooltip says which). Host permissions are `http://127.0.0.1/*` and `http://localhost/*` (any port).
+  The options page also has "Get token from Patchwork", which reads `GET {controlUrl}/api/extension`. The service
+  worker is a classic script, so `sendActiveTab(tab?)` is a global that tests call through
+  `context.service_workers[0].evaluate`. It resolves to `{ok, id, state: "code"|"learned_now"|"held"|"duplicate"|null, row}`
+  or `{ok: false, error}`.
+
 Extension (`extension/`, Chrome MV3): command `send-page` (default `Alt+Shift+P`); takes the active tab's URL,
 `document.title` and `document.documentElement.outerHTML` via `chrome.scripting`, `POST {controlUrl}/api/pages` with
 `X-Patchwork-Token`; options in `chrome.storage.local`: `controlUrl` (default `http://127.0.0.1:8000`), `token`. Badge:

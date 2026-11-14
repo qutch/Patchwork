@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Patchwork: send this page",
+  "version": "0.1.0",
+  "description": "Press Alt+Shift+P on a job posting to send that page to your local Patchwork, which adds it to your tracker.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "background": {"service_worker": "background.js"},
+  "action": {
+    "default_title": "Send this page to Patchwork (Alt+Shift+P)",
+    "default_icon": {"16": "icons/16.png", "32": "icons/32.png"}
+  },
+  "commands": {
+    "send-page": {
+      "suggested_key": {"default": "Alt+Shift+P"},
+      "description": "Send this page to Patchwork"
+    }
+  },
+  "options_ui": {"page": "options.html", "open_in_tab": true},
+  "icons": {"16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png"}
+}

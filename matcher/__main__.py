@@ -15,7 +15,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("recording", type=Path)
     p.add_argument("-o", "--out", type=Path, help="also write candidates JSON here")
     args = p.parse_args(argv)
-    text = json.dumps(match(json.loads(args.recording.read_text())), indent=2, ensure_ascii=False)
+    recording = json.loads(args.recording.read_text())
+    text = json.dumps(match(recording, base_dir=args.recording.parent), indent=2, ensure_ascii=False)
     if args.out:
         args.out.write_text(text + "\n")
     print(text)

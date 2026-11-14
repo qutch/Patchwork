@@ -11,6 +11,7 @@ Redaction is always on:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -20,7 +21,8 @@ from urllib.parse import parse_qsl, urlsplit
 
 RECORDER_JS = Path(__file__).with_name("recorder.js")
 MAX_BODY = 20 * 1024
-DOM_TYPES = {"click", "input", "change", "submit", "keydown", "copy", "paste"}
+DOM_TYPES = {"click", "input", "change", "submit", "keydown", "copy", "paste", "confirmation"}
+MAX_SNAPSHOT = 8 * 1024 * 1024  # bytes of page HTML kept per copy snapshot
 SECRET_HEADERS = {"authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "x-auth-token",
                   "x-csrf-token", "x-xsrf-token"}
 NOISY_HEADERS = {"user-agent", "accept", "accept-encoding", "accept-language", "referer", "origin", "connection",
@@ -132,6 +134,7 @@ class Recorder:
         self._navs: set[asyncio.Task] = set()  # framenavigated writes still waiting for the title
         self.context = None
         self.sensitive_keys: set[str] = set()  # names of password/cc/otp fields seen on pages
+        self._snapshots: dict[str, str] = {}  # sha1 of page HTML -> "snapshots/<n>.html"
 
     # ---- wiring ----
     async def attach(self, context) -> None:
@@ -175,11 +178,31 @@ class Recorder:
         if not host_allowed(url, self.allowlist):
             return
         event = {"t": int(payload.get("t") or now_ms()), "type": payload["type"], "url": url}
-        for k in ("key", "value", "text"):
+        for k in ("key", "value", "text", "lines", "title"):
             if k in payload:
                 event[k] = payload[k]
         event["el"] = payload.get("el")
+        if isinstance(payload.get("form"), dict):
+            event["form"] = payload["form"]
+        if payload["type"] == "copy" and isinstance(payload.get("html"), str):
+            snap = self._save_snapshot(payload["html"])
+            if snap:
+                event["snapshot"] = snap
         self.log.write(event)
+
+    def _save_snapshot(self, html: str) -> str | None:
+        """Page HTML at copy time -> snapshots/<n>.html (an unchanged page is stored once)."""
+        data = html.encode("utf-8", errors="replace")
+        if len(data) > MAX_SNAPSHOT:
+            return None
+        digest = hashlib.sha1(data).hexdigest()
+        if digest not in self._snapshots:
+            rel = f"snapshots/{len(self._snapshots) + 1}.html"
+            path = self.dir / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            self._snapshots[digest] = rel
+        return self._snapshots[digest]
 
     # ---- navigation ----
     def _on_nav(self, page, frame) -> None:

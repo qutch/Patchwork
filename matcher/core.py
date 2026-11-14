@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import re
 from itertools import groupby
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+from matcher.pages import is_page_form, match_page_form
 
 MUTATING = {"POST", "PUT", "PATCH"}
 ID_KEYS = ("id", "_id", "uuid", "key")
@@ -178,10 +181,15 @@ def _explain(rec: dict, value: Any) -> list[dict]:
     return found
 
 
-def match(recording: dict) -> dict:
-    """Recording (fixtures/recording.json shape) -> candidates (docs/contracts.md section 2)."""
+def match(recording: dict, base_dir: str | Path | None = None) -> dict:
+    """Recording (fixtures/recording.json shape) -> candidates (docs/contracts.md section 2).
+
+    A page -> form recording (no mutating request; a submit click carrying form questions) gets V11
+    candidates from matcher.pages; `base_dir` is the recording directory holding its page snapshots."""
     nets = _net_events(recording)
     sink, dest = _destination(recording, nets)
+    if sink is None and is_page_form(recording):
+        return match_page_form(recording, Path(base_dir) if base_dir is not None else None)
     records = _records(nets, sink["base_url"] if sink else None)
     copied = [e.get("text", "") for e in recording.get("events", []) if e.get("type") == "copy" and e.get("text")]
 
