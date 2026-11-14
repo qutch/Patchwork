@@ -58,6 +58,8 @@ Steps (call tools, don't describe them):
 PAGE -> FORM recordings (get_candidates shows source.kind "page" and sink.kind "form"): call draft_spec() with
 no arguments (it writes a page parser from the copied elements and the form fields), then test_parser(),
 confirm the constant values (e.g. the Email) with ONE ask_user, validate_spec, and reply. Skip steps 3-7.
+If get_candidates shows a `destination` (an Airtable table), draft_spec writes the Airtable sink itself and asks
+the user about every form question without a field of the same name: never ask that again or map it yourself.
 {SPEC_STYLE}"""
 
 BUILDER = """You are the builder. Call compile_spec (it validates, compiles the next immutable version and runs
@@ -85,7 +87,8 @@ Steps for a CONTRACT_CHANGED incident (call tools, don't describe them):
 4. propose_spec_patch with ALL operations in one patch, then migrate_golden_examples, then validate_spec.
 5. Reply with 2 sentences: what changed and why.
 For NEW_SOURCE_FORMAT: get_quarantined, write a new parser, test_parser, propose_spec_patch, add_test_case.
-For a FORM sink (sink.kind form; its fields are keyed by the form's question labels): get_incident, diff_openapi,
+For a FORM or AIRTABLE sink (sink.kind form/airtable; its fields are keyed by the form's question labels or the
+table's field names): get_incident, diff_openapi,
 then propose_spec_patch with exactly the ops in diff_openapi.patch_hint (a `move` per renamed question, e.g.
 {{"op": "move", "from": "/sink/fields/Company", "path": "/sink/fields/Employer"}}), then migrate_golden_examples.
 Ask (ask_user, the suggested_questions word for word) only if diff_openapi returned suggested_questions.
@@ -218,6 +221,6 @@ def learner_description(spec: dict | None) -> str:
     return f"One page whose layout no parser reads -> a tested parser (css/jsonld){what}, saved for its site."
 
 
-FORM_REPAIR_HINT = """The sink is a FORM (sink.fields keyed by question labels). Don't read files (the golden
+FORM_REPAIR_HINT = """The sink is a FORM or an AIRTABLE table (sink.fields keyed by labels). Don't read files (the golden
 examples hold whole pages). Plan: repairer -> get_incident, diff_openapi, propose_spec_patch with exactly
 diff_openapi.patch_hint, migrate_golden_examples; then builder -> compile_spec; then request_deploy."""

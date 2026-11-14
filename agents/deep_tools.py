@@ -65,22 +65,49 @@ def learn_policy() -> str:
     return value if value in LEARN_POLICIES else "approve"  # unknown values fail safe: a person decides
 
 
+LABEL_KEYED_SINKS = ("form", "airtable")  # `sink.fields` keyed by the destination's own labels (V5, V14)
+SKIP_FIELD = "Skip this field"
+
+
+def sink_kind(spec: dict | None) -> str:
+    return ((spec or {}).get("sink") or {}).get("kind") or "api"
+
+
+def is_label_keyed(spec: dict | None) -> bool:
+    """Form and Airtable sinks share TEACH and REPAIR: fields keyed by labels, an OpenAPI-shaped contract."""
+    return sink_kind(spec) in LABEL_KEYED_SINKS
+
+
 def sink_values(spec: dict) -> dict:
-    """`sink.body` (API sinks) or `sink.fields` (form sinks): what every reference check looks at."""
+    """`sink.body` (API sinks) or `sink.fields` (form and Airtable sinks): what every reference check looks at."""
     sink = spec.get("sink") or {}
-    return sink.get("fields") if sink.get("kind") == "form" else (sink.get("body") or {})
+    return sink.get("fields") if is_label_keyed(spec) else (sink.get("body") or {})
 
 
 def sink_values_path(spec: dict) -> str:
-    return "/sink/fields" if (spec.get("sink") or {}).get("kind") == "form" else "/sink/body"
+    return "/sink/fields" if is_label_keyed(spec) else "/sink/body"
 
 
 def sink_call(spec: dict) -> tuple[str, str]:
-    """(method, path) of the sink call in its contract document. Form sinks are `POST /form` (V6)."""
+    """(method, path) of the sink call in its contract document. Form sinks are `POST /form` (V6), Airtable
+    sinks `POST /records` (V14)."""
     sink = spec.get("sink") or {}
     if sink.get("kind") == "form":
         return "post", "/form"
+    if sink.get("kind") == "airtable":
+        return "post", "/records"
     return sink["call"]["method"], sink["call"]["path"]
+
+
+def norm_label(label: str) -> str:
+    """Form label / Airtable field name, compared: required markers dropped, whitespace collapsed, casefolded."""
+    return " ".join(str(label).replace("*", " ").split()).casefold()
+
+
+def destination_of(c: dict) -> dict | None:
+    """The TEACH destination a page->form recording was retargeted to (V14), e.g. {kind: airtable, ...}."""
+    d = c.get("destination")
+    return d if isinstance(d, dict) and d.get("kind") == "airtable" else None
 
 
 def is_page_integration(spec: dict | None) -> bool:
@@ -197,7 +224,13 @@ class ToolContext:
         if sink.get("kind") == "form":
             from runner.forms import fetch_form_contract  # type: ignore[import-not-found]  # W1
             return fetch_form_contract(sink["url"])
+        if sink.get("kind") == "airtable":
+            return self.fetch_airtable_contract(sink["base_id"], sink["table"], (sink.get("auth") or {})["credential"])
         return ops.fetch_sink_openapi(sink["base_url"])
+
+    def fetch_airtable_contract(self, base_id: str, table: str, credential: str) -> dict:
+        """An Airtable table's V14 contract, read with the named credential (control-plane env)."""
+        return ops.fetch_airtable_contract(base_id, table, credential)
 
     def get_page_record(self, page_id: str) -> dict:
         """A V1 page record from the control plane's page inbox."""
@@ -337,10 +370,15 @@ def _extractor_from_mapping(m: dict) -> dict | None:
     return f
 
 
-def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str) -> tuple[dict, list[dict], list[str]]:
+def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str,
+                    airtable: dict | None = None) -> tuple[dict, list[dict], list[str]]:
     """V11 page->form candidates -> a V7/V5 spec with one taught parser, plus one golden example built from
     the snapshot (expected values are the recorded ones, independent of the parser). Returns
-    (spec, examples, problems)."""
+    (spec, examples, problems).
+
+    `airtable` (V14 retarget): {base_id, table, credential, fields: {form label: Airtable field name or None},
+    contract}: the sink becomes that table, each label keyed by its field name; a None drops the label (a
+    person chose to skip it). Golden values are typed per the table's fields."""
     src, sink = c["source"], c["sink"]
     site = src.get("site") or ""
     fields, form_fields, assumptions, problems = {}, {}, [], []
@@ -394,6 +432,22 @@ def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str) -> tuple[d
                  **({"verify": {"confirmation_text": sink["confirmation_text"]}} if sink.get("confirmation_text") else {})},
         "on_error": "quarantine", "assumptions": assumptions,
     }
+    if airtable is not None:
+        names = airtable["fields"]
+        form_fields = {names[lab]: vs for lab, vs in form_fields.items() if names.get(lab)}
+        spec["sink"] = {"kind": "airtable", "base_id": airtable["base_id"], "table": airtable["table"],
+                        "auth": {"scheme": "bearer", "credential": airtable["credential"]},
+                        "fields": form_fields, "typecast": False, "verify": {"read_back": True}}
+        skipped = [lab for lab, n in names.items() if not n]
+        for lab, n in names.items():
+            if n and n != lab:
+                assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "confirmed",
+                                    "text": f"the form question {lab!r} goes to the Airtable field {n!r}"})
+        for lab in skipped:
+            assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "confirmed",
+                                "text": f"the form question {lab!r} is not sent: the table has no field for it"})
+        by_label = {names[lab]: m for lab, m in by_label.items() if names.get(lab)}
+        record_values = {names[lab]: ref for lab, ref in record_values.items() if names.get(lab)}
     date = next((by_label[lab]["value"] for lab, ref in record_values.items() if ref == "record.captured_date"), None)
     rec = learn.make_page_record(src["url"], html, seq=1, captured_at=f"{date}T12:00:00.000+00:00" if date else None)
     body = {}
@@ -404,6 +458,12 @@ def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str) -> tuple[d
             body[label] = str(rec[vs["from"].removeprefix("record.")])
         else:
             body[label] = str(by_label[label]["value"])
+    if airtable is not None and airtable.get("contract"):
+        from runner.airtable import convert_body
+        try:  # what build_body produces: values typed per the table's fields (V14)
+            body = convert_body(airtable["contract"], body, drop_empty=False)
+        except Quarantine as q:
+            problems.append(f"golden example: {q.detail}")
     examples = [{"name": f"taught_{parser['id']}_1", "record": rec, "expect": {"body": body}}]
     return spec, examples, problems
 
@@ -621,6 +681,9 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             return summarize_openapi(ctx.fetch_contract(ctx.spec_dict()))
         if target == "sink" and not ctx.spec_path.exists():
             c = candidates_for(ctx.recording_id or "fixture")
+            dest = destination_of(c) if is_page_candidates(c) else None
+            if dest:  # retargeted to an Airtable table (V14): its fields, not the recorded form's questions
+                return summarize_openapi(ctx.fetch_airtable_contract(dest["base_id"], dest["table"], dest["credential"]))
             if is_page_candidates(c):  # no spec yet: the recorded form (sink.url; forms have no base_url)
                 from runner.forms import fetch_form_contract
                 return summarize_openapi(fetch_form_contract(c["sink"]["url"]))
@@ -717,6 +780,39 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         verdict = "OK" if ok_total == n_total and not uncovered else "FAILED"
         return f"{verdict}: {ok_total}/{n_total} matched records extracted\n" + "\n".join(lines)
 
+    def _airtable_target(c: dict, dest: dict) -> dict:
+        """V14 TEACH retarget: map each recorded form label to the Airtable field with the same normalised
+        name; ask a person about every label without one (code asks, never guesses)."""
+        from runner.airtable import properties
+        try:
+            contract = ctx.fetch_airtable_contract(dest["base_id"], dest["table"], dest["credential"])
+        except Exception as e:  # noqa: BLE001 - said to the model; never shows a credential value
+            from runner.credentials import redact
+            raise ValueError(f"cannot read the Airtable table {dest['table']!r}: "
+                             f"{redact(e, names=[dest['credential']])}") from None
+        writable = list(properties(contract))
+        by_norm = {norm_label(f): f for f in writable}
+        labels = [lab for lab in (c["sink"].get("labels") or [m["dest_field"] for m in c.get("mappings") or []])
+                  if any(m.get("dest_field") == lab for m in c.get("mappings") or [])]
+        labels += [u["dest_field"] for u in c.get("unexplained") or [] if u["dest_field"] not in labels]
+        names: dict[str, str | None] = {lab: by_norm.get(norm_label(lab)) for lab in labels}
+        for lab in [lab for lab, n in names.items() if n is None]:
+            free = [f for f in writable if f not in names.values()]
+            options = free + [SKIP_FIELD]
+            answer = str(ctx.interrupt(
+                "ask_user", question=f"The form question {lab!r} has no field with that name in the Airtable table "
+                                     f"{dest['table']!r}. Which field should get it?",
+                options=options).get("answer", "")).strip()
+            chosen = next((f for f in free if norm_label(f) == norm_label(answer)), None)
+            if chosen:
+                names[lab] = chosen
+            elif norm_label(answer) in (norm_label(SKIP_FIELD), "skip", "none") or answer.lower().startswith(("skip", "none")):
+                names[lab] = None
+            else:
+                raise ValueError(f"the answer {answer!r} for {lab!r} is not one of {options}; nothing written")
+        return {"base_id": dest["base_id"], "table": dest["table"], "credential": dest["credential"],
+                "fields": names, "contract": contract}
+
     def draft_spec(field_names: dict[str, str] | None = None) -> str:
         """Write a first spec.yaml + examples.yaml from the recording's candidates (deterministic code).
         `field_names` optionally renames extracted fields, e.g. {"product_id": "sku", "quantity": "qty",
@@ -727,7 +823,15 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                 html = snapshot_html(ctx.recording_id or JOBS_RECORDING, c["source"]["snapshot"])
             except (FileNotFoundError, KeyError) as e:
                 return f"ERROR: {e}"
-            spec, examples, problems = draft_page_spec(c, name=ctx.name, thread_id=ctx.t.id, html=html)
+            airtable = None
+            dest = destination_of(c)
+            if dest:
+                try:
+                    airtable = _airtable_target(c, dest)
+                except ValueError as e:
+                    return f"ERROR: {e}"
+            spec, examples, problems = draft_page_spec(c, name=ctx.name, thread_id=ctx.t.id, html=html,
+                                                       airtable=airtable)
             ctx.spec_path.write_text(_ydump(spec, sort_keys=False, width=200))
             (ctx.wd / "examples.yaml").write_text(_ydump(examples, sort_keys=False, width=200))
             ctx.samples = [examples[0]["record"]]
@@ -735,8 +839,13 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             ctx.svc.emit(ctx.t, "artifact", kind="spec", name=ctx.name, version=None, path=str(ctx.spec_path))
             p = spec["extract"]["parsers"][0]
             readers = {k: learn.extractor_label(v) for k, v in p["fields"].items()}
-            return (f"wrote spec.yaml (page -> form: parser {p['id']} for {p['match']['site']}, fields {readers}, "
-                    f"form fields {list(spec['sink']['fields'])}, dedupe record.canonical_url) and examples.yaml "
+            where = (f"page -> Airtable table {spec['sink']['table']!r}" if airtable else "page -> form")
+            what = "Airtable fields" if airtable else "form fields"
+            skipped = [lab for lab, n in (airtable or {}).get("fields", {}).items() if not n]
+            return (f"wrote spec.yaml ({where}: parser {p['id']} for {p['match']['site']}, fields {readers}, "
+                    f"{what} {list(spec['sink']['fields'])}"
+                    + (f" (skipped: {skipped})" if skipped else "")
+                    + ", dedupe record.canonical_url) and examples.yaml "
                     "(the recorded page). "
                     + ("; ".join(f"PROBLEM: {x}" for x in problems) + ". " if problems else "")
                     + ("valid" if not errors else "INVALID: " + "; ".join(errors)))
@@ -840,9 +949,11 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         if not ctx.spec_path.exists():
             return "REFUSED: no spec.yaml to patch"
         old = ctx.spec_dict()
-        fixed = ("/name", "/sink/base_url", "/source/base_url", "/sink/url", "/sink/kind", "/source/kind")
+        fixed = ("/name", "/sink/base_url", "/source/base_url", "/sink/url", "/sink/kind", "/source/kind",
+                 "/sink/base_id", "/sink/table", "/sink/auth", "/source/auth")
         if any(str(op.get(k, "")).startswith(fixed) for op in patch for k in ("path", "from")):
-            return "REFUSED: name, kinds and base/form URLs are fixed; patch the mapping, parsers, rules or assumptions"
+            return ("REFUSED: name, kinds, base/form URLs, Airtable base/table and credentials are fixed; patch the "
+                    "mapping, parsers, rules or assumptions")
         try:
             new = jsonpatch.apply_patch(old, patch)
         except (jsonpatch.JsonPatchException, jsonpatch.JsonPointerException, TypeError, KeyError) as e:
@@ -940,7 +1051,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         v = passing[-1]["version"]
         vdir = workspace_dir() / "integrations" / ctx.name / f"v{v}"
         cfg = _yload((vdir / "config.yaml").read_text())
-        is_form = cfg["sink"].get("kind") == "form"  # forms: the runner fills but never submits on dry runs (V5)
+        # forms fill but never submit on dry runs (V5); Airtable validates against the table, never POSTs (V14)
+        is_form = cfg["sink"].get("kind") in LABEL_KEYED_SINKS
         staging = (os.environ.get("PATCHWORK_STAGING_BASE_URL") or cfg["sink"].get("staging_base_url") or "").rstrip("/")
         live = (os.environ.get("PATCHWORK_SINK_BASE_URL") or cfg["sink"].get("base_url") or "").rstrip("/")
         if not is_form and (not staging or staging == live):
@@ -986,7 +1098,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         spec = ctx.spec_dict()
         method, path = sink_call(spec)
         values = sink_values(spec)
-        is_form = (spec.get("sink") or {}).get("kind") == "form"
+        is_form = is_label_keyed(spec)  # form or Airtable: label-keyed, the same repair path (V14)
+        is_airtable = sink_kind(spec) == "airtable"
         if inc and inc.get("old_openapi") and inc.get("new_openapi"):
             old_doc, new_doc = inc["old_openapi"], inc["new_openapi"]
         else:
@@ -1010,9 +1123,10 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             unpaired_old = [r for r in d["removed"] if r not in d["likely_renames"] and r in values]
             unpaired_new = [a for a in d["added"] if a not in d["likely_renames"].values()]
             for r in unpaired_old:
-                d["suggested_questions"].append({
-                    "field": r, "question": f"The form question {r!r} is gone. Which new question replaces it?",
-                    "options": unpaired_new + ["None: stop sending it"]})
+                question = (f"The Airtable field {r!r} is gone from the table. Which field replaces it?" if is_airtable
+                            else f"The form question {r!r} is gone. Which new question replaces it?")
+                d["suggested_questions"].append({"field": r, "question": question,
+                                                 "options": unpaired_new + ["None: stop sending it"]})
             for field in d["new_required_unmapped"]:
                 if not unpaired_old:
                     d["suggested_questions"].append({"field": field, "options": [],
@@ -1043,7 +1157,16 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         old_body = sink_values(_yload(active))
         new_spec = ctx.spec_dict()
         new_body = sink_values(new_spec)
-        as_text = (new_spec.get("sink") or {}).get("kind") == "form"  # values sent to a form are strings (V5)
+        as_text = sink_kind(new_spec) == "form"  # values sent to a form are strings (V5)
+        typed_props: dict = {}
+        if sink_kind(new_spec) == "airtable":  # Airtable values are typed per the table's fields (V14)
+            from runner.airtable import properties
+            inc = Store().incident(int(ctx.incident_id)) if ctx.incident_id else None
+            try:
+                doc = (inc or {}).get("new_openapi") or ctx.fetch_contract(new_spec)
+                typed_props = properties(doc)
+            except Exception:  # noqa: BLE001 - untyped goldens fail the compile's contract test, said there
+                typed_props = {}
         by_field = {vs["from"]: k for k, vs in old_body.items() if "from" in vs and "transform" not in vs}
         examples = _yload(path.read_text()) or []
         changed, problems = 0, []
@@ -1060,6 +1183,9 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                         out[k] = eval_value(vs, {}, ex["record"])
                         if as_text and out[k] is not None:
                             out[k] = str(out[k])
+                        elif typed_props and out[k] not in (None, ""):
+                            from runner.airtable import convert_values
+                            out[k] = convert_values(typed_props, {k: out[k]}, drop_empty=False)[k]
                     except (Quarantine, KeyError, ValueError, TypeError) as e:
                         problems.append(f"{ex['name']}.{k}: {e}")
             if out != body:
@@ -1362,7 +1488,15 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                 v = eval_value(vs, values, rec)
             except (KeyError, ValueError, TypeError, Quarantine) as e:
                 return f"ERROR: cannot compute {k} for the golden example: {e}"
-            body[k] = str(v) if (new.get("sink") or {}).get("kind") == "form" and v is not None else v
+            body[k] = str(v) if sink_kind(new) == "form" and v is not None else v
+        if sink_kind(new) == "airtable":  # typed per the active version's table snapshot, as build_body does (V14)
+            try:
+                from runner.airtable import convert_body
+                snap = workspace_dir() / "integrations" / ctx.name / f"v{Store().active_version(ctx.name)}" / "contract" / "openapi.json"
+                if snap.exists():
+                    body = convert_body(json.loads(snap.read_text()), body, drop_empty=False)
+            except (Quarantine, KeyError, ValueError) as e:
+                return f"ERROR: cannot type {list(body)} for the Airtable golden example: {e}"
         ex_path = ctx.wd / "examples.yaml"
         examples = (_yload(ex_path.read_text()) if ex_path.exists() else None) or []
         ex_name = re.sub(r"[^a-z0-9]+", "_", f"learned_{p['id']}_{rec.get('id')}".lower())
@@ -1466,4 +1600,5 @@ seed_learn_workdir = seed_repair_workdir  # LEARN also starts from the active ve
 
 __all__ = ["ToolContext", "build_tools", "tool_functions", "candidates_for", "seed_repair_workdir",
            "seed_learn_workdir", "diff_request_schemas", "lint_spec", "learn_policy", "sink_values", "sink_call",
+           "is_label_keyed", "LABEL_KEYED_SINKS",
            "is_page_integration", "FAIL_PREFIXES", "MAX_REPAIR_ATTEMPTS"]

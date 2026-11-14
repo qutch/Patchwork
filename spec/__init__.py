@@ -10,12 +10,12 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from spec.models import QUARANTINE_CODES, ApiSink, FormSink, Spec
+from spec.models import QUARANTINE_CODES, AirtableSink, ApiSink, FormSink, Spec
 
 __all__ = ["Spec", "SpecError", "load_spec", "parse_spec", "validate_spec", "spec_hash", "QUARANTINE_CODES",
-           "ApiSink", "FormSink"]
+           "ApiSink", "FormSink", "AirtableSink"]
 
-SINK_KINDS = ("api", "form")
+SINK_KINDS = ("api", "form", "airtable")
 
 
 class SpecError(ValueError):

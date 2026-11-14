@@ -10,6 +10,11 @@ v2 (contracts V5, V7):
   * form sinks (config sink.kind == "form") have no base URL, no staging URL and ignore
     PATCHWORK_SINK_BASE_URL; `form_submit` / `form_contract` drive the run's one headless browser.
     A dry run (`staging=True`) fills forms but never submits (runner/forms.py enforces it).
+
+v3 (contracts V14): Airtable sinks (config sink.kind == "airtable") have no base URL either (the API is
+https://api.airtable.com/v0 or $PATCHWORK_AIRTABLE_API_URL); auth headers come from
+`runner.credentials.headers(sink.auth)`; `airtable_contract` / `airtable_submit` use one
+`runner.airtable.AirtableSession` per run. A dry run validates against the live table and never POSTs.
 """
 
 from __future__ import annotations
@@ -45,9 +50,12 @@ class Http:
         self.dry_run = staging
         self.sink_kind = config["sink"].get("kind", "api")
         self._forms: Any = None
+        self._airtable: Any = None
         self.base = {"source": source.rstrip("/")}
         if self.sink_kind == "form":
             self.form_url = config["sink"]["url"]
+        elif self.sink_kind == "airtable":  # no base URL: runner/airtable.py (sink.auth headers below)
+            self._airtable_config = dict(config["sink"])
         elif staging:
             sink = (os.environ.get("PATCHWORK_STAGING_BASE_URL") or config["sink"].get("staging_base_url"))
             if not sink:
@@ -95,6 +103,25 @@ class Http:
         return self.forms.submit(url, {k: "" if v is None else str(v) for k, v in values.items()},
                                  submit=submit, confirmation_text=confirmation_text)
 
+    # -- Airtable sinks (contracts V14) ------------------------------------------------------------
+    @property
+    def airtable(self) -> Any:
+        if self._airtable is None:
+            from runner.airtable import AirtableSession
+
+            cfg = self._airtable_config
+            self._airtable = AirtableSession(
+                cfg["base_id"], cfg["table"], self.headers.get("sink") or {},
+                credential=(cfg.get("auth") or {}).get("credential"), typecast=bool(cfg.get("typecast")),
+                read_back=bool(cfg.get("read_back", True)), dry_run=self.dry_run)
+        return self._airtable
+
+    def airtable_contract(self, base_id: str, table: str) -> dict:
+        return self.airtable.contract(refresh=True)
+
+    def airtable_submit(self, base_id: str, table: str, values: dict) -> Any:
+        return self.airtable.submit(values)
+
     def close(self) -> None:
         try:
             self.client.close()
@@ -102,3 +129,6 @@ class Http:
             if self._forms is not None:
                 self._forms.close()
                 self._forms = None
+            if self._airtable is not None:
+                self._airtable.close()
+                self._airtable = None

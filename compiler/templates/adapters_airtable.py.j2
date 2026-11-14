@@ -1,0 +1,42 @@
+{% include "_header.j2" %}
+"""Source over HTTP, sink = an Airtable table (contracts V14). `http` is runner.http.Http, which holds the
+run's credential headers (runner.credentials, never a value in this package) and the dry-run flag (a dry
+run validates against the live table and never POSTs; runner/airtable.py enforces it), or
+runner.testing.FakeHttp in tests."""
+
+from runner.lib import Quarantine, render  # noqa: F401
+
+SOURCE_LIST = {{ {"method": spec.source.list.method, "path": spec.source.list.path, "params": spec.source.list.params}|py }}
+SINK_CALL = {"method": "POST", "path": "/records"}
+FIELD_TYPES = {{ airtable_types|py }}  # from contract/openapi.json at compile time
+AIRTABLE = {{ {"base_id": spec.sink.base_id, "table": spec.sink.table, "typecast": spec.sink.typecast, "read_back": (spec.sink.verify.read_back if spec.sink.verify else false)}|py }}
+
+
+def list_records(http, cursor: str | None) -> list[dict]:
+    params = {k: v.replace("{cursor}", cursor or "") for k, v in SOURCE_LIST["params"].items()}
+    resp = http.request("source", SOURCE_LIST["method"], SOURCE_LIST["path"], params=params or None)
+    resp.raise_for_status()
+    data = resp.json()
+    return data if isinstance(data, list) else data.get("items", [])
+
+
+def typed(body: dict) -> dict:
+    """Values typed per the table's fields (number -> number, checkbox -> bool, date -> YYYY-MM-DD);
+    a value that does not fit is VALIDATION_FAILED before any request."""
+    from runner.airtable import convert_values
+    return convert_values(FIELD_TYPES, body, typecast=AIRTABLE["typecast"], drop_empty=False)
+
+
+def fetch_contract(http) -> dict:
+    """The table's live contract: its writable fields as an OpenAPI-shaped document (V14)."""
+    return http.airtable_contract(AIRTABLE["base_id"], AIRTABLE["table"])
+
+
+def send(http, body: dict):
+    """Type the values per the table's fields, create one record, read it back (sink.verify.read_back).
+    Returns a response-like object (status_code 200); failures raise Quarantine."""
+    return http.airtable_submit(AIRTABLE["base_id"], AIRTABLE["table"], body)
+
+
+def verify(http, fields: dict, record: dict) -> None:
+    return None  # the record is read back inside send()

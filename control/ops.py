@@ -110,8 +110,26 @@ def fetch_contract(spec: Any) -> dict[str, Any]:
 
         return fetch_form_contract(spec.sink.url)
     sink = spec["sink"] if isinstance(spec, dict) else spec.sink
-    base_url = sink["base_url"] if isinstance(sink, dict) else sink.base_url
-    return fetch_sink_openapi(base_url, headers=sink_auth_headers(spec))
+    get = (lambda k: sink.get(k)) if isinstance(sink, dict) else (lambda k: getattr(sink, k, None))
+    if get("kind") == "airtable":  # contracts V14: the table's writable fields, read with the sink's credential
+        auth = get("auth")
+        credential = auth.get("credential") if isinstance(auth, dict) else getattr(auth, "credential", None)
+        return fetch_airtable_contract(get("base_id"), get("table"), credential, headers=sink_auth_headers(spec))
+    return fetch_sink_openapi(get("base_url"), headers=sink_auth_headers(spec))
+
+
+def fetch_airtable_contract(base_id: str, table: str, credential: str,
+                            headers: dict[str, str] | None = None) -> dict[str, Any]:
+    """The Airtable table's V14 contract (meta API), read with the named credential from this process's
+    environment (.env), or with `headers` (`sink_auth_headers(spec)`). Errors name the credential, never its value."""
+    from runner import airtable
+    from runner.lib import Quarantine
+
+    try:
+        return airtable.fetch_contract(base_id, table, headers or credentials.headers({"credential": credential}),
+                                       credential=credential)
+    except Quarantine as q:
+        raise RuntimeError(f"{q.code}: {credentials.redact(q.detail, names=[credential])}") from None
 
 
 def compile_and_test(spec_path: str | Path, *, examples_path: str | Path | None = None,

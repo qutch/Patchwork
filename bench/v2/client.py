@@ -48,6 +48,8 @@ def presenter_answer(question: str, options: list[str], entry: dict | None = Non
             for f in ("title", "company"):
                 if " ".join(o.split()).casefold() == " ".join(str(entry.get(f, "")).split()).casefold():
                     return o, f"picked the option equal to the answer key's {f}"
+    if "Skip this field" in options:  # V14 TEACH: a form question the Airtable table has no field for
+        return "Skip this field", "skipped the form question the table has no field for"
     q = question.lower()
     if "email" in q:
         return "demo@example.com", "demo email"
