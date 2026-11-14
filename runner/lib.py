@@ -72,6 +72,38 @@ def extract_json_path(obj: Any, path: str, where: str) -> Any:
     return cur
 
 
+def extract_css(html: str, selector: str, attr: str | None, where: str) -> str:
+    """`css:` extractor (contracts V3): first match, whitespace-normalised text or attribute value."""
+    from runner.html import css_first
+
+    value = css_first(html or "", selector, attr)
+    if not value:
+        what = f"css {selector!r}" + (f" attr {attr!r}" if attr else "")
+        raise Quarantine("PARSE_NO_MATCH", f"{where}: {what} matched nothing" if value is None
+                         else f"{where}: {what} is empty")
+    return value
+
+
+def extract_jsonld(html: str, path: str, jsonld_type: str, where: str) -> Any:
+    """`jsonld:` extractor (contracts V3): dotted path on the first JSON-LD object of `jsonld_type`."""
+    from runner.html import jsonld_get, normalize_ws
+
+    value = jsonld_get(html or "", path, jsonld_type)
+    if isinstance(value, str):
+        value = normalize_ws(value)
+    if value in (None, "") or isinstance(value, (dict, list)):
+        raise Quarantine("PARSE_NO_MATCH", f"{where}: jsonld {jsonld_type}.{path} not present")
+    return value
+
+
+def refine_regex(value: str, pattern: re.Pattern[str], where: str) -> str:
+    """Regex refine on a css/jsonld result: group 1 of the first match, whitespace-normalised."""
+    m = pattern.search(value or "")
+    if m is None or not (m.group(1) or "").strip():
+        raise Quarantine("PARSE_NO_MATCH", f"{where}: refine /{pattern.pattern}/ did not match {value[:80]!r}")
+    return " ".join(m.group(1).split())
+
+
 def cast(value: Any, to: str, where: str) -> Any:
     if to == "str":
         return value if isinstance(value, str) else str(value)
