@@ -59,3 +59,21 @@ curl -X POST localhost:8002/admin/schema -H 'content-type: application/json' -d 
 
 **Sandboxing is light, and we say so in the pitch:** the runner is a subprocess with a timeout, a scratch working
 directory and an environment stripped of model keys and secrets.
+
+## Recording
+
+```bash
+make apps                                          # Inbox :8001, Stockroom :8002/:8003
+python -m capture record workspace/recordings/rec-manual \
+  --intent "For every new purchase order message, record incoming stock" \
+  --allow localhost:8001 --allow localhost:8002 --start-url http://localhost:8001/
+# headed Chromium opens: open a message, copy the PO, go to localhost:8002/incoming/new, fill the form, Save.
+# Close the window (or Ctrl-C) to stop -> recording.json + candidates.json in that dir.
+python -m matcher workspace/recordings/rec-manual/recording.json   # re-run stage A on any recording
+```
+
+Only allowlisted `host:port`s are recorded (DOM events, navigation, same-origin XHR/fetch with bodies ≤ 20 KB).
+Password, `cc-*` and `one-time-code` fields, `Authorization`/`Cookie` headers and secret-looking body keys
+are always redacted. `events.jsonl` grows live. The control plane uses `capture.session.start_recording / get_session /
+list_recordings` (see `docs/contracts.md` §2). Demo controls on the Inbox: `POST /admin/deliver {count}`,
+`POST /admin/new_supplier {count}` (Break 2), `POST /admin/reset`, `GET /admin/ground_truth`.
