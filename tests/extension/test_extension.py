@@ -4,11 +4,14 @@ the default headless shell cannot load extensions) with the unpacked extension l
 
 from __future__ import annotations
 
+import re
+
 import threading
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI, Request
+from playwright.sync_api import expect
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from tests.conftest import _Server
@@ -74,7 +77,7 @@ def stub():
 
 @pytest.fixture(scope="module")
 def browser_ext(tmp_path_factory):
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import expect, sync_playwright
 
     with sync_playwright() as pw:
         ctx = pw.chromium.launch_persistent_context(
@@ -178,20 +181,22 @@ def test_options_persist(ext, stub):
     ext_id = sw.url.split("/")[2]
     page = ctx.new_page()
     page.goto(f"chrome-extension://{ext_id}/options.html")
-    assert page.input_value("#controlUrl") == "http://127.0.0.1:8000"  # the default
+    # options.js fills the inputs after an async chrome.storage read. Wait with expect(): the extension
+    # page's CSP forbids eval, so a polling wait_for_function(<string>) fails whenever it has to poll.
+    expect(page.locator("#controlUrl")).to_have_value("http://127.0.0.1:8000")  # the default
     page.fill("#controlUrl", "http://127.0.0.1:38080/")
     page.fill("#token", "  tok-typed  ")
     page.click("#save")
-    page.wait_for_function("document.getElementById('status').textContent.startsWith('Saved')")
+    expect(page.locator("#status")).to_have_text(re.compile(r"^Saved"))
     assert sw.evaluate("chrome.storage.local.get(null)") == {"controlUrl": "http://127.0.0.1:38080",
                                                              "token": "tok-typed"}
     page.reload()
-    assert page.input_value("#token") == "tok-typed"
+    expect(page.locator("#token")).to_have_value("tok-typed")
 
     # "Get token from Patchwork" reads GET /api/extension at the address typed.
     page.fill("#controlUrl", stub.url)
     page.click("#fetch")
-    page.wait_for_function("document.getElementById('status').textContent.startsWith('Connected')")
+    expect(page.locator("#status")).to_have_text(re.compile(r"^Connected"))
     assert sw.evaluate("chrome.storage.local.get(null)") == {"controlUrl": stub.url, "token": TOKEN}
     page.close()
 
