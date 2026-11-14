@@ -13,6 +13,7 @@ Derived from *Patchwork-plus: Technical Plan* (Nov 13, 2026). Hours are on the 3
 | **3. REPAIR loop** | 20–28 | **H28: Break 1 repaired with approval** | ✅ done (+ Break 2) |
 | 4. Benchmarks & hardening | 28–32 | Benchmark page, Break 2 (stretch) | ✅ Break 2, `make smoke`, `make bench` + Benchmark tab; manual/computer-use still estimates until timed |
 | 5. Freeze & rehearse | 32–36 | Code freeze H32, 5 rehearsals, backup video, Devpost | |
+| **6. v2: jobs → tracker form** | 2026-11-14 | Hotkey on real postings → Google Form row; learn a layout once; block + repair a renamed question | ✅ built and merged; 3/3 deep + scripted runs on the fixture form; demo Google Form rehearsal with the owner ⏳ |
 
 ---
 
@@ -110,3 +111,19 @@ Tool → MVP function mapping (already built, so agents get guardrails for free)
 - **Outcomes are `success | duplicate | quarantined(reason)`**. The plan's separate `invalid` is folded into `quarantined(VALIDATION_FAILED)`.
 - **Storage uses stdlib `sqlite3`**, not SQLModel. It's one file (`runner/store.py`) and easy to swap.
 - **Supplier formats are fixed:** Acme is label-style (`PO Number:/SKU:/Qty:`), Globex is prose (`receive N units of item X`), Initech is ERP key=value (`REF=/PART=/UNITS=`).
+
+## Phase 6: v2, show it once and fill it in regardless of layout
+
+Plan: `docs/superpowers/plans/2026-11-14-patchwork-v2-plan.md` (workstreams W1–W5); contracts: `docs/contracts.md` Part 2.
+
+- [x] Spikes: (a) the demo Google Form filled and submitted headless 5/5, rows in the Sheet; (b) one reader per platform, 16/16 fields
+- [x] W1 Engine: css/jsonld/refine readers, fingerprint routing, `kind: form` sink, form contract preflight, fixture tracker form
+- [x] W2 Capture + extension: element paths and page snapshots, page→form candidates, `fixture-jobs` recording, Chrome MV3 extension
+- [x] W3 Agents: LEARN (learner subagent, checks and auto-use rule in tools), TEACH page→form, form REPAIR, scripted fallbacks
+- [x] W4a Control plane: page inbox, run on arrival, learn trigger, tracker, layouts + revert, v2 demo reset/baseline
+- [x] W4b UI: Tracker tab, Learned layouts, AI-calls chart, presenter mode
+- [x] W5 Proof: 60 real postings with a cross-checked answer key, `make bench-v2`, `make smoke-v2`, `docs/demo-v2.md`
+- [x] 2-minute script: 3 runs in a row on the deep agent + 1 on the scripted agent (fixture form)
+- [ ] Bootstrap on the demo Google Form (TEACH + learn Lever/Greenhouse/Ashby off camera, save baseline) and rehearse with the owner
+- [ ] Stage speed: deep learn ~25 s and repair ~55 s on the free model (see the owner's D3 decision)
+- [ ] Backup video, slides

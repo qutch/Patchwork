@@ -7,6 +7,11 @@ the program breaks, the agents propose a tested repair for you to approve.
 This branch contains the **MVP spine**: demo apps, spec, compiler, runner, preflight, versions
 and benchmark, all with the AI off. See [ROADMAP.md](ROADMAP.md) for what comes next.
 
+**v2 (job postings → your tracker form):** show the transfer once; then a hotkey on any job posting writes a row into a
+Google Form (and its Sheet). Known layouts are read by code with 0 AI calls; a new layout is learned once by the deep
+agent (8 model calls, every value checked by code and labelled); a renamed form question is blocked before any write
+and repaired with approval. See [v2](#v2-job-postings--tracker-form) below and `docs/demo-v2.md`.
+
 ## Quick start
 
 ```bash
@@ -147,3 +152,40 @@ make smoke         # terminal 2: reset, BUILD, run 150, Break 1 + REPAIR, Break 
 no model calls. With `PATCHWORK_AGENT=deep` it takes several minutes and roughly 90 OpenRouter requests (free tier: 1,000/day).
 If the model is slow or down on stage, restart with `PATCHWORK_AGENT=scripted make up`: it tells the same story
 (same events, same questions, real compiler and runner) with no LLM.
+
+## v2: job postings → tracker form
+
+Design: `docs/superpowers/specs/2026-11-14-patchwork-v2-design.md`. Plan: `docs/superpowers/plans/2026-11-14-patchwork-v2-plan.md`.
+Contracts: `docs/contracts.md` Part 2. v1 (`po_to_stockroom`) is unchanged and runs from the same control plane.
+
+```
+Chrome extension (Alt+Shift+P) --POST /api/pages--> page inbox --> run jobs_to_tracker (runner, no AI)
+  route by site, else by platform fingerprint -> css / jsonld / regex readers -> validate -> dedupe (canonical URL)
+  -> preflight: live form's fields vs the snapshot -> fill the form by label (headless Playwright) -> confirmation
+  unknown layout -> LEARN (deep agent: learner subagent; evidence, corroboration, ambiguity checked in code;
+                   auto-used only if every check passes, else a person approves) -> replay the page
+  form changed   -> blocked before any write -> CONTRACT_CHANGED incident -> REPAIR -> approve -> page written
+```
+
+| Piece | Where |
+|---|---|
+| Page readers (`css`, `jsonld`, regex refine), fingerprint routing, `kind: form` sink, form contract | `spec/`, `compiler/`, `runner/html.py`, `runner/forms.py` |
+| Fixture tracker form (offline copy of the demo Google Form's markup) | `demo_apps/tracker_form/` (`python -m demo_apps.tracker_form --port 18010`) |
+| Chrome extension | `extension/` (install steps in `extension/README.md`) |
+| Page inbox, run on arrival, learn trigger, tracker, layouts + revert, v2 demo reset | `control/pages.py`, `control/autorun.py`, `control/tracker.py`, `control/layouts.py`, `control/api/pages.py` |
+| LEARN / TEACH (page→form) / form REPAIR on deepagents, scripted fallbacks | `agents/learn.py`, `agents/deep.py`, `agents/deep_tools.py`, `agents/scripted.py` |
+| Tracker tab, Learned layouts, AI-calls chart, presenter mode (`?present=1`) | `web/` |
+| 60 real postings + answer key, v2 bench, 2-minute smoke | `fixtures/postings/`, `bench/v2/`, `scripts/smoke_v2.py`, `docs/demo-v2.md` |
+
+```bash
+make smoke-v2-offline      # the 2-minute script on its own in-process stack (fixture form, scripted agent), ~20 s
+make bench-v2              # 60 postings, 5 platforms -> bench/v2/results.json (GET /api/bench/v2), no model calls
+make smoke-v2              # the same script against `make up`; PATCHWORK_FORM=google for the demo Form + Sheet
+```
+
+Measured on 2026-11-14 (numbers and their `kind` in `bench/v2/results.json`):
+- 60/60 real postings right, 0 wrong rows, 0 held; 4 layouts learned. Patchwork 32 AI calls (8 per learn,
+  measured on the deep agent) vs a browser agent's 360 (**estimate**: 6 calls per posting, not run).
+- Known layout: ~0.7 s per posting on the fixture form (the Google Form adds ~1.3–2 s per submission).
+- Deep agent (free `particle-1`) on the 2-minute script, three runs in a row: learn 24–31 s (8 calls), form repair
+  45–63 s (~18 calls). The scripted agent tells the same story with the same checks and no model in ~2.5 s per step.
