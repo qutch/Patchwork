@@ -489,6 +489,8 @@ export interface BenchV2Results {
   };
   numbers: BenchV2Number[];
   generated_at?: string;
+  /** optional extra: true when web/mock serves illustrative numbers (the UI badges them "mock data") */
+  mock?: boolean;
 }
 
 // ---------------------------------------------------------------- HTTP

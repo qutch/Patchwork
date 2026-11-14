@@ -9,6 +9,9 @@ Saves web/screenshots/v2-*.png. SHOTS=tracker,present limits which ones; BASE=<u
 from __future__ import annotations
 
 import os
+import re
+import subprocess
+import time
 import sys
 from pathlib import Path
 
@@ -27,6 +30,52 @@ def shot(page: Page, name: str, full: bool = True) -> None:
     page.wait_for_timeout(500)
     page.screenshot(path=str(OUT / f"v2-{name}.png"), full_page=full)
     print("saved", f"v2-{name}.png")
+
+
+MOCK = os.environ.get("MOCK", "http://127.0.0.1:5182")
+
+
+def press(kind: str, n: int = 0) -> None:
+    """What the hotkey does (mock/press.mjs), so the flow needs no extension."""
+    subprocess.run(["node", str(Path(__file__).resolve().parent.parent / "mock" / "press.mjs"), kind, "--n", str(n), "--base", MOCK],
+                   check=True, capture_output=True)
+
+
+def flow(browser, errors: list[str]) -> None:
+    """The 2-minute demo in presenter mode against the mock: reset, presses, learn, break, repair."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800}, device_scale_factor=1, color_scheme="light")
+    page = ctx.new_page()
+    page.on("pageerror", lambda e: errors.append(f"PAGE ERROR: {e}"))
+    press("reset")
+    page.goto(f"{BASE}/?present=1&beat=3")
+    page.wait_for_selector("text=Regardless of layout")
+    t0 = time.monotonic()
+    press("lever")
+    page.wait_for_selector("text=code · 0 AI calls", timeout=5000)
+    print(f"lever row visible after {time.monotonic() - t0:.1f} s")
+    press("greenhouse")
+    press("workable")
+    page.wait_for_selector("text=learning this layout", timeout=8000)
+    shot(page, "flow-1-learning", full=False)
+    page.wait_for_selector("text=learned now ·", timeout=15000)
+    press("workable", 1)
+    page.wait_for_timeout(2500)
+    shot(page, "flow-2-learned", full=False)
+    page.keyboard.press("ArrowRight")
+    press("rename")
+    press("ashby")
+    page.wait_for_selector("section[role=alert]", timeout=8000)
+    shot(page, "flow-3-blocked", full=False)
+    page.get_by_role("button", name="Repair with AI →").click()
+    page.get_by_role("button", name=re.compile("Approve")).first.wait_for(timeout=15000)
+    page.wait_for_timeout(300)
+    shot(page, "flow-4-approve", full=False)
+    page.get_by_role("button", name=re.compile("Approve")).first.click()
+    page.wait_for_selector("section[role=alert]", state="detached", timeout=15000)
+    page.wait_for_timeout(2500)
+    shot(page, "flow-5-repaired", full=False)
+    ctx.close()
+    press("reset")
 
 
 def main() -> int:
@@ -65,6 +114,8 @@ def main() -> int:
                     page.keyboard.press("ArrowRight")
                     page.wait_for_timeout(300)
             ctx.close()
+        if want("flow"):
+            flow(browser, errors)
         browser.close()
         for e in errors:
             print(e)

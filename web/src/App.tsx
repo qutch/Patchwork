@@ -3,6 +3,7 @@ import { AppProvider, TABS, useApp } from "./state";
 import { TRACKER } from "./api";
 import { AiToggle } from "./components/AiToggle";
 import TrackerTab from "./tabs/Tracker";
+import Presenter from "./components/Presenter";
 import RecordTab from "./tabs/Record";
 import ReviewTab from "./tabs/Review";
 import AgentTab from "./tabs/Agent";
@@ -119,11 +120,17 @@ function Body() {
   );
 }
 
+const PRESENT = typeof location !== "undefined" && new URLSearchParams(location.search).get("present") === "1";
+
 export default function App() {
   return (
     <AppProvider>
-      <Header />
-      <Body />
+      {PRESENT ? <Presenter /> : (
+        <>
+          <Header />
+          <Body />
+        </>
+      )}
       <Notice />
     </AppProvider>
   );
