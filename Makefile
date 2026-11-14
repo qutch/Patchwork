@@ -1,6 +1,6 @@
 PY ?= .venv/bin/python
 
-.PHONY: setup test apps demo seed
+.PHONY: setup test apps demo seed walkthrough
 
 setup:
 	uv venv -p 3.12 .venv
@@ -17,3 +17,6 @@ demo:
 
 seed:
 	$(PY) -m demo_apps.seed
+
+walkthrough:
+	scripts/walkthrough/make.sh

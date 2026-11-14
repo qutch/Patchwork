@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Patchwork Walkthrough</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column of stacked "stations" along the data path; the message tracer is a 2-col bench (message | code) that stacks on phones. */
+:root {
+  --bg: #eef1f0;        /* cool receiving-dock paper */
+  --surface: #ffffff;
+  --sunken: #e3e8e7;
+  --ink: #17222a;
+  --muted: #56656d;
+  --line: #cfd7d7;
+  --accent: #1d56b8;    /* dock-ledger blue */
+  --accent-soft: #dde7f8;
+  --gate: #e9b308;      /* safety yellow: human approval gates only */
+  --gate-ink: #3d2f00;
+  --ok: #2b7a4b;   --ok-soft: #d9efe1;
+  --dup: #6b7a86;  --dup-soft: #e2e7eb;
+  --val: #a86207;  --val-soft: #f6e6c9;
+  --nf: #c03a12;   --nf-soft: #f8ddd3;
+  --pnm: #7c3aa6;  --pnm-soft: #ecdff5;
+  --bad: #b42318;  --bad-soft: #f9dcd9;
+  --f-po: #cfe0ff; --f-po-ink: #163f86;
+  --f-sku: #c9efe6; --f-sku-ink: #0d5c4b;
+  --f-qty: #fbe7a6; --f-qty-ink: #6b4a00;
+  --code-bg: #f6f8f8;
+  --tok-kw: #9a2b6a; --tok-str: #2b6b2f; --tok-com: #7a8790; --tok-num: #a35200; --tok-key: #1d56b8;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10161a; --surface: #172026; --sunken: #0c1114; --ink: #e2e9ec; --muted: #93a3ab; --line: #2a373e;
+    --accent: #7aa7f2; --accent-soft: #1b2c48; --gate: #f2c230; --gate-ink: #2a2000;
+    --ok: #5cc48a; --ok-soft: #173426; --dup: #9aa8b3; --dup-soft: #222c33; --val: #e2a24a; --val-soft: #3a2a10;
+    --nf: #f0805a; --nf-soft: #3f1d12; --pnm: #c18be6; --pnm-soft: #2f1d3d; --bad: #f2786c; --bad-soft: #3d1715;
+    --f-po: #22385e; --f-po-ink: #b9d0ff; --f-sku: #143f37; --f-sku-ink: #a5ead9; --f-qty: #4a3a0b; --f-qty-ink: #f6dc8c;
+    --code-bg: #121a1f; --tok-kw: #e48bbd; --tok-str: #8fd18f; --tok-com: #6f8089; --tok-num: #f0a35e; --tok-key: #7aa7f2;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10161a; --surface: #172026; --sunken: #0c1114; --ink: #e2e9ec; --muted: #93a3ab; --line: #2a373e;
+  --accent: #7aa7f2; --accent-soft: #1b2c48; --gate: #f2c230; --gate-ink: #2a2000;
+  --ok: #5cc48a; --ok-soft: #173426; --dup: #9aa8b3; --dup-soft: #222c33; --val: #e2a24a; --val-soft: #3a2a10;
+  --nf: #f0805a; --nf-soft: #3f1d12; --pnm: #c18be6; --pnm-soft: #2f1d3d; --bad: #f2786c; --bad-soft: #3d1715;
+  --f-po: #22385e; --f-po-ink: #b9d0ff; --f-sku: #143f37; --f-sku-ink: #a5ead9; --f-qty: #4a3a0b; --f-qty-ink: #f6dc8c;
+  --code-bg: #121a1f; --tok-kw: #e48bbd; --tok-str: #8fd18f; --tok-com: #6f8089; --tok-num: #f0a35e; --tok-key: #7aa7f2;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1140px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 64px; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--display); font-stretch: 112%; text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(30px, 5vw, 46px); font-weight: 800; line-height: 1.05; }
+h2 { font-size: clamp(22px, 3vw, 28px); font-weight: 750; line-height: 1.15; }
+h3 { font-size: 16px; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--mono); font-size: 0.92em; }
+.eyebrow { font: 600 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { color: var(--muted); font-size: 17px; }
+section { display: grid; gap: 20px; }
+.section-head { display: grid; gap: 8px; }
+.muted { color: var(--muted); }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- hero ---------- */
+.hero { display: grid; gap: 18px; }
+.storyline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font: 500 13px/1 var(--mono); }
+.storyline span { padding: 7px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+.storyline span.gate { background: var(--gate); color: var(--gate-ink); border-color: var(--gate); }
+.storyline i { color: var(--muted); font-style: normal; }
+.readouts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 6px; background: var(--surface); overflow: hidden; }
+.readout { padding: 16px 18px; display: grid; gap: 4px; border-left: 1px solid var(--line); }
+.readout:first-child { border-left: 0; }
+.readout b { font: 700 30px/1 var(--display); font-stretch: 118%; font-variant-numeric: tabular-nums; }
+.readout b.zero { color: var(--ok); }
+.readout small { color: var(--muted); font-size: 13px; }
+@media (max-width: 720px) { .readouts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .readout:nth-child(3) { border-left: 0; } .readout:nth-child(n+3) { border-top: 1px solid var(--line); } }
+
+/* ---------- architecture ---------- */
+.arch { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0; align-items: stretch; }
+.node { position: relative; padding: 12px 12px 14px; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; display: grid; gap: 6px; align-content: start; margin-right: 18px; min-width: 0; }
+.node:last-child { margin-right: 0; }
+.node:not(:last-child)::after { content: ""; position: absolute; right: -15px; top: 50%; width: 12px; height: 2px; background: var(--muted); }
+.node:not(:last-child)::before { content: ""; position: absolute; right: -16px; top: calc(50% - 4px); border: 5px solid transparent; border-left-color: var(--muted); border-right: 0; }
+.node .tag { font: 600 10.5px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.node h3 { font-size: 14px; font-stretch: 105%; }
+.node p { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+.node.next { border-style: dashed; background: transparent; }
+.node.next .tag { color: var(--muted); }
+.node.built .tag { color: var(--ok); }
+.node.gate { background: var(--gate); border-color: var(--gate); color: var(--gate-ink); }
+.node.gate p, .node.gate .tag { color: var(--gate-ink); }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; gap: 6px; align-items: center; }
+.sw { width: 14px; height: 14px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.sw.dash { border-style: dashed; background: transparent; }
+.sw.gate { background: var(--gate); border-color: var(--gate); }
+@media (max-width: 900px) {
+  .arch { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .node { margin-right: 0; }
+  .node:not(:last-child)::after { right: auto; left: 24px; top: auto; bottom: -14px; width: 2px; height: 10px; }
+  .node:not(:last-child)::before { right: auto; left: 20px; top: auto; bottom: -18px; border: 5px solid transparent; border-top-color: var(--muted); border-bottom: 0; }
+}
+
+/* ---------- tracer ---------- */
+.picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.pick { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 6px 12px; font-size: 13px; display: inline-flex; gap: 8px; align-items: center; }
+.pick[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.rail { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.stage { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 9px 10px; text-align: left; display: grid; gap: 3px; min-width: 0; }
+.stage .n { font: 600 11px/1 var(--mono); color: var(--muted); }
+.stage .t { font-weight: 600; font-size: 14px; }
+.stage .s { font: 500 11px/1.2 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stage.pass .s { color: var(--ok); }
+.stage.fail { border-color: var(--bad); }
+.stage.fail .s { color: var(--bad); }
+.stage.stop .s { color: var(--dup); }
+.stage.skip { opacity: 0.45; }
+.stage[aria-current="step"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 760px) { .rail { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.bench { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+.card-h { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.card-b { padding: 14px; display: grid; gap: 12px; min-width: 0; }
+.msg-meta { font: 500 12px/1.4 var(--mono); color: var(--muted); }
+.msg-subj { font-weight: 600; }
+.msg-body { white-space: pre-wrap; font: 13.5px/1.6 var(--mono); background: var(--sunken); padding: 12px; border-radius: 4px; overflow-wrap: anywhere; }
+mark { border-radius: 3px; padding: 0 2px; }
+mark.po_id { background: var(--f-po); color: var(--f-po-ink); }
+mark.sku { background: var(--f-sku); color: var(--f-sku-ink); }
+mark.qty { background: var(--f-qty); color: var(--f-qty-ink); }
+.fields { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 12px/1 var(--mono); padding: 6px 8px; border-radius: 4px; }
+.chip.po_id { background: var(--f-po); color: var(--f-po-ink); }
+.chip.sku { background: var(--f-sku); color: var(--f-sku-ink); }
+.chip.qty { background: var(--f-qty); color: var(--f-qty-ink); }
+.result { border-radius: 4px; padding: 10px 12px; display: grid; gap: 6px; font-size: 14px; }
+.result.pass { background: var(--ok-soft); }
+.result.fail { background: var(--bad-soft); }
+.result.stop { background: var(--dup-soft); }
+.result .rt { font: 600 12px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.result.pass .rt { color: var(--ok); } .result.fail .rt { color: var(--bad); } .result.stop .rt { color: var(--dup); }
+.checks { display: grid; gap: 4px; font: 13px/1.45 var(--mono); }
+.checks div { display: flex; gap: 8px; }
+.checks .ok { color: var(--ok); } .checks .no { color: var(--bad); }
+.nav { display: flex; gap: 8px; }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 4px; padding: 7px 12px; font-size: 13px; font-weight: 500; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.outcome-pill { font: 600 11.5px/1 var(--mono); padding: 5px 8px; border-radius: 3px; letter-spacing: 0.03em; white-space: nowrap; }
+.code-tabs { display: flex; gap: 4px; }
+.code-tabs button { border: 0; background: transparent; padding: 4px 8px; border-radius: 3px; font: 500 12px/1 var(--mono); color: var(--muted); }
+.code-tabs button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+pre.code { margin: 0; padding: 12px 14px; background: var(--code-bg); font: 12.5px/1.55 var(--mono); overflow-x: auto; tab-size: 4; border-radius: 0 0 6px 6px; }
+pre.code.spec { border-radius: 0; border-bottom: 1px solid var(--line); }
+.tk-kw { color: var(--tok-kw); } .tk-str { color: var(--tok-str); } .tk-com { color: var(--tok-com); font-style: italic; } .tk-num { color: var(--tok-num); } .tk-key { color: var(--tok-key); }
+.code-label { display: flex; justify-content: space-between; gap: 8px; padding: 8px 14px; font: 500 11.5px/1 var(--mono); color: var(--muted); border-bottom: 1px solid var(--line); background: var(--surface); }
+.code-label b { color: var(--ink); font-weight: 600; }
+.code-label .ai { color: var(--accent); } .code-label .gen { color: var(--ok); }
+
+/* ---------- run grid ---------- */
+.runbar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: space-between; }
+.counters { display: flex; flex-wrap: wrap; gap: 8px; }
+.ctr { display: grid; gap: 2px; padding: 8px 12px; border-radius: 4px; background: var(--surface); border: 1px solid var(--line); min-width: 92px; }
+.ctr b { font: 700 22px/1 var(--display); font-stretch: 115%; font-variant-numeric: tabular-nums; }
+.ctr small { font: 500 11px/1.2 var(--mono); color: var(--muted); }
+.ctr.llm { border-color: var(--ok); }
+.ctr.llm b { color: var(--ok); }
+.grid150 { display: grid; grid-template-columns: repeat(25, minmax(0, 1fr)); gap: 4px; }
+@media (max-width: 640px) { .grid150 { grid-template-columns: repeat(15, minmax(0, 1fr)); } }
+.cell { aspect-ratio: 1; max-width: 100%; border-radius: 3px; border: 0; padding: 0; background: var(--sunken); transition: transform .12s ease, background-color .12s ease; }
+.cell:hover { transform: scale(1.18); }
+.cell.empty { background: var(--sunken) !important; }
+.cell.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+.run-divider { grid-column: 1 / -1; }
+.runs-note { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 12.5px/1.4 var(--mono); color: var(--muted); }
+
+/* ---------- break ---------- */
+.schemas { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 760px) { .schemas { grid-template-columns: minmax(0, 1fr); } }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+th { font: 600 11px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+td.f { font-family: var(--mono); }
+tr.gone td.f { text-decoration: line-through; color: var(--bad); }
+tr.new td.f { color: var(--ok); font-weight: 600; }
+.flag { font: 600 10.5px/1 var(--mono); padding: 3px 5px; border-radius: 3px; margin-left: 6px; }
+.flag.gone { background: var(--bad-soft); color: var(--bad); }
+.flag.new { background: var(--ok-soft); color: var(--ok); }
+.preflight { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 760px) { .preflight { grid-template-columns: minmax(0, 1fr); } }
+.pf { border-left: 3px solid var(--line); padding: 4px 0 4px 12px; display: grid; gap: 4px; }
+.pf .eyebrow { font-size: 11px; }
+.pf.stopper { border-color: var(--bad); }
+.pf.stopper b { color: var(--bad); }
+.errors { display: grid; gap: 4px; font: 12.5px/1.45 var(--mono); }
+.errors div { padding: 6px 10px; background: var(--bad-soft); border-radius: 3px; overflow-wrap: anywhere; }
+.next-box { border: 1px dashed var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 10px; }
+.next-box ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 72ch; }
+.next-box .ask { display: inline-block; background: var(--gate); color: var(--gate-ink); padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+
+/* ---------- package ---------- */
+.pkg { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .pkg { grid-template-columns: minmax(0, 1fr); } }
+pre.code.tall { max-height: 460px; overflow: auto; border-radius: 0 0 6px 6px; }
+.tests { display: grid; gap: 10px; }
+.tgroup h3 { font: 600 12.5px/1.3 var(--mono); font-stretch: 100%; }
+.tgroup p { font-size: 12.5px; color: var(--muted); }
+.tlist { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.tlist span { font: 500 11px/1 var(--mono); padding: 4px 6px; border-radius: 3px; background: var(--ok-soft); color: var(--ok); overflow-wrap: anywhere; }
+.run-local { display: grid; gap: 10px; }
+.run-local pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; font: 13px/1.6 var(--mono); overflow-x: auto; }
+@media (prefers-reduced-motion: reduce) { .cell { transition: none; } }
+</style>
+</head>
+<body class="auto">
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Patchwork-plus · MVP walkthrough · AI off</div>
+  <h1>One spec in, 150 purchase orders out, zero LLM calls</h1>
+  <p class="lede">This page replays a real run of the MVP. A hand-written integration spec is compiled into Python with its own tests, a human approves it, and the runner moves every supplier email into Stockroom with no model in the loop. Then Stockroom changes its API, and the runner stops before writing anything wrong.</p>
+  <div class="storyline" aria-label="Demo storyline">
+    <span>compile spec → v1</span><i>→</i><span id="sl-tests">tests pass</span><i>→</i><span class="gate">human approves</span><i>→</i><span>run 150 POs</span><i>→</i><span>Break 1: blocked</span>
+  </div>
+  <div class="readouts">
+    <div class="readout"><b id="ro-acc">–</b><small>records match ground truth</small></div>
+    <div class="readout"><b class="zero">0</b><small>LLM calls while running</small></div>
+    <div class="readout"><b id="ro-tests">–</b><small>generated tests passed</small></div>
+    <div class="readout"><b id="ro-writes">–</b><small>bad writes after Break 1</small></div>
+  </div>
+</header>
+
+<section aria-labelledby="h-arch">
+  <div class="section-head">
+    <div class="eyebrow">The path</div>
+    <h2 id="h-arch">Where each piece sits</h2>
+    <p class="muted">AI only ever writes the spec (and small transforms). Everything to the right of the spec is ordinary, deterministic code. Today's MVP covers the solid boxes; the dashed ones are Phase 2.</p>
+  </div>
+  <div class="arch">
+    <div class="node next"><span class="tag">Phase 2</span><h3>Record once</h3><p>Playwright captures clicks, inputs and network calls, plus your one-line intent.</p></div>
+    <div class="node next"><span class="tag">Phase 2</span><h3>Agents</h3><p>Interpreter, builder and tester draft the spec and ask questions.</p></div>
+    <div class="node built"><span class="tag">Built · fixture</span><h3>spec.yaml</h3><p>Closed vocabulary: parsers, rules, dedupe key, sink body.</p></div>
+    <div class="node built"><span class="tag">Built</span><h3>Compiler</h3><p>Jinja → integration.py, parsers.py, adapters.py and 24 tests.</p></div>
+    <div class="node gate"><span class="tag">Human gate</span><h3>Approve v1</h3><p>Deploy refuses unless every test passed on that exact version.</p></div>
+    <div class="node built"><span class="tag">Built · no LLM</span><h3>Runner</h3><p>Preflight, then route → extract → validate → dedupe → send → verify.</p></div>
+    <div class="node built"><span class="tag">Built · demo app</span><h3>Stockroom</h3><p>POST /api/incoming. Staging copy for dry runs.</p></div>
+  </div>
+  <div class="legend"><span><i class="sw"></i>built in the MVP</span><span><i class="sw dash"></i>next phase</span><span><i class="sw gate"></i>a person decides</span></div>
+</section>
+
+<section aria-labelledby="h-trace">
+  <div class="section-head">
+    <div class="eyebrow">How the code works</div>
+    <h2 id="h-trace">Follow one message through the runner</h2>
+    <p class="muted">Pick a message, then step through the pipeline. Each step shows the spec lines that describe it and the generated code that executes it. Every message ends as <b>success</b>, <b>duplicate</b> or <b>quarantined</b> with a reason code. You can also click any square in the run grid below.</p>
+  </div>
+  <div class="picker" id="picker" role="group" aria-label="Sample messages"></div>
+  <div class="rail" id="rail" role="list"></div>
+  <div class="bench">
+    <div class="card">
+      <div class="card-h"><h3 id="msg-title">Message</h3><span id="msg-pill"></span></div>
+      <div class="card-b">
+        <div>
+          <div class="msg-meta" id="msg-meta"></div>
+          <div class="msg-subj" id="msg-subj"></div>
+        </div>
+        <div class="msg-body" id="msg-body"></div>
+        <div class="fields" id="msg-fields"></div>
+        <div class="result" id="stage-result"></div>
+        <div class="nav"><button class="btn" id="prev">← Previous step</button><button class="btn primary" id="next">Next step →</button></div>
+      </div>
+    </div>
+    <div class="card" id="code-card">
+      <div class="code-label"><span><span class="ai">written by AI (Phase 2)</span> · <b>spec.yaml</b></span></div>
+      <pre class="code spec" id="spec-snippet"></pre>
+      <div class="code-label"><span><span class="gen">generated, never hand-edited</span> · <b id="code-file"></b></span></div>
+      <pre class="code" id="code-snippet"></pre>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="h-run">
+  <div class="section-head">
+    <div class="eyebrow">AI off</div>
+    <h2 id="h-run">The whole inbox: 150 messages, two runs</h2>
+    <p class="muted">Each square is one Inbox message in arrival order. Run 1 takes the first 100 (<code>--limit 100</code>); run 2 resumes from the saved cursor. A third run found nothing new. The seed script knows the right answer for every message, so accuracy is exact rather than estimated.</p>
+  </div>
+  <div class="runbar">
+    <div class="counters" id="counters"></div>
+    <div class="nav"><button class="btn primary" id="play">Replay the runs</button></div>
+  </div>
+  <div class="grid150" id="grid" aria-label="150 messages coloured by outcome"></div>
+  <div class="legend" id="grid-legend"></div>
+  <div class="runs-note" id="runs-note"></div>
+</section>
+
+<section aria-labelledby="h-break">
+  <div class="section-head">
+    <div class="eyebrow">Break 1 · fails safely</div>
+    <h2 id="h-break">Stockroom ships contract v2</h2>
+    <p class="muted"><code>POST /admin/schema {"version": 2}</code> renames two fields and adds a required <code>warehouse_id</code>. Before touching a single record, the runner fetches Stockroom's live <code>/openapi.json</code>, sees the hash changed, and re-checks every golden body against the new contract.</p>
+  </div>
+  <div class="schemas">
+    <div class="card"><div class="card-h"><h3>v1 request body</h3><span class="muted mono">what v1 was compiled against</span></div><div style="overflow-x:auto"><table id="schema-v1"></table></div></div>
+    <div class="card"><div class="card-h"><h3>v2 request body</h3><span class="muted mono">live after the switch</span></div><div style="overflow-x:auto"><table id="schema-v2"></table></div></div>
+  </div>
+  <div class="preflight">
+    <div class="pf"><span class="eyebrow">1 · fetch</span><b>GET /openapi.json</b><span class="muted">from the live sink</span></div>
+    <div class="pf"><span class="eyebrow">2 · compare</span><b>hash changed</b><span class="muted">vs the snapshot stored with v1</span></div>
+    <div class="pf"><span class="eyebrow">3 · contract test</span><b id="pf-errors">–</b><span class="muted">across 6 golden bodies</span></div>
+    <div class="pf stopper"><span class="eyebrow">4 · result</span><b id="pf-result">–</b><span class="muted" id="pf-writes"></span></div>
+  </div>
+  <div class="card"><div class="card-h"><h3>What the incident records (one golden body)</h3><span class="muted mono" id="incident-id"></span></div><div class="card-b"><div class="errors" id="errors"></div></div></div>
+  <div class="next-box">
+    <span class="eyebrow">Phase 3 · not built yet</span>
+    <h3>What the repair agent will do with this incident</h3>
+    <ol>
+      <li>Diff the two OpenAPI docs and classify: <code>product_id → sku</code> and <code>quantity → quantity_delta</code> are renames, so it patches them itself.</li>
+      <li><code>warehouse_id</code> can't be inferred, so it asks: <span class="ask">“Always BOS, or by supplier?”</span></li>
+      <li>On “by supplier”, it writes a JSON Patch adding <code>{transform: lookup, from: record.sender_domain}</code>. That syntax already compiles and is tested in the MVP.</li>
+      <li>The compiler builds v2, the tests run, a person approves the diff, and the quarantined records are replayed.</li>
+    </ol>
+  </div>
+</section>
+
+<section aria-labelledby="h-pkg">
+  <div class="section-head">
+    <div class="eyebrow">The artifact</div>
+    <h2 id="h-pkg">What the compiler wrote for v1</h2>
+    <p class="muted">Byte-identical every time you compile the same spec. Versions are immutable; deploy and rollback only move a pointer in SQLite.</p>
+  </div>
+  <div class="pkg">
+    <div class="card">
+      <div class="card-h"><div class="code-tabs" id="file-tabs" role="group" aria-label="Generated files"></div><span class="muted mono">workspace/integrations/po_to_stockroom/v1/</span></div>
+      <pre class="code tall" id="file-view"></pre>
+    </div>
+    <div class="card"><div class="card-h"><h3 id="tests-title">Generated tests</h3></div><div class="card-b tests" id="tests"></div></div>
+  </div>
+</section>
+
+<section aria-labelledby="h-local" class="run-local">
+  <div class="section-head">
+    <div class="eyebrow">Try it</div>
+    <h2 id="h-local">Run the same demo locally</h2>
+  </div>
+<pre>make setup
+make apps    # terminal 1 · Inbox :8001, Stockroom :8002, staging :8003
+make demo    # terminal 2 · compile → approve → run → Break 1
+make test    # 29 tests, including this whole flow against real servers</pre>
+</section>
+
+</div>
+
+<script type="application/json" id="data">__DATA__</script>
+<script>
+(() => {
+const D = JSON.parse(document.getElementById('data').textContent);
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const OUT = {
+  success: { label: 'success', c: '--ok', s: '--ok-soft' },
+  duplicate: { label: 'duplicate', c: '--dup', s: '--dup-soft' },
+  VALIDATION_FAILED: { label: 'VALIDATION_FAILED', c: '--val', s: '--val-soft' },
+  NOT_FOUND: { label: 'NOT_FOUND', c: '--nf', s: '--nf-soft' },
+  PARSE_NO_MATCH: { label: 'PARSE_NO_MATCH', c: '--pnm', s: '--pnm-soft' },
+};
+const kindOf = r => r.status === 'quarantined' ? r.reason : r.status;
+const pill = r => { const o = OUT[kindOf(r)] || OUT.PARSE_NO_MATCH; return `<span class="outcome-pill" style="background:var(${o.s});color:var(${o.c})">${r.status === 'quarantined' ? 'quarantined · ' : ''}${esc(o.label)}</span>`; };
+
+/* ---------- tiny highlighter (python + yaml) ---------- */
+function hl(src, lang) {
+  const KW = /\b(def|return|if|else|elif|for|in|not|and|or|raise|import|from|try|except|as|None|True|False|class|with|is)\b/;
+  const re = lang === 'yaml'
+    ? /(#[^\n]*)|('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")|(^\s*-?\s*[A-Za-z_][\w]*(?=:))|(\b\d+\b)/gm
+    : /(#[^\n]*)|('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|f"(?:[^"\\\n]|\\.)*")|\b(def|return|if|else|elif|for|in|not|and|or|raise|import|from|try|except|as|None|True|False|class|with|is)\b|(\b\d+\b)/gm;
+  let out = '', last = 0, m;
+  while ((m = re.exec(src))) {
+    out += esc(src.slice(last, m.index));
+    const [t] = m;
+    if (m[1]) out += `<span class="tk-com">${esc(t)}</span>`;
+    else if (m[2]) out += `<span class="tk-str">${esc(t)}</span>`;
+    else if (m[3]) out += lang === 'yaml' ? `<span class="tk-key">${esc(t)}</span>` : `<span class="tk-kw">${esc(t)}</span>`;
+    else out += `<span class="tk-num">${esc(t)}</span>`;
+    last = m.index + t.length;
+  }
+  return out + esc(src.slice(last));
+}
+
+/* ---------- hero numbers ---------- */
+const passed = D.tests.filter(t => t.status === 'PASSED').length;
+$('ro-acc').textContent = `${D.accuracy.correct}/${D.accuracy.records}`;
+$('ro-tests').textContent = `${passed}/${D.tests.length}`;
+$('ro-writes').textContent = String(D.break1.writes_after - D.break1.writes_before);
+$('sl-tests').textContent = `${passed} tests pass`;
+
+/* ---------- tracer ---------- */
+const byId = Object.fromEntries(D.records.map(r => [r.id, r]));
+const SAMPLES = [
+  ['msg-0007', 'Acme · label style'], ['msg-0001', 'Globex · prose'], ['msg-0002', 'Initech · ERP line'],
+  ['msg-0050', 'Resent PO'], ['msg-0024', 'Quantity 0'], ['msg-0008', 'Unknown SKU'], ['msg-0063', 'Holiday notice'],
+];
+const STAGES = [
+  ['route', 'Route'], ['extract', 'Extract'], ['validate', 'Validate'], ['dedupe', 'Dedupe'],
+  ['map', 'Map'], ['send', 'Send'], ['verify', 'Verify'],
+];
+let cur = 'msg-0007', step = 1;
+
+function field(r, name) { const s = r.spans.find(x => x.field === name); return s ? s.value : null; }
+
+function stageStates(r) {
+  const st = {}; let dead = false;
+  const set = (k, s, short) => { st[k] = dead ? { s: 'skip', short: 'skipped' } : { s, short }; if (s === 'fail' || s === 'stop') dead = true; };
+  set('route', r.parser ? 'pass' : 'fail', r.parser || 'no parser');
+  const pnm = r.reason === 'PARSE_NO_MATCH';
+  set('extract', pnm ? 'fail' : 'pass', pnm ? 'PARSE_NO_MATCH' : `${r.spans.length} fields`);
+  const vf = r.reason === 'VALIDATION_FAILED' || r.reason === 'NOT_FOUND';
+  set('validate', vf ? 'fail' : 'pass', vf ? r.reason : 'qty, sku ok');
+  set('dedupe', r.status === 'duplicate' ? 'stop' : 'pass', r.status === 'duplicate' ? 'duplicate' : 'new key');
+  set('map', 'pass', 'body built');
+  set('send', 'pass', '201 Created');
+  set('verify', 'pass', '1 row');
+  return st;
+}
+
+function renderPicker() {
+  $('picker').innerHTML = SAMPLES.map(([id, label]) => {
+    const r = byId[id]; const o = OUT[kindOf(r)];
+    return `<button class="pick" aria-pressed="${id === cur}" data-id="${id}"><i class="dot" style="background:var(${o.c})"></i>${esc(label)}</button>`;
+  }).join('') + (SAMPLES.some(s => s[0] === cur) ? '' : `<button class="pick" aria-pressed="true" data-id="${cur}"><i class="dot" style="background:var(${OUT[kindOf(byId[cur])].c})"></i>${esc(cur)} (from grid)</button>`);
+  $('picker').querySelectorAll('.pick').forEach(b => b.onclick = () => select(b.dataset.id, 1));
+}
+
+function bodyHtml(r, upto) {
+  const spans = (upto >= 1 ? r.spans : []).slice().sort((a, b) => a.start - b.start);
+  let out = '', i = 0;
+  for (const s of spans) { out += esc(r.body.slice(i, s.start)) + `<mark class="${s.field}" title="${s.field}">${esc(r.body.slice(s.start, s.end))}</mark>`; i = s.end; }
+  return out + esc(r.body.slice(i));
+}
+
+function resultHtml(r, k, state) {
+  const rt = { pass: 'passed', fail: 'quarantined', stop: 'stopped · no write', skip: 'not reached' }[state.s];
+  const cls = state.s === 'skip' ? 'stop' : state.s;
+  let body = '';
+  const po = field(r, 'po_id'), sku = field(r, 'sku'), qty = field(r, 'qty');
+  if (k === 'route') {
+    body = r.parser ? `<div>sender_domain <code>${esc(r.domain)}</code> matches parser <code>${esc(r.parser)}</code>.</div>` : `<div>No parser matches <code>${esc(r.domain)}</code>.</div>`;
+  } else if (k === 'extract') {
+    const names = ['po_id', 'sku', 'qty'];
+    body = `<div class="checks">${names.map(n => { const v = field(r, n); return `<div><span class="${v !== null ? 'ok' : 'no'}">${v !== null ? '✓' : '✗'}</span><span>${n} = ${v !== null ? esc(v) : 'no match'}</span></div>`; }).join('')}</div>`;
+    if (state.s === 'fail') body += `<div class="mono" style="font-size:12.5px">${esc(r.detail)}</div>`;
+  } else if (k === 'validate') {
+    if (state.s === 'skip') body = '<div>Extraction failed first.</div>';
+    else {
+      const qok = r.reason !== 'VALIDATION_FAILED', sok = r.reason !== 'NOT_FOUND';
+      body = `<div class="checks"><div><span class="${qok ? 'ok' : 'no'}">${qok ? '✓' : '✗'}</span><span>positive_int(qty = ${esc(qty)})</span></div>` +
+        (qok ? `<div><span class="${sok ? 'ok' : 'no'}">${sok ? '✓' : '✗'}</span><span>GET /api/products/${esc(sku)} → ${sok ? '200' : '404'}</span></div>` : `<div><span class="muted">·</span><span class="muted">sku check not reached</span></div>`) + '</div>';
+    }
+  } else if (k === 'dedupe') {
+    if (state.s === 'skip') body = '<div>Not reached.</div>';
+    else if (state.s === 'stop') body = `<div>Key <code>${esc(r.key)}</code> was already processed by <code>${esc(r.dup_of || 'an earlier message')}</code>. Nothing is sent.</div>`;
+    else body = `<div>Key <code>${esc(r.key)}</code> has not been seen. It is marked processed only after the write is verified.</div>`;
+  } else if (k === 'map') {
+    body = state.s === 'skip' ? '<div>Not reached.</div>' : `<pre class="code" style="border-radius:4px">${hl(JSON.stringify(r.sink_body, null, 2), 'yaml')}</pre>`;
+  } else if (k === 'send') {
+    body = state.s === 'skip' ? '<div>Not reached.</div>' : `<div><code>POST /api/incoming</code> → <b>201 Created</b>. A 400/422 here would quarantine as <code>SINK_CONTRACT</code>; three in a row trip the circuit breaker.</div>`;
+  } else if (k === 'verify') {
+    body = state.s === 'skip' ? '<div>Not reached.</div>' : `<div><code>GET /api/incoming?reference=${esc(po)}</code> → exactly 1 row. Then the key is marked processed. Outcome: ${pill(r)}</div>`;
+  }
+  return `<span class="rt">${esc(STAGES.find(s => s[0] === k)[1])} · ${rt}</span>${body}`;
+}
+
+function renderTrace() {
+  const r = byId[cur]; const states = stageStates(r);
+  const [k] = STAGES[step - 1];
+  $('rail').innerHTML = STAGES.map(([key, label], i) => {
+    const s = states[key];
+    return `<button class="stage ${s.s}" role="listitem" data-i="${i + 1}" ${i + 1 === step ? 'aria-current="step"' : ''}><span class="n">${i + 1}</span><span class="t">${label}</span><span class="s">${esc(s.short)}</span></button>`;
+  }).join('');
+  $('rail').querySelectorAll('.stage').forEach(b => b.onclick = () => { step = +b.dataset.i; renderTrace(); });
+  $('msg-title').textContent = r.id;
+  $('msg-pill').innerHTML = pill(r);
+  $('msg-meta').textContent = `${r.sender} · ${r.received_at}`;
+  $('msg-subj').textContent = r.subject;
+  $('msg-body').innerHTML = bodyHtml(r, step >= 2 ? 1 : 0);
+  $('msg-fields').innerHTML = step >= 2 ? r.spans.map(s => `<span class="chip ${s.field}">${s.field} = ${esc(s.value)}</span>`).join('') : '';
+  const state = states[k];
+  const res = $('stage-result'); res.className = 'result ' + (state.s === 'skip' ? 'stop' : state.s); res.innerHTML = resultHtml(r, k, state);
+  const snip = D.snippets[k];
+  const pid = r.parser || 'acme_v1';
+  $('spec-snippet').innerHTML = hl(typeof snip.spec === 'string' ? snip.spec : snip.spec[pid], 'yaml');
+  $('code-snippet').innerHTML = hl(typeof snip.code === 'string' ? snip.code : snip.code[pid], 'py');
+  $('code-file').textContent = snip.file;
+  $('prev').disabled = step === 1; $('next').disabled = step === STAGES.length;
+  document.querySelectorAll('.cell').forEach(c => c.classList.toggle('sel', c.dataset.id === cur));
+}
+
+function select(id, s) { cur = id; step = s; renderPicker(); renderTrace(); }
+$('prev').onclick = () => { if (step > 1) { step--; renderTrace(); } };
+$('next').onclick = () => { if (step < STAGES.length) { step++; renderTrace(); } };
+
+/* ---------- run grid ---------- */
+const ORDERED = D.records;
+const grid = $('grid');
+grid.innerHTML = ORDERED.map((r, i) => {
+  const o = OUT[kindOf(r)];
+  return `<button class="cell" data-id="${r.id}" data-i="${i}" style="background:var(${o.c})" aria-label="${r.id}: ${esc(kindOf(r))}" title="${r.id} · ${esc(r.subject)} · ${esc(kindOf(r))}"></button>`;
+}).join('');
+grid.querySelectorAll('.cell').forEach(c => c.onclick = () => { select(c.dataset.id, 1); document.getElementById('h-trace').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' }); });
+$('grid-legend').innerHTML = Object.entries(OUT).map(([k, o]) => `<span><i class="sw" style="background:var(${o.c});border-color:var(${o.c})"></i>${k === 'success' || k === 'duplicate' ? k : 'quarantined · ' + k}</span>`).join('');
+
+const R = D.runs;
+$('runs-note').innerHTML = [
+  `dry run · staging · 10 records · ${R.dry.duration_s}s`,
+  `run ${R.first.run_id} · 100 records · ${R.first.duration_s}s · llm_calls ${R.first.llm_calls}`,
+  `run ${R.rest.run_id} · 50 records · ${R.rest.duration_s}s · llm_calls ${R.rest.llm_calls}`,
+  `compile + 24 tests · ${D.build.compile_s}s`,
+].map(s => `<span>${esc(s)}</span>`).join('');
+
+function counts(n) {
+  const c = { success: 0, duplicate: 0, quarantined: 0 };
+  ORDERED.slice(0, n).forEach(r => c[r.status]++);
+  return c;
+}
+function renderCounters(n) {
+  const c = counts(n);
+  $('counters').innerHTML =
+    `<div class="ctr"><b>${n}</b><small>processed</small></div>` +
+    `<div class="ctr"><b style="color:var(--ok)">${c.success}</b><small>written</small></div>` +
+    `<div class="ctr"><b style="color:var(--dup)">${c.duplicate}</b><small>duplicates skipped</small></div>` +
+    `<div class="ctr"><b style="color:var(--val)">${c.quarantined}</b><small>quarantined</small></div>` +
+    `<div class="ctr llm"><b>0</b><small>LLM calls</small></div>`;
+}
+renderCounters(ORDERED.length);
+
+let timer = null;
+$('play').onclick = () => {
+  clearTimeout(timer);
+  const cells = [...grid.querySelectorAll('.cell')];
+  if (reduce) { cells.forEach(c => c.classList.remove('empty')); renderCounters(cells.length); return; }
+  cells.forEach(c => c.classList.add('empty'));
+  let i = 0; renderCounters(0); $('play').disabled = true;
+  const tick = () => {
+    cells[i].classList.remove('empty'); i++; renderCounters(i);
+    if (i >= cells.length) { $('play').disabled = false; return; }
+    timer = setTimeout(tick, i === 100 ? 700 : 18);
+  };
+  tick();
+};
+
+/* ---------- break 1 ---------- */
+function schemaRows(schema, other, enumVals) {
+  const req = new Set(schema.required || []);
+  const otherProps = new Set(Object.keys(other.properties || {}));
+  return `<tr><th>field</th><th>type</th><th>required</th></tr>` + Object.entries(schema.properties).map(([k, v]) => {
+    const t = v.$ref ? `enum ${enumVals.join(' | ')}` : v.type + (v.exclusiveMinimum !== undefined ? ` > ${v.exclusiveMinimum}` : '');
+    return { k, t, r: req.has(k) };
+  }).map(({ k, t, r }) => `<tr class="${otherProps.has(k) ? '' : 'X'}"><td class="f">${esc(k)}</td><td class="mono">${esc(t)}</td><td>${r ? 'yes' : 'no'}</td></tr>`).join('');
+}
+const v1 = D.break1.v1_schema, v2 = D.break1.v2_schema;
+$('schema-v1').innerHTML = schemaRows(v1, v2, D.break1.warehouse_enum).replaceAll('class="X"', 'class="gone"').replace(/<td class="f">(product_id|quantity)<\/td>/g, '<td class="f">$1<span class="flag gone">removed</span></td>');
+$('schema-v2').innerHTML = schemaRows(v2, v1, D.break1.warehouse_enum).replaceAll('class="X"', 'class="new"').replace(/<td class="f">(sku|quantity_delta|warehouse_id)<\/td>/g, '<td class="f">$1<span class="flag new">new</span></td>');
+$('pf-errors').textContent = `${D.break1.contract_errors.length} contract errors`;
+$('pf-result').textContent = `blocked · incident #${D.break1.incident.id}`;
+$('pf-writes').textContent = `Stockroom rows: ${D.break1.writes_before} before, ${D.break1.writes_after} after`;
+$('incident-id').textContent = `${D.break1.incident.type} · ${D.break1.incident.reason_codes.join(', ')} · ${D.break1.incident.status}`;
+const firstBody = D.break1.contract_errors[0].match(/^\[(\w+)\]/)[1];
+$('errors').innerHTML = D.break1.contract_errors.filter(e => e.startsWith(`[${firstBody}]`)).map(e => `<div>${esc(e)}</div>`).join('');
+
+/* ---------- package ---------- */
+const FILES = { 'integration.py': ['py', D.code['integration.py']], 'parsers.py': ['py', D.code['parsers.py']], 'adapters.py': ['py', D.code['adapters.py']], 'spec.yaml (input)': ['yaml', D.spec_yaml] };
+let curFile = 'integration.py';
+function renderFiles() {
+  $('file-tabs').innerHTML = Object.keys(FILES).map(f => `<button aria-pressed="${f === curFile}" data-f="${f}">${esc(f)}</button>`).join('');
+  $('file-tabs').querySelectorAll('button').forEach(b => b.onclick = () => { curFile = b.dataset.f; renderFiles(); });
+  const [lang, src] = FILES[curFile];
+  $('file-view').innerHTML = hl(src, lang);
+}
+renderFiles();
+
+const TEST_DOC = {
+  test_golden: 'Each confirmed example goes in; the exact expected sink body (or quarantine code) must come out.',
+  test_negative: 'One mutation per validation rule, plus empty text, an unknown sender and a sink rejection. Each must quarantine with the right code and never write.',
+  test_dedupe: 'The same PO processed twice produces exactly one sink call.',
+  test_contract: 'Every golden body must satisfy the destination’s request schema. Preflight reruns this against the live schema.',
+  test_no_ai: 'Imports the integration and the runner in a fresh process and fails if any LLM SDK is loaded.',
+};
+const groups = {};
+D.tests.forEach(t => (groups[t.file] = groups[t.file] || []).push(t));
+$('tests-title').textContent = `Generated tests · ${passed}/${D.tests.length} passed`;
+$('tests').innerHTML = ['test_golden', 'test_negative', 'test_dedupe', 'test_contract', 'test_no_ai'].filter(g => groups[g]).map(g =>
+  `<div class="tgroup"><h3>${g}.py · ${groups[g].length}</h3><p>${TEST_DOC[g]}</p><div class="tlist">${groups[g].map(t => `<span>${esc(t.name.replace(/^test_/, ''))}</span>`).join('')}</div></div>`).join('');
+
+select(cur, 2);
+})();
+</script>
+</body>
+</html>
