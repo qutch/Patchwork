@@ -111,7 +111,6 @@ def test_manual_run_in_progress_is_followed_up(v2api):
     assert records_by_page()["pg-000001"][0]["status"] == "success"
 
 
-@pytest.mark.xfail(strict=False, reason="needs W1")
 def test_same_posting_twice_is_duplicate(workspace, monkeypatch):
     """End to end with W1's engine: fixtures/jobs compiled against the fixture tracker form, the real
     runner, the same posting sent twice with a different query string and #fragment → one row."""

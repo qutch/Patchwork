@@ -63,3 +63,12 @@ def apps(workspace, monkeypatch):
         monkeypatch.setenv("PATCHWORK_SINK_BASE_URL", live.url)
         monkeypatch.setenv("PATCHWORK_STAGING_BASE_URL", staging.url)
         yield {"inbox": inbox.url, "live": live.url, "staging": staging.url}
+
+
+@pytest.fixture(autouse=True)
+def _no_stale_control_url(monkeypatch):
+    """control.ops.CONTROL_URL is set by whichever control-plane server started last in this process.
+    Reset it per test so one test's server address never leaks into another test's runner env."""
+    import control.ops
+
+    monkeypatch.setattr(control.ops, "CONTROL_URL", None)
