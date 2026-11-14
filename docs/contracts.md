@@ -982,3 +982,52 @@ dedupe: {key: [ref, record.row_no]}
           email:   {column: Email, clean: lower}
           session: {column: Session}
 ```
+
+### Rows engine and cleaners (`runner/rows.py`, `runner/clean.py`)
+
+One implementation, imported by compiled parsers and by the agents' checks. Both take plain dicts (the spec's
+`rows` block, `model_dump(exclude_none=True)` or hand-written), so a candidate can be tested without a model. Pure:
+stdlib and `runner/` only, no network, no AI, no subject words.
+
+- **`runner.clean.clean_value(value, spec, where) -> Any`** raises `Quarantine("VALIDATION_FAILED", "<where>: ...")`:
+  - `money` → float. Strips currency symbols (Unicode `Sc`) and a leading or trailing 3-letter ISO code. `(x)`, a
+    leading `-` or a trailing `-` make it negative (two signs are refused). With `decimal: "."` (default) `,` groups
+    thousands in groups of 3 only; with `decimal: ","` the marks swap. Anything else is refused, and the detail
+    names the other reading: `'1.299,00' is not a money amount with decimal '.'; with decimal ',' it would read
+    1,299.00`.
+  - `number` → int when written without a fraction, else float; the same grouping rules, no currency, no `(x)`.
+  - `{date: [formats]}` → `YYYY-MM-DD`. Every format is tried: none fits → `does not match any of the date formats`;
+    two that read differently → `'03/04/2026' is ambiguous: 2026-03-04 or 2026-04-03` (never a guess).
+  - `{split: {sep, part}}` → the stripped part (`part` from 0; a missing part is refused). `strip`, `upper`, `lower`.
+- **`runner.clean.clean_cast(value, spec, to, where)`**: `clean` then `cast`. With a cleaner, `cast: str` (the
+  default) keeps what the cleaner returned (a money value stays a float); `cast: int` needs a whole number.
+- **`runner.clean.parse_amount(value) -> Decimal | None`**: a lenient, never-raising read of a numeric cell (used to
+  recognise aggregate rows).
+- **`runner.rows.Row`**: `no` (from 1, over the kept rows), `text`, `cells: {header or group name: text}`, `fields`.
+- **`runner.rows.select_rows(record, select, html_field="html", text_field="text", where="rows")`** → `[(text,
+  cells)]` for a table (cells by header), `[(text, element outer HTML)]` for css, `[(line, groups)]` for lines.
+- **`runner.rows.extract_rows(record, rows, where, html_field="html", text_field="text", skipped=None) -> [Row]`**:
+  - Tables come from `record["tables"]` (V17 `{header, rows, where}` dicts) when the key is present, else from the
+    teammate's `runner.documents.read_html(record[html_field], record.get("url", "")).tables` (a page record).
+    Cells and headers are whitespace-normalised; short rows are padded with `""`.
+  - A row's text is its non-empty cells joined by one space (table), the element's text (css) or the stripped line.
+  - Row fields: `column` / `index` read a cell (a lines `column` reads a named group); `css` the first match inside
+    the row element; `regex` group 1 of the row's text (on a lines row, a regex-only field named like a group of
+    `match` reads that group). An empty or unmatched value is `None`. A refine that misses is `PARSE_NO_MATCH`; a
+    value `clean`/`cast` refuses is `VALIDATION_FAILED` / `PARSE_NO_MATCH` naming `<where>: row N <field>`.
+  - A table row equal to the header is skipped ("header"). A row whose `require` fields are empty is skipped. Every
+    skipped row must pass `explain_skip`, else `PARSE_NO_MATCH "<where>: row N skipped but not blank, a header or an
+    aggregate: '<text>'"` (N counts the selected rows from 1). Zero kept rows → `PARSE_NO_MATCH`.
+  - `lines`: `after` / `before` that match no line → `PARSE_NO_MATCH`. A line between them that `match` misses must
+    be blank, equal (normalised) to a line before the first row, or matched by `skip`; else `PARSE_NO_MATCH
+    "<where>: line '<text>' is not a row and not explained"`.
+  - With a `skipped` list, every skipped row (`{row, text, reason}`) and explained line (`{line, text, reason}`) is
+    appended, for the agents' "skipped and explained" report.
+  - A missing table → `no table has the columns [...]`; a `column` not in the chosen table's header → `PARSE_NO_MATCH`.
+- **`runner.rows.explain_skip(row_text, cells, header, kept) -> "blank" | "header" | "aggregate" | None`**: aggregate
+  = at least one numeric cell, and every numeric cell equals the sum of its column over the kept rows (each kept
+  cell numeric) within 0.01.
+- **`runner.rows.check_cross(rule, doc_fields, rows) -> str | None`** (`Decimal`; tolerance default 0.01): `None` when
+  the rule holds, else e.g. `sum_equals: the rows' amount add up to 3,205.00 but total is 3,215.00`,
+  `product_equals: row 2: qty × price = 3.75 but amount is 3.00`, `count_equals: 2 rows but n is 3`, or `... is not
+  a number: <value>`.
