@@ -19,11 +19,20 @@ from runner.lib import (  # noqa: F401
     lookup_ref,
     render,
 )
+{% if has_rows %}
+from runner.lib import Quarantine
+from runner.rows import check_cross
+{% endif %}
 
 from . import adapters, transforms  # noqa: F401
 from .parsers import route
 
 PIPELINE_API = 2  # route() returns (parser_id, parse_fn, routed_by); see runner/pipeline.py
+{% if has_rows %}
+EMITS = "rows"  # contracts V18: one record per row; the runner calls runner.pipeline.process_document
+HOLDS = {{ holds|py }}  # parser id -> hold: document | row
+CROSS_RULES = {{ cross_rules|py }}
+{% endif %}
 NAME = {{ spec.name|py }}
 VERSION = {{ version }}
 SPEC_HASH = {{ spec_hash|py }}
@@ -50,6 +59,17 @@ def validate(fields: dict, record: dict, http) -> None:
     {{ line }}
 {% endfor %}
     return None
+{% if has_rows %}
+
+
+def validate_document(fields: dict, rows: list) -> None:
+    """Cross-check rules over the document's rows (contracts V18), before any row is validated or written."""
+    for rule in CROSS_RULES:
+        problem = check_cross(rule, fields, rows)
+        if problem:
+            raise Quarantine("VALIDATION_FAILED", problem)
+    return None
+{% endif %}
 
 
 def dedupe_key(fields: dict, record: dict) -> str:

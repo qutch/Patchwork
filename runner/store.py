@@ -253,8 +253,24 @@ class Store:
         return rows
 
     def quarantined_raw(self, name: str) -> list[dict]:
-        """Raw source records whose latest live outcome is quarantined (the input of a replay)."""
-        return [r["raw"] for r in self.latest_outcomes(name) if r["status"] == "quarantined"]
+        """Raw source records whose latest live outcome is quarantined (the input of a replay).
+
+        contracts V18: a document gives one outcome per row (`<id>#<n>`) or one for the whole document (`<id>`),
+        all with the document as `raw`. They are grouped by the raw `id`, and the document is replayed once when
+        any outcome of its latest run is quarantined (so rows written later supersede an earlier hold)."""
+        groups: dict[str, list[dict]] = {}
+        for r in self.latest_outcomes(name):
+            raw_id = r["raw"].get("id") if isinstance(r["raw"], dict) else None
+            rid = str(r["record_id"])
+            of_doc = raw_id is not None and (rid == str(raw_id) or rid.startswith(f"{raw_id}#"))
+            groups.setdefault(str(raw_id) if of_doc else rid, []).append(r)
+        out = []
+        for rows in groups.values():
+            last = max(r["run_id"] for r in rows)
+            held = [r for r in rows if r["run_id"] == last and r["status"] == "quarantined"]
+            if held:
+                out.append(held[0]["raw"])
+        return out
 
     # -- idempotency & cursors ----------------------------------------------------------
     def is_processed(self, name: str, scope: str, key: str) -> bool:

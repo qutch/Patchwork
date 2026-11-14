@@ -274,8 +274,10 @@ def extract_rows(record: dict, rows: dict, where: str, html_field: str | None = 
     for raw in pending:
         reason = explain_skip(raw.text, raw.cells, header, kept_cells)
         if reason is None:
-            raise Quarantine("PARSE_NO_MATCH",
-                             f"{where}: row {raw.pos} skipped but not blank, a header or an aggregate: '{raw.text}'")
+            q = Quarantine("PARSE_NO_MATCH",
+                           f"{where}: row {raw.pos} skipped but not blank, a header or an aggregate: '{raw.text}'")
+            q.rows = kept  # type: ignore[attr-defined]  # the kept rows, so a cross-check can say what is wrong
+            raise q
         if skipped is not None:
             skipped.append({"row": raw.pos, "text": raw.text, "reason": reason})
     if not kept:

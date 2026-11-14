@@ -15,6 +15,12 @@ from runner.lib import (  # noqa: F401
     match_rank,
     refine_regex,
 )
+{% if uses_clean %}
+from runner.clean import clean_cast
+{% endif %}
+{% if has_rows %}
+from runner.rows import extract_rows
+{% endif %}
 {% if has_fingerprints %}
 from runner.html import fingerprint_present
 {% endif %}
@@ -32,6 +38,9 @@ ROUTE_BY = {{ spec.extract.route_by|py }}
 _{{ p.id|upper }}__{{ fname|upper }} = re.compile({{ f.regex|py }})
 {% endif %}
 {% endfor %}
+{% if p.rows %}
+ROWS_{{ p.id|upper }} = {{ rows_literals[p.id]|py }}
+{% endif %}
 
 
 def parse_{{ p.id }}(record: dict) -> dict:
@@ -49,19 +58,30 @@ def parse_{{ p.id }}(record: dict) -> dict:
     raw = extract_css(html, {{ f.css|py }}, {{ f.attr|py }}, {{ where|py }})
 {% elif f.jsonld is not none %}
     raw = extract_jsonld(html, {{ f.jsonld|py }}, {{ (f.jsonld_type or "JobPosting")|py }}, {{ where|py }})
+{% elif f.json_path is not none %}
+    raw = extract_json_path(record, {{ f.json_path|py }}, {{ where|py }})
 {% elif f.regex is not none %}
     raw = extract_regex(text, _{{ p.id|upper }}__{{ fname|upper }}, {{ where|py }})
-{% elif f.between is not none %}
-    raw = extract_between(text, {{ f.between[0]|py }}, {{ f.between[1]|py }}, {{ where|py }})
 {% else %}
-    raw = extract_json_path(record, {{ f.json_path|py }}, {{ where|py }})
+    raw = extract_between(text, {{ f.between[0]|py }}, {{ f.between[1]|py }}, {{ where|py }})
 {% endif %}
 {% if f.refine is not none %}
     raw = refine_regex(str(raw), _{{ p.id|upper }}__{{ fname|upper }}, {{ where|py }})
 {% endif %}
+{% if f.clean is not none %}
+    fields[{{ fname|py }}] = clean_cast(raw, {{ f.clean|py }}, {{ f.cast|py }}, {{ where|py }})
+{% else %}
     fields[{{ fname|py }}] = cast(raw, {{ f.cast|py }}, {{ where|py }})
 {% endif %}
+{% endif %}
 {% endfor %}
+{% if p.rows %}
+    try:
+        fields["__rows__"] = extract_rows(record, ROWS_{{ p.id|upper }}, {{ (p.id ~ ".rows")|py }}, HTML_FIELD, TEXT_FIELD)
+    except Quarantine as q:
+        q.fields = fields  # the document fields, so a failed cross-check can be named (runner.pipeline)
+        raise
+{% endif %}
     return fields
 {% endfor %}
 

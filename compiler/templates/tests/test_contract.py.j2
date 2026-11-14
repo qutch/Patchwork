@@ -28,3 +28,11 @@ def _openapi():
 def test_body_matches_destination_contract(example):
     errors = validate_body(_openapi(), *SINK_CALL, example["expect"]["body"])
     assert errors == []
+{% if has_rows %}
+
+
+@golden_cases("rows")
+def test_row_bodies_match_destination_contract(example):
+    errors = [e for body in example["expect"]["rows"] for e in validate_body(_openapi(), *SINK_CALL, body)]
+    assert errors == []
+{% endif %}

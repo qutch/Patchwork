@@ -1,5 +1,8 @@
 """Per-record pipeline: route parser -> extract -> validate -> dedupe -> map -> sink -> verify
--> mark processed. Every record ends as success, duplicate or quarantined(reason)."""
+-> mark processed. Every record ends as success, duplicate or quarantined(reason).
+
+contracts V18: a package with `EMITS = "rows"` goes through `process_document` instead, which turns one
+document into one Outcome per row (or one Outcome for the document when it is held as a whole)."""
 
 from __future__ import annotations
 
@@ -103,3 +106,101 @@ def process_record(integ: Any, record: dict, http: Any, store: ProcessedStore) -
     if out.detail:
         out.detail = redact(out.detail)  # V13: nothing that leaves the runner shows a credential value
     return out
+
+
+# contracts V18: a flagged document is held with a plain reason and never parsed (nor sent to LEARN).
+FLAG_REASONS = {
+    "no_text_layer": "no text layer: a scanned or image-only PDF; Patchwork reads text PDFs only",
+    "encrypted": "encrypted: the document is password-protected; Patchwork cannot read it",
+    "unreadable": "unreadable: the document could not be read",
+}
+
+
+def _hold(out: Outcome, e: Exception) -> Outcome:
+    out.status = "quarantined"
+    if isinstance(e, Quarantine):
+        out.reason, out.detail = e.code, e.detail
+    elif isinstance(e, httpx.HTTPError):
+        out.reason, out.detail = "UNKNOWN", f"network: {e!r}"
+    else:
+        out.reason, out.detail = "UNKNOWN", f"{type(e).__name__}: {e}"
+    return out
+
+
+def _redacted(outs: list[Outcome]) -> list[Outcome]:
+    for out in outs:
+        if out.detail:
+            out.detail = redact(out.detail)  # V13
+    return outs
+
+
+def process_document(integ: Any, record: dict, http: Any, store: ProcessedStore) -> list[Outcome]:
+    """contracts V18: one document -> one Outcome per row (`<doc id>#<row_no>`), or one Outcome with the
+    document's id when the document as a whole is held (a flag, no parser, a parse failure, a failed cross-check,
+    or, with `hold: document`, any row that fails validation or body building). With `hold: document` every row
+    is validated and its body built before the first write; a replay re-sends only rows not yet processed."""
+    doc_id = str(record.get(integ.RECORD_ID))
+    doc = Outcome(record_id=doc_id, status="quarantined",
+                  route_value=str(record.get(integ.ROUTE_BY)) if integ.ROUTE_BY else None)
+    flags = [str(f) for f in (record.get("flags") or [])]
+    if flags:
+        reasons = [FLAG_REASONS.get(f, f"flagged {f}") for f in flags]
+        error = (record.get("meta") or {}).get("error") if isinstance(record.get("meta"), dict) else None
+        doc.reason = "PARSE_NO_MATCH"
+        doc.detail = "; ".join(reasons) + (f" ({error})" if error else "")
+        return _redacted([doc])
+    try:
+        doc.parser, fields = _extract(integ, record, doc)
+        fields = dict(fields)
+        rows = fields.pop("__rows__")
+        integ.validate_document(fields, rows)
+    except Quarantine as q:
+        _hold(doc, q)
+        kept, doc_fields = getattr(q, "rows", None), getattr(q, "fields", None)
+        if kept and doc_fields is not None:  # an unexplained skipped row: a failed cross-check says more
+            try:
+                integ.validate_document(doc_fields, kept)
+            except Quarantine as cross:
+                doc.reason, doc.detail = cross.code, f"{cross.detail}; and {q.detail}"
+        return _redacted([doc])
+    except Exception as e:  # noqa: BLE001 - every document must end in a known state
+        return _redacted([_hold(doc, e)])
+    hold = getattr(integ, "HOLDS", {}).get(doc.parser, "document")
+    prepared: list[tuple[Outcome, dict, dict]] = []
+    keys: dict[str, int] = {}
+    for row in rows:
+        rec_row = {**record, "row_no": row.no, "row_count": len(rows)}
+        merged = {**fields, **row.fields}
+        out = Outcome(record_id=f"{doc_id}#{row.no}", status="quarantined", parser=doc.parser,
+                      route_value=doc.route_value, routed_by=doc.routed_by)
+        try:
+            integ.validate(merged, rec_row, http)
+            out.key = integ.dedupe_key(merged, rec_row)
+            if out.key in keys:
+                raise Quarantine("VALIDATION_FAILED", f"rows {keys[out.key]} and {row.no} have the same dedupe key "
+                                                      f"{out.key!r}; the dedupe key must tell the rows apart")
+            keys[out.key] = row.no
+            if store.is_processed(out.key):
+                out.status = "duplicate"
+            else:
+                out.body = integ.build_body(merged, rec_row)
+                out.status = "ready"
+        except Exception as e:  # noqa: BLE001
+            _hold(out, e)
+            if hold == "document":
+                doc.reason, doc.detail = out.reason, f"row {row.no}: {out.detail}"
+                return _redacted([doc])
+        prepared.append((out, merged, rec_row))
+    for out, merged, rec_row in prepared:
+        if out.status != "ready":
+            continue
+        try:
+            resp = integ.send(http, out.body)
+            _sink_status(resp.status_code, resp.text, http)
+            integ.verify(http, merged, rec_row)
+            store.mark(out.key)
+            out.status = "success"
+            out.detail = getattr(resp, "detail", None)
+        except Exception as e:  # noqa: BLE001
+            _hold(out, e)
+    return _redacted([out for out, _, _ in prepared])

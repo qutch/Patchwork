@@ -20,7 +20,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from runner.contract import openapi_hash, validate_body
 from spec import spec_hash, spec_to_dict
-from spec.models import RECORD_PREFIX, AirtableSink, FormSink, Spec, SqliteSink, ValueSource
+from spec.models import CROSS_RULES, RECORD_PREFIX, AirtableSink, FormSink, Spec, SqliteSink, ValueSource
 
 COMPILER_VERSION = "0.2.0"
 FORM_SINK_CALL = {"method": "POST", "path": "/form"}  # contracts V6: the form contract's one operation
@@ -37,7 +37,8 @@ class CompileError(ValueError):
 
 @dataclass
 class Example:
-    """A confirmed sample: the record, and either the expected sink body or a quarantine code."""
+    """A confirmed sample: the record, and either the expected sink body, a quarantine code, or (a document of a
+    rows spec, contracts V18) the expected sink body of each row, in row order: `expect: {rows: [<body>, ...]}`."""
 
     name: str
     record: dict[str, Any]
@@ -47,8 +48,11 @@ class Example:
     @classmethod
     def parse(cls, d: dict[str, Any]) -> "Example":
         expect = d.get("expect") or {}
-        if ("body" in expect) == ("quarantine" in expect):
-            raise CompileError(f"example {d.get('name')!r}: expect needs exactly one of body/quarantine")
+        if sum(k in expect for k in ("body", "quarantine", "rows")) != 1:
+            raise CompileError(f"example {d.get('name')!r}: expect needs exactly one of body/quarantine/rows")
+        if "rows" in expect and not (isinstance(expect["rows"], list) and expect["rows"]
+                                     and all(isinstance(b, dict) for b in expect["rows"])):
+            raise CompileError(f"example {d.get('name')!r}: expect.rows must be a list of bodies (one per row)")
         if "quarantine" in expect and expect["quarantine"] not in QUARANTINE_EXPECTS:
             raise CompileError(f"example {d.get('name')!r}: unknown quarantine code {expect['quarantine']!r}")
         return cls(name=str(d["name"]), record=dict(d["record"]), expect=dict(expect),
@@ -56,6 +60,13 @@ class Example:
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "record": self.record, "expect": self.expect, "missing": self.missing}
+
+
+def expected_bodies(expect: dict[str, Any]) -> list[dict]:
+    """The sink bodies an example expects: [body], the rows' bodies (contracts V18), or [] for a quarantine."""
+    if "body" in expect:
+        return [expect["body"]]
+    return list(expect.get("rows") or [])
 
 
 def load_examples(path: str | Path | None) -> list[Example]:
@@ -156,12 +167,18 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
     is_sqlite = isinstance(spec.sink, SqliteSink)
     sink_call = (FORM_SINK_CALL if is_form else AIRTABLE_SINK_CALL if is_airtable else SQLITE_SINK_CALL if is_sqlite
                  else {"method": spec.sink.call.method, "path": spec.sink.call.path})
+    has_rows = spec.has_rows()
+    for ex in examples:  # contracts V18: a rows spec's success examples list one body per row
+        if has_rows and "body" in ex.expect:
+            raise CompileError(f"example {ex.name!r}: this spec emits one record per row; use expect: {{rows: [...]}}")
+        if not has_rows and "rows" in ex.expect:
+            raise CompileError(f"example {ex.name!r}: expect.rows needs a spec whose parsers have rows")
     contract_errors: list[str] = []
     if sink_openapi is not None:
         for ex in examples:
-            if "body" in ex.expect:
+            for body in expected_bodies(ex.expect):
                 contract_errors += [f"[{ex.name}] {e}" for e in validate_body(
-                    sink_openapi, sink_call["method"], sink_call["path"], ex.expect["body"])]
+                    sink_openapi, sink_call["method"], sink_call["path"], body)]
 
     env = _env()
     ctx = {
@@ -170,7 +187,15 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
         "spec_hash": spec_hash(spec),
         "compiler_version": COMPILER_VERSION,
         "body_exprs": {k: value_expr(v) for k, v in spec.sink_values().items()},
-        "rule_lines": [rule_line(r) for r in spec.validate_],
+        "rule_lines": [rule_line(r) for r in spec.validate_ if r.rule not in CROSS_RULES],
+        # contracts V18 (absent from the output of specs without rows/clean: their packages are unchanged)
+        "has_rows": has_rows,
+        "uses_clean": any(f.clean is not None for p in spec.extract.parsers for f in p.fields.values()),
+        "rows_literals": {p.id: p.rows.model_dump(mode="json", exclude_none=True)
+                          for p in spec.extract.parsers if p.rows is not None},
+        "holds": {p.id: p.rows.hold for p in spec.extract.parsers if p.rows is not None},
+        "cross_rules": [r.model_dump(mode="json", by_alias=True, exclude_none=True)
+                        for r in spec.validate_ if r.rule in CROSS_RULES],
         "negative_cases": _negative_cases(spec),
         "uses_transforms": bool(needed),
         "sink_call": sink_call,
@@ -244,6 +269,8 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
     }
     if config["credentials"]:  # V13: names only; absent for specs without auth (manifests unchanged)
         manifest["credentials"] = sorted(config["credentials"])
+    if has_rows:  # V18: one record per row; absent for specs without rows (manifests unchanged)
+        manifest["emits"] = "rows"
     (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2))
     tmp.rename(out)
     return CompileResult(spec.name, version, out, ctx["spec_hash"], oa_hash, contract_errors)

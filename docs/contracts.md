@@ -1031,3 +1031,49 @@ stdlib and `runner/` only, no network, no AI, no subject words.
   the rule holds, else e.g. `sum_equals: the rows' amount add up to 3,205.00 but total is 3,215.00`,
   `product_equals: row 2: qty × price = 3.75 but amount is 3.00`, `count_equals: 2 rows but n is 3`, or `... is not
   a number: <value>`.
+
+### Runtime: one document → many records (`compiler/`, `runner/pipeline.py`, `runner/run.py`, `runner/store.py`)
+
+- **Compiled package.** Everything below is generated only under `has_rows` (every parser has `rows`). A spec without
+  `rows` compiles to byte-identical files (a doc-level `clean` only adds a `clean_cast` import and call).
+  - `parsers.py`: `ROWS_<ID> = {<the rows block as a literal dict>}`; `parse_<id>(record)` returns the document
+    fields plus `"__rows__": [runner.rows.Row]` from `extract_rows(record, ROWS_<ID>, '<id>.rows', HTML_FIELD,
+    TEXT_FIELD)`. When `extract_rows` raises, the exception carries the document fields (`q.fields`) and, for an
+    unexplained skipped row, the kept rows (`q.rows`).
+  - `integration.py`: `EMITS = "rows"`, `HOLDS = {<parser id>: "document" | "row"}`, `CROSS_RULES = [<rule dicts>]`
+    and `validate_document(fields, rows)`, which raises `VALIDATION_FAILED` with `check_cross`'s detail on the first
+    failing rule. `validate(fields, record, http)` is unchanged (cross-check rules are not in it) and runs per row.
+    Packages without rows have no `EMITS`.
+  - `manifest.json` gains `"emits": "rows"` (absent otherwise).
+  - Golden examples of a rows spec use `expect: {rows: [<body>, ...]}` (one body per kept row, in row order) or
+    `expect: {quarantine: <code>}`; `expect: {body}` is refused for a rows spec and `rows` for any other. The
+    generated tests (`test_golden`, `test_dedupe`, `test_negative`, `test_contract`) go through `process_document`;
+    negative cases mutate the first row's merged fields. Preflight's contract check also covers every row body.
+- **`runner.pipeline.process_document(integ, record, http, store) -> list[Outcome]`:**
+  1. Any `flags` entry → one `PARSE_NO_MATCH` Outcome with the document's id, never parsed: `no_text_layer` → "no
+     text layer: a scanned or image-only PDF; Patchwork reads text PDFs only", `encrypted` → "encrypted: the
+     document is password-protected; Patchwork cannot read it", `unreadable` → "unreadable: the document could not
+     be read" (plus `(meta.error)` when present); any other flag → "flagged <flag>".
+  2. Route and parse; a failure → one Outcome with the document's id (`parser` unset, `routed_by` set, as in
+     `process_record`). An unexplained skipped row whose kept rows also fail a cross-check is reported as the
+     cross-check: `VALIDATION_FAILED "<cross-check detail>; and <the unexplained row>"`.
+  3. `validate_document`; a failure → one `VALIDATION_FAILED` Outcome with the document's id. Nothing is written.
+  4. Per row: `rec_row = {**record, "row_no": n, "row_count": len(rows)}`, merged fields = document fields + row
+     fields; `validate`, then `dedupe_key`. Two rows of one document with the same key are `VALIDATION_FAILED` ("the
+     dedupe key must tell the rows apart"), never a silent duplicate. A key already processed → `duplicate`;
+     otherwise `build_body`.
+  5. `hold: document` (default): any failure in step 4 → one Outcome with the document's id (`row N: <detail>`), and
+     nothing is sent. Every row is validated and its body built before the first send. `hold: row`: that row's
+     Outcome is held and the others go on.
+  6. Each ready row is sent and verified → Outcome `"<id>#<row_no>"` (`success`, or held with the sink's reason).
+     Send failures are per row (each row is its own write; a replay re-sends only rows not yet processed).
+  Every detail is redacted (V13). `process_record` is unchanged.
+- **`runner.run.run`** calls `process_document` when `getattr(integ, "EMITS", None) == "rows"`, else
+  `process_record`. Every Outcome is stored (`records` table) with `raw` = the document; the run log gets one
+  `record` event per Outcome; counts are per Outcome. The cursor moves once per document. The circuit breaker counts
+  consecutive `SINK_CONTRACT` Outcomes and is checked after each document. `NEW_SOURCE_FORMAT` counts only
+  document-level (or record-level) `PARSE_NO_MATCH` Outcomes, as before.
+- **`Store.quarantined_raw(name)`** (the replay input) groups the latest live outcomes by the raw record's `id`
+  (record ids `<id>` and `<id>#<n>`) and returns each document once when any outcome of its latest run is
+  quarantined. Rows written by a later run supersede an earlier document-level hold. Records whose raw has no `id`
+  are one group per record id, as before.

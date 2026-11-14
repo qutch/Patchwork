@@ -3,9 +3,38 @@
 
 import pytest
 
+{% if has_rows %}
+from runner.pipeline import MemoryStore, process_document
+{% else %}
 from runner.pipeline import MemoryStore, process_record
+{% endif %}
 from runner.testing import FakeHttp
 
+{% if has_rows %}
+from .conftest import GOLDEN, golden_cases, row_bodies
+
+
+def test_has_golden_examples():
+    assert any("rows" in ex["expect"] for ex in GOLDEN), "compile with at least one success example (expect: rows)"
+
+
+@golden_cases("rows")
+def test_golden_rows(integ, example):
+    http = FakeHttp(missing=example["missing"])
+    outs = process_document(integ, example["record"], http, MemoryStore())
+    assert {o.status for o in outs} == {"success"}, [(o.record_id, o.reason, o.detail) for o in outs]
+    assert [o.body for o in outs] == row_bodies(example)
+    assert http.sink_writes == row_bodies(example)
+
+
+@golden_cases("quarantine")
+def test_golden_quarantine(integ, example):
+    http = FakeHttp(missing=example["missing"])
+    outs = process_document(integ, example["record"], http, MemoryStore())
+    assert {(o.status, o.reason) for o in outs} == {("quarantined", example["expect"]["quarantine"])}, \
+        [o.detail for o in outs]
+    assert http.sink_writes == []
+{% else %}
 from .conftest import GOLDEN, golden_cases
 
 
@@ -28,3 +57,4 @@ def test_golden_quarantine(integ, example):
     out = process_record(integ, example["record"], http, MemoryStore())
     assert (out.status, out.reason) == ("quarantined", example["expect"]["quarantine"]), out.detail
     assert http.sink_writes == []
+{% endif %}
