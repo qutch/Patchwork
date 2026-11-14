@@ -8,10 +8,12 @@ so an Inbox without /admin/deliver answers 404 here too. Unreachable apps answer
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -86,6 +88,9 @@ async def reset(request: Request) -> dict[str, Any]:
     """Reset Inbox, Stockroom live + staging, and the workspace (DB, run logs, integrations,
     agent threads). Recordings and settings are kept. Runs in progress are killed."""
     state = request.app.state
+    # Stop every writer first: agent threads (cancelled and joined) and runs (killed),
+    # and only then wipe the workspace, so nothing writes into the fresh state.
+    agents = await run_in_threadpool(reset_agent, state)
     state.runs.stop_all()
     state.runs.clear()
     apps = {}
@@ -93,23 +98,18 @@ async def reset(request: Request) -> dict[str, Any]:
         status, data = await _call(app, "POST", "/admin/reset")
         apps[app] = {"status": status, **({"detail": data.get("detail")} if isinstance(data, dict) and status >= 400 else {})}
     removed = ops.reset_workspace()
-    reset_agent(state)
-    return {"ok": True, "apps": apps, "removed": removed}
-
-
-def reset_agent(state) -> None:
-    svc = getattr(state, "agent", None)
-    if svc is None:
-        return
-    if hasattr(svc, "reset"):
-        svc.reset()
-        return
-    threads = getattr(svc, "_threads", None)
-    if isinstance(threads, dict):
-        threads.clear()  # waiting threads stay blocked forever (daemon threads); never resumed
-    root = getattr(svc, "root", None)
+    root = getattr(getattr(state, "agent", None), "root", None)
     if root is not None:
-        root.mkdir(parents=True, exist_ok=True)
+        Path(root).mkdir(parents=True, exist_ok=True)
+    return {"ok": True, "apps": apps, "removed": removed, "agents": agents}
+
+
+def reset_agent(state) -> dict[str, Any]:
+    """Cancel all agent threads, including ones blocked on ask_user/request_deploy."""
+    svc = getattr(state, "agent", None)
+    if svc is None or not hasattr(svc, "reset"):
+        return {"cancelled": [], "still_running": []}
+    return svc.reset() or {"cancelled": [], "still_running": []}
 
 
 async def ground_truth() -> tuple[dict[str, dict], str]:

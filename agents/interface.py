@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -62,6 +63,11 @@ class InterruptRejected(Exception):
     pass
 
 
+class ThreadCancelled(BaseException):
+    """Raised inside an agent thread after `reset()`. A BaseException so that broad
+    `except Exception` blocks in agent or tool code can't swallow it."""
+
+
 @dataclass
 class _Thread:
     id: str
@@ -73,6 +79,8 @@ class _Thread:
     answer: dict[str, Any] | None = None
     wake: threading.Event = field(default_factory=threading.Event)
     created_at: str = field(default_factory=now)
+    cancelled: bool = False
+    worker: threading.Thread | None = None
 
 
 class ThreadedAgentService:
@@ -126,6 +134,29 @@ class ThreadedAgentService:
     def list_threads(self) -> list[dict[str, Any]]:
         return [self.status(tid) for tid in sorted(self._threads, key=lambda k: self._threads[k].created_at)]
 
+    def reset(self, timeout: float = 5.0) -> dict[str, Any]:
+        """Cancel every thread and forget it. Threads blocked on an interrupt wake up and
+        exit; running threads stop at their next emit/interrupt and write nothing more.
+        Waits up to `timeout` seconds in total for them to finish. A thread still inside a
+        long tool call (e.g. a model request) is reported in `still_running`; it exits
+        without writing as soon as that call returns."""
+        with self._lock:
+            threads = list(self._threads.values())
+            self._threads.clear()
+            for t in threads:
+                t.cancelled = True
+                t.pending = None
+                t.answer = None
+        for t in threads:
+            t.wake.set()
+        deadline = time.monotonic() + timeout
+        for t in threads:
+            if t.worker is not None:
+                t.worker.join(max(0.0, deadline - time.monotonic()))
+        still = [t.id for t in threads if t.worker is not None and t.worker.is_alive()]
+        self.root.mkdir(parents=True, exist_ok=True)
+        return {"cancelled": [t.id for t in threads], "still_running": still}
+
     def subscribe(self, fn: Callable[[dict[str, Any]], None]) -> None:
         """Optional push hook (the control plane may also just poll `events(after=...)`)."""
         self._listeners.append(fn)
@@ -135,6 +166,8 @@ class ThreadedAgentService:
         if type not in EVENT_TYPES:
             raise ValueError(f"unknown event type {type}")
         with self._lock:
+            if t.cancelled:  # checked under the lock reset() takes, so no write follows a reset
+                raise ThreadCancelled(t.id)
             ev = {"seq": len(t.events) + 1, "t": now(), "thread_id": t.id, "type": type, **payload}
             t.events.append(ev)
             with (self.root / f"{t.id}.jsonl").open("a") as f:
@@ -155,7 +188,14 @@ class ThreadedAgentService:
         t.pending = ev
         self._set_state(t, "waiting")
         t.wake.wait()
+        if t.cancelled:
+            raise ThreadCancelled(t.id)
         return t.answer or {}
+
+    def check_cancelled(self, t: _Thread) -> None:
+        """For long-running subclass work between emits (e.g. before a model call)."""
+        if t.cancelled:
+            raise ThreadCancelled(t.id)
 
     def _set_state(self, t: _Thread, state: ThreadState) -> None:
         t.state = state
@@ -164,19 +204,24 @@ class ThreadedAgentService:
     def _start(self, mode: Mode, subject: str, body: Callable[[_Thread], Any]) -> str:
         tid = f"{mode}-{uuid.uuid4().hex[:10]}"
         t = _Thread(id=tid, mode=mode, subject=subject)
-        self._threads[tid] = t
 
         def run() -> None:
-            self._set_state(t, "running")
             try:
-                result = body(t)
-                self.emit(t, "done", result=result)
-                self._set_state(t, "done")
-            except Exception as e:  # noqa: BLE001
-                self.emit(t, "error", message=f"{type(e).__name__}: {e}")
-                self._set_state(t, "failed")
+                self._set_state(t, "running")
+                try:
+                    result = body(t)
+                    self.emit(t, "done", result=result)
+                    self._set_state(t, "done")
+                except Exception as e:  # noqa: BLE001
+                    self.emit(t, "error", message=f"{type(e).__name__}: {e}")
+                    self._set_state(t, "failed")
+            except ThreadCancelled:
+                pass  # reset() forgot this thread; exit quietly without touching the workspace
 
-        threading.Thread(target=run, name=tid, daemon=True).start()
+        t.worker = threading.Thread(target=run, name=tid, daemon=True)
+        with self._lock:
+            self._threads[tid] = t
+        t.worker.start()
         return tid
 
     def _run_build(self, t: _Thread, recording_id: str) -> Any:

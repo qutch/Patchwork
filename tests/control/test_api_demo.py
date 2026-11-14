@@ -1,5 +1,7 @@
 """Demo proxies, demo reset and the accuracy benchmark."""
 
+import time
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -78,6 +80,29 @@ def test_reset_clears_workspace_and_apps_but_keeps_recordings(api, apps, workspa
     api.put("/api/settings", json={"ai_enabled": True})
     build_and_deploy(api)  # the demo can start over
     assert api.get("/api/integrations").json()[0]["active_version"] == 1
+
+
+def test_reset_cancels_agent_threads_waiting_for_approval(api, apps, workspace):
+    from tests.control.conftest import wait_thread
+
+    tid = api.post("/api/integrations/build", json={"recording_id": "fixture"}).json()["thread_id"]
+    s = wait_thread(api, tid, "waiting")
+    api.post(f"/api/agent/{tid}/resume", json={"interrupt_id": s["pending"]["interrupt_id"],
+                                              "answer": "Quarantine them for review"}).raise_for_status()
+    s = wait_thread(api, tid, "waiting")
+    assert s["pending"]["type"] == "request_deploy"
+    worker = api.app.state.agent._threads[tid].worker  # type: ignore[attr-defined]
+
+    r = api.post("/api/demo/reset").json()
+
+    assert r["agents"] == {"cancelled": [tid], "still_running": []}
+    assert not worker.is_alive(), "the thread blocked on request_deploy must exit"
+    assert api.get(f"/api/agent/{tid}").status_code == 404
+    assert api.get("/api/agent/threads").json() == []
+    time.sleep(0.2)
+    assert not (workspace / "agent_threads" / f"{tid}.jsonl").exists(), "nothing written after reset"
+    assert not (workspace / "integrations").exists() or not any((workspace / "integrations").iterdir())
+    build_and_deploy(api)  # a fresh demo starts cleanly
 
 
 @pytest.fixture
