@@ -187,3 +187,10 @@ def test_demo_html5_errors_become_verify_mismatch(page, app_url, values, needle)
                         confirm_timeout_ms=1500)
     assert e.value.code == "VERIFY_MISMATCH" and needle in e.value.detail
     assert _rows(app_url) == []
+
+
+def test_star_in_label_marks_a_field_required_without_the_attribute(page):
+    page.set_content('<form><label for="n">Nickname *</label><input id="n" type="text">'
+                     '<label for="o">Other</label><input id="o" type="text"><button>Go</button></form>')
+    snap = {q["label"]: q["required"] for q in snapshot_form(page)}
+    assert snap == {"Nickname": True, "Other": False}

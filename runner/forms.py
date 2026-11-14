@@ -132,7 +132,7 @@ _SNAPSHOT_JS = "() => {" + _HELPERS_JS + r"""
       const t = (e.getAttribute('type') || 'text').toLowerCase();
       input = ['email', 'url', 'date', 'number'].includes(t) ? t : 'text';
     }
-    const star = [...(e.labels || [])].some(l => /\\*\\s*$/.test(norm(l.textContent)));
+    const star = [...(e.labels || [])].some(l => /\*\s*$/.test(norm(l.textContent)));
     const required = e.required || e.getAttribute('aria-required') === 'true' || star;
     out.push({label, input, required, options: [...new Set(options)]});
   }
