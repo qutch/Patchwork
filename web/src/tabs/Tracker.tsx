@@ -289,7 +289,7 @@ export function ExtensionCard() {
     api.extension().then(setExt, (e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
   return (
-    <Card eyebrow="Hotkey" title="Extension setup">
+    <Card eyebrow="Hotkey" title="Extension setup" className="max-w-[760px]">
       <div className="grid gap-3">
         <ol className="m-0 pl-5 text-[13.5px] grid gap-1">
           <li>Chrome → <span className="font-mono">chrome://extensions</span> → Developer mode → <b>Load unpacked</b> → the repo's <span className="font-mono">extension/</span> folder.</li>
