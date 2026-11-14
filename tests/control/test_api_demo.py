@@ -60,9 +60,12 @@ def test_reset_clears_workspace_and_apps_but_keeps_recordings(api, apps, workspa
     api.put("/api/settings", json={"ai_enabled": False})
     assert httpx.get(apps["live"] + "/api/incoming").json()
 
+    api.post("/api/demo/inbox/deliver", json={"count": 4}).raise_for_status()
+    assert len(httpx.get(apps["inbox"] + "/api/messages").json()) == 154
+
     r = api.post("/api/demo/reset").json()
-    assert r["ok"] and r["apps"]["stockroom"]["status"] == 200 and r["apps"]["staging"]["status"] == 200
-    assert r["apps"]["inbox"]["status"] in (200, 404, 405)  # /admin/reset arrives with the Capture workstream
+    assert r["ok"] and all(r["apps"][a]["status"] == 200 for a in ("inbox", "stockroom", "staging"))
+    assert len(httpx.get(apps["inbox"] + "/api/messages").json()) == 150
     assert {"integrations", "runs", "agent_threads", "patchwork.db"} <= set(r["removed"])
     assert api.get("/api/integrations").json() == []
     assert api.get("/api/runs").json() == []
@@ -107,3 +110,20 @@ def test_accuracy_uses_inbox_ground_truth_when_available(ran_ten, monkeypatch):
     with _Server(fake_inbox(None)) as inbox:
         monkeypatch.setenv("PATCHWORK_INBOX_URL", inbox.url)
         assert api.get("/api/bench/accuracy", params={"integration": NAME}).json()["truth_source"] == "seed"
+
+
+def test_real_inbox_deliveries_and_new_supplier(ran_ten, apps):
+    """Delivered messages are scored with the Inbox's ground truth; Break 2 messages quarantine."""
+    api = ran_ten
+    r = api.post("/api/demo/inbox/deliver", json={"count": 6})
+    assert r.status_code == 200 and len(r.json()["delivered"]) == 6
+    run = finish_run(api, api.post("/api/runs", json={"integration": NAME}).json()["run_id"])
+    assert run["status"] == "completed"
+    acc = api.get("/api/bench/accuracy", params={"integration": NAME}).json()
+    assert acc["truth_source"] == "inbox" and acc["records"] == 156 and acc["accuracy"] == 1.0, acc["mismatches"]
+
+    r = api.post("/api/demo/inbox/new_supplier", json={"count": 4})
+    assert r.status_code == 200 and len(r.json()["delivered"]) == 4
+    run = finish_run(api, api.post("/api/runs", json={"integration": NAME}).json()["run_id"])
+    assert run["counts"].get("quarantined:PARSE_NO_MATCH") == 4 and run["incident_id"]
+    assert api.get(f"/api/incidents/{run['incident_id']}").json()["type"] == "NEW_SOURCE_FORMAT"

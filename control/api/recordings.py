@@ -76,6 +76,10 @@ def _session(recording_id: str):
 
 
 def _entry(recording_id: str) -> dict[str, Any]:
+    """The list_recordings() row: from the session's own summary() when it has one."""
+    s = capture_session().get_session(recording_id)
+    if s is not None and hasattr(s, "summary"):
+        return s.summary()
     for e in capture_session().list_recordings():
         if e.get("id") == recording_id:
             return e
@@ -97,7 +101,11 @@ def load_recording(recording_id: str) -> dict[str, Any]:
 @router.post("")
 def start(body: StartRecording) -> dict[str, Any]:
     headless = os.environ.get("PATCHWORK_CAPTURE_HEADLESS", "").lower() in ("1", "true", "yes")
-    s = capture_session().start_recording(body.intent, body.allowlist, start_url=body.start_url, headless=headless)
+    try:
+        s = capture_session().start_recording(body.intent, body.allowlist, start_url=body.start_url,
+                                              headless=headless)
+    except ValueError as e:  # e.g. empty allowlist
+        raise HTTPException(422, str(e)) from None
     return {"id": s.id}
 
 
@@ -113,6 +121,7 @@ def list_all() -> list[dict[str, Any]]:
 
 @router.post("/{recording_id}/stop")
 def stop(recording_id: str) -> dict[str, Any]:
+    # sync def: FastAPI runs it in the threadpool, since session.stop() blocks up to 20 s
     if recording_id == FIXTURE_ID:
         return _summary(_fixture(), FIXTURE_ID)
     rec = _session(recording_id).stop()
@@ -162,7 +171,7 @@ async def stream(recording_id: str, request: Request, after: int | None = None):
                 seq += 1
                 yield sse.sse("capture", ev, seq)
             if not evs and not running:
-                yield sse.sse("stopped", {**_entry(recording_id), "status": "stopped", "n_events": seq}, seq + 1)
+                yield sse.sse("stopped", {**_entry(recording_id), "status": "stopped"}, seq + 1)
                 return
             if evs:
                 idle = 0.0

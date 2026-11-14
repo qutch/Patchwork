@@ -144,3 +144,38 @@ def test_fixture_candidates_with_matcher(plain_api, fake_capture, workspace):
     cands = plain_api.post("/api/recordings/fixture/candidates").json()
     assert cands["recording_id"] == "fixture-po-001"
     assert plain_api.get("/api/recordings/fixture").json()["candidates"] == cands
+
+
+def test_real_capture_session_through_the_api(api, apps, workspace, monkeypatch):
+    """The real recorder (headless Chromium) driven only through the API: start -> live stream ->
+    stop -> get -> candidates (real matcher)."""
+    pytest.importorskip("capture.session")
+    pytest.importorskip("playwright")
+    monkeypatch.setenv("PATCHWORK_CAPTURE_HEADLESS", "1")
+
+    def netloc(url: str) -> str:
+        return url.split("://", 1)[1]
+
+    assert api.post("/api/recordings", json={"intent": "x", "allowlist": []}).status_code == 422
+    r = api.post("/api/recordings", json={"intent": "For every new PO, record incoming stock",
+                                          "allowlist": [netloc(apps["inbox"]), netloc(apps["live"])],
+                                          "start_url": apps["inbox"] + "/"})
+    assert r.status_code == 200, r.text
+    rid = r.json()["id"]
+    first = read_sse(api, f"/api/recordings/{rid}/stream", until=lambda e: e["event"] == "capture", timeout=60)
+    assert first[0]["id"] == 1 and first[0]["data"]["type"] in ("framenavigated", "net")
+    listed = {x["id"]: x for x in api.get("/api/recordings").json()}
+    assert listed[rid]["status"] == "recording"
+
+    stopped = api.post(f"/api/recordings/{rid}/stop").json()
+    assert stopped["status"] == "stopped" and stopped["n_events"] >= 1
+    evs = read_sse(api, f"/api/recordings/{rid}/stream")
+    assert evs[-1]["event"] == "stopped" and [e["id"] for e in evs[:-1]] == list(range(1, len(evs)))
+    assert any(e["data"].get("type") == "framenavigated" for e in evs[:-1])
+    got = api.get(f"/api/recordings/{rid}").json()
+    assert got["status"] == "stopped" and got["intent"].startswith("For every") and got["events"]
+    cands = api.post(f"/api/recordings/{rid}/candidates").json()
+    assert cands["recording_id"] == rid and "mappings" in cands
+
+    fx = api.post("/api/recordings/fixture/candidates").json()  # real matcher on the fixture
+    assert fx["sink"]["path"] == "/api/incoming" and fx["mappings"]
