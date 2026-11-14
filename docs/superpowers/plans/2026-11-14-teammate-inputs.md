@@ -14,14 +14,17 @@ pipeline, the document inbox, and the deep agent learning each new sender's layo
   this file orders them for you.
 - `docs/contracts.md` V13 (credentials) and V16 (your SQLite sink, as a style reference).
 
-## Owner decisions (2026-11-14)
+## Decisions (2026-11-14)
 
-1. **One "Invoice Lines" table** (invoice fields repeated on each line, grouped by invoice number) is fine for the demo.
-2. **Layouts with no total to check** (support tickets, event registrations) always need a person's approval before
+Only decision 4 came from the owner. Decisions 1, 2, 3 and 5 are the lead's recommended defaults, **not yet
+confirmed by the owner**. Build to them, but change course if the owner overrules one.
+
+1. *(Default, to confirm)* **One "Invoice Lines" table** (invoice fields repeated on each line, grouped by invoice number) is fine for the demo.
+2. *(Default, to confirm)* **Layouts with no total to check** (support tickets, event registrations) always need a person's approval before
    they go live. Only layouts with a passing declared check (e.g. line items sum to the total) deploy on their own.
-3. **A folder of `.eml` files is enough for the demo.** Live email (task 3) stays optional and comes after tasks 6-7.
-4. **Table sources are lowest priority** (task 5, cut first).
-5. **2-3 real invoice PDFs are OK for rehearsal only.** Keep them outside the repo (never commit real personal or
+3. *(Default, to confirm)* **A folder of `.eml` files is enough for the demo.** Live email (task 3) stays optional and comes after tasks 6-7.
+4. *(Owner)* **Table sources are lowest priority** (task 5, cut first).
+5. *(Default, to confirm)* **2-3 real invoice PDFs are OK for rehearsal only.** Keep them outside the repo (never commit real personal or
    company data) and put made-up look-alikes in `fixtures/`.
 
 ## Rules (same as the rest of the project)
