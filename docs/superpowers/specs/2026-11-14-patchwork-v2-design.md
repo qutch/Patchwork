@@ -173,6 +173,16 @@ RUN (every hotkey)
 
 ### 7.4 Learn lane (new agent mode `LEARN`, lighter than REPAIR)
 
+**All AI work in v2 runs on LangChain Deep Agents** (`deepagents==0.7.38`, `agents/deep.py` `DeepAgentService`):
+TEACH (interpreter), LEARN and REPAIR are modes of the same `create_deep_agent` supervisor, with planning
+(`write_todos` via `TodoListMiddleware`), subagents through the `task` tool, the virtual filesystem with write
+permissions limited to `/spec.yaml`, `/examples.yaml`, `/transforms.py`, and the existing `EventMiddleware` and
+`ResilientModelMiddleware`. LEARN adds a `learner` subagent (tools: `get_page`, `test_parser` on HTML, evidence
+check, ambiguity check → `ask_user`, `propose_spec_patch`, `add_test_case`); the builder subagent compiles and tests
+as in v1. Guardrails stay in tools, not prompts (`agents/deep_tools.py`). `ScriptedAgentService` gets matching
+LEARN/REPAIR scripts only as the stage fallback, emitting the same events. See `agents/README.md` for the deepagents
+API notes already learned in v1.
+
 - Trigger: a `PARSE_NO_MATCH` from the page inbox for a site with no parser (no 3-record threshold; one page is
   enough because a page layout is a template).
 - Steps: fetch the snapshot → propose a parser (css/jsonld/regex) → `test_parser` on the snapshot → **evidence
