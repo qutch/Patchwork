@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import threading
 from pathlib import Path
 from typing import Any
@@ -64,3 +65,28 @@ class Settings:
             self._path().parent.mkdir(parents=True, exist_ok=True)
             self._path().write_text(json.dumps(data, indent=2))
             return data
+
+
+def extension_token() -> str:
+    """The token the extension sends as X-Patchwork-Token (V9). Kept in $PATCHWORK_WORKSPACE/extension_token,
+    created on first use (mode 0600); `PATCHWORK_EXTENSION_TOKEN` overrides it. The runner never sees it
+    (`control.ops.runner_env` strips *_TOKEN variables, and it reads pages without one)."""
+    override = os.environ.get("PATCHWORK_EXTENSION_TOKEN")
+    if override:
+        return override
+    path = workspace_dir() / "extension_token"
+    try:
+        token = path.read_text().strip()
+        if token:
+            return token
+    except OSError:
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_urlsafe(24)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:  # created by someone else between our read and now
+        return path.read_text().strip() or token
+    with os.fdopen(fd, "w") as f:
+        f.write(token)
+    return token

@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from control import ops
 from runner.store import Store
@@ -90,6 +90,41 @@ class RunManager:
         self._adopted: dict[int, AdoptedRun] = {}
         self._lock = threading.Lock()
         self._starting: set[str] = set()
+        self._listeners: list[Callable[[dict[str, Any]], None]] = []
+
+    # ---- finish notifications (v2: learn trigger, tracker) --------------------------------
+    def on_finish(self, fn: Callable[[dict[str, Any]], None]) -> None:
+        """Call `fn(run_row)` after each run this manager launched has finished and its row is final."""
+        self._listeners.append(fn)
+
+    def _notify_finished(self, run_id: int | None) -> None:
+        if run_id is None or not self._listeners:
+            return
+        try:
+            store = Store()
+            try:
+                run = store.run(run_id)
+            finally:
+                store.close()
+        except Exception:  # noqa: BLE001 - the workspace may have been reset under us
+            return
+        if run is None or run["status"] == "running":
+            return
+        for fn in list(self._listeners):
+            try:
+                fn(run)
+            except Exception:  # noqa: BLE001 - a broken listener must not break the run watcher
+                import traceback
+                traceback.print_exc()
+
+    def wait(self, run_id: int, timeout: float | None = None) -> None:
+        """Block until the run's row is no longer `running` (or its process is gone)."""
+        deadline = time.monotonic() + (timeout if timeout is not None else self.timeout_s + 30)
+        while time.monotonic() < deadline:
+            live = self._runs.get(run_id)
+            if not self._db_running(run_id) or (live is not None and live.done):
+                return
+            time.sleep(0.05)
 
     # ---- startup recovery ------------------------------------------------------------------
     def recover(self) -> dict[str, list[int]]:
@@ -265,6 +300,7 @@ class RunManager:
         finally:
             live.done = True
             shutil.rmtree(live.scratch, ignore_errors=True)
+        self._notify_finished(live.run_id)
 
     @staticmethod
     def _stderr_tail(scratch: Path) -> str:

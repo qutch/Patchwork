@@ -29,6 +29,13 @@ CREATE TABLE IF NOT EXISTS pages (
   captured_at TEXT NOT NULL,
   captured_date TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS learns (
+  page_id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  site TEXT NOT NULL,
+  integration TEXT NOT NULL,
+  started_at TEXT NOT NULL
+);
 """
 
 COLUMNS = ("seq", "url", "canonical_url", "site", "title", "html", "text", "captured_at", "captured_date")
@@ -133,5 +140,23 @@ class PageInbox:
             return int(db.execute("SELECT COUNT(*) FROM pages").fetchone()[0])
 
     def clear(self) -> int:
+        """Delete every page and the learn-thread links; returns the number of pages removed."""
         with self._conn() as db:
-            return int(db.execute("DELETE FROM pages").rowcount)
+            n = int(db.execute("DELETE FROM pages").rowcount)
+            db.execute("DELETE FROM learns")
+            return n
+
+    # -- learn threads started for pages (V9: which page a LEARN thread belongs to) ----------
+    def add_learn(self, page_id: str, thread_id: str, site: str, integration: str) -> None:
+        with self._conn() as db:
+            db.execute("INSERT OR REPLACE INTO learns VALUES (?,?,?,?,?)",
+                       (page_id, thread_id, site, integration,
+                        datetime.now(timezone.utc).isoformat(timespec="milliseconds")))
+
+    def learns(self, integration: str | None = None) -> dict[str, dict[str, Any]]:
+        """{page_id: {page_id, thread_id, site, integration, started_at}}."""
+        sql, args = "SELECT * FROM learns", ()
+        if integration:
+            sql, args = sql + " WHERE integration = ?", (integration,)
+        with self._conn() as db:
+            return {r["page_id"]: dict(r) for r in db.execute(sql, args).fetchall()}

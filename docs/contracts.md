@@ -488,6 +488,19 @@ if AI is off, the row stays `held`. When a learn or repair thread emits `deploye
 quarantined records, then run once more (pages blocked by preflight were never fetched past the cursor). Repairs of
 `CONTRACT_CHANGED` still start from a person's click (as in v1).
 
+**Details fixed while building W4a (additive; nothing above was removed or renamed):**
+- Token: `$PATCHWORK_WORKSPACE/extension_token` (created on first use, mode 0600; `PATCHWORK_EXTENSION_TOKEN` overrides).
+  Wrong or missing → 401. Body > 15 MB is refused before parsing, then `html` > 5 MB (UTF-8 bytes) → 413. 422 messages
+  never echo the body.
+- `POST /api/pages` may add `run_error` (the page is stored, the runner failed before `started`). `integration` is the
+  first page integration (`jobs_to_tracker` first); every page integration gets a run. `run_id` is null whenever `queued`.
+- CORS for `chrome-extension://<id>` origins only on `POST /api/pages` and `GET /api/pages/{id}` (not the html-bearing list).
+- `PATCHWORK_CONTROL_URL`: an explicit env value wins; otherwise the control plane uses the address it is serving on
+  (learned from the first request). `control.ops.runner_env()` adds it, so `run_sandboxed`/`replay_quarantined` get it too.
+- `GET /api/pages/{id}` takes optional `?integration=`. `GET /api/pages?since=` also accepts `None`/`null` as 0; a
+  non-integer → 422; `limit` 1–1000.
+- Page ids are never reused in a workspace (the seq counter survives `/api/demo/v2/reset`).
+
 ## V10. Agents (W3): LEARN mode and the TEACH/REPAIR additions
 
 ```python
