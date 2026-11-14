@@ -65,12 +65,16 @@ def _clean_url(url: str) -> str:
 
 
 def canonical_url(url: str, html: str) -> str:
-    """<link rel=canonical> if it resolves to an absolute http(s) URL; else the URL itself. Either way
+    """<link rel=canonical> if it resolves to an absolute http(s) URL (upgraded to https when the page itself
+    was https on the same host); else the URL itself. Either way
     without fragment and without tracking params (utm_*, gh_src, lever-source, source, ref)."""
     href = css_first(html, 'link[rel="canonical"]', "href")
     if href:
         candidate = urljoin(url or "", href)
-        if urlsplit(candidate).scheme in ("http", "https"):
+        parts, page = urlsplit(candidate), urlsplit(url or "")
+        if parts.scheme in ("http", "https"):
+            if parts.scheme == "http" and page.scheme == "https" and parts.netloc == page.netloc:
+                candidate = parts._replace(scheme="https").geturl()  # Greenhouse's canonical says http://
             return _clean_url(candidate)
     try:
         return _clean_url(url or "")

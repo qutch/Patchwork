@@ -81,7 +81,7 @@ def test_jobs_run_end_to_end(stack):
     by_title = {r["Job Title"]: r for r in rows}
     assert by_title["American Tech Fellowship"]["Company"] == "Palantir Technologies"
     assert by_title["Software Engineer, Android"]["Company"] == "Ramp"
-    assert by_title["Account Executive, Mobile Gaming"]["Link"] == "http://job-boards.greenhouse.io/discord/jobs/8927168002"
+    assert by_title["Account Executive, Mobile Gaming"]["Link"] == "https://job-boards.greenhouse.io/discord/jobs/8927168002"
     assert all(r["Email"] == "demo@example.com" and r["Date Applied"] == "2026-11-14" for r in rows)
     records = {r["record_id"]: r for r in Store().records(s["run_id"])}
     held = [r for r in records.values() if r["status"] == "quarantined"]

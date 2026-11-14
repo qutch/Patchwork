@@ -103,3 +103,14 @@ def test_misses_quarantine():
         refine_regex("Palantir", re.compile(r"^Careers at (.+)$"), "lever.company")
     with pytest.raises(Quarantine):
         extract_css("<h1>   </h1>", "h1", None, "x.title")
+
+
+def test_canonical_http_upgraded_on_same_https_host():
+    """Greenhouse pages are served over https but say <link rel=canonical href="http://...">."""
+    html = (PAGES / "greenhouse-1.html").read_text()
+    url = "https://job-boards.greenhouse.io/discord/jobs/8927168002?gh_src=x"
+    assert canonical_url(url, html) == "https://job-boards.greenhouse.io/discord/jobs/8927168002"
+    other_host = '<html><head><link rel="canonical" href="http://mirror.example.org/jobs/1"></head></html>'
+    assert canonical_url("https://example.com/jobs/1", other_host) == "http://mirror.example.org/jobs/1"
+    plain = '<html><head><link rel="canonical" href="http://example.com/jobs/1"></head></html>'
+    assert canonical_url("http://example.com/jobs/1", plain) == "http://example.com/jobs/1"
