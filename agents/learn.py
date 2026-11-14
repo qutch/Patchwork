@@ -25,7 +25,7 @@ from selectolax.lexbor import LexborHTMLParser
 from runner.html import (canonical_url, css_all, css_first, jsonld_objects, normalize_ws, site_of,
                          visible_text)
 from runner.lib import (Quarantine, cast, extract_between, extract_css, extract_json_path, extract_jsonld,
-                        extract_regex, refine_regex)
+                        extract_regex, refine_regex, rule_problem_date, rule_problem_number, rule_problem_url)
 
 PAGE_METHODS = ("css", "jsonld")
 
@@ -110,6 +110,8 @@ def _jsonld_leaves(obj: Any, prefix: str = "", depth: int = 0) -> list[tuple[str
             out += _jsonld_leaves(v, f"{prefix}[{i}]", depth + 1)
     elif isinstance(obj, str) and normalize_ws(obj):
         out.append((prefix, normalize_ws(obj)))
+    elif isinstance(obj, (int, float)) and not isinstance(obj, bool):
+        out.append((prefix, str(obj)))  # prices, ratings, counts (V15: not every integration reads text)
     return out
 
 
@@ -117,9 +119,48 @@ def _clip(s: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-def page_outline(record: dict, max_chars: int = 4000) -> str:
+def _types_of(obj: dict) -> list[str]:
+    t = obj.get("@type")
+    return [t] if isinstance(t, str) else [x for x in t if isinstance(x, str)] if isinstance(t, list) else []
+
+
+def jsonld_types(html: str) -> list[str]:
+    """Every JSON-LD object @type on the page, in page order, each once (V15: get_page lists them all)."""
+    out: list[str] = []
+    for obj in jsonld_objects(html or ""):
+        for t in _types_of(obj):
+            if t not in out:
+                out.append(t)
+    return out
+
+
+def infer_jsonld_type(html: str, path: str) -> str | None:
+    """The @type a `jsonld` reader without `jsonld_type` reads from on this page: JobPosting when the path
+    resolves there (the runtime default, so nothing changes for job pages), else the first type on the page
+    whose first object has a value at `path` (exactly what jsonld_get will read at runtime). None if no type."""
+    from runner.html import jsonld_get
+    types = jsonld_types(html)
+    for t in (["JobPosting"] if "JobPosting" in types else []) + [t for t in types if t != "JobPosting"]:
+        v = jsonld_get(html or "", path, t)
+        if v not in (None, "") and not isinstance(v, (dict, list)):
+            return t
+    return None
+
+
+def with_jsonld_types(parser: dict, html: str) -> dict:
+    """A copy of the parser whose `jsonld` readers all carry an explicit `jsonld_type` (V15), filled from the
+    page when missing. A reader whose path resolves nowhere keeps the runtime default (it fails its test)."""
+    p = json.loads(json.dumps(parser))
+    for f in (p.get("fields") or {}).values():
+        if isinstance(f, dict) and f.get("jsonld") is not None and not f.get("jsonld_type"):
+            f["jsonld_type"] = infer_jsonld_type(html, str(f["jsonld"])) or "JobPosting"
+    return p
+
+
+def page_outline(record: dict, max_chars: int = 4000, prefer_types: list[str] | None = None) -> str:
     """Title, h1-h3, og/twitter meta and JSON-LD leaves, each with the extractor that reads it, then
-    the start of the visible text. Never the whole HTML (the learner's budget is ~8 model calls)."""
+    the start of the visible text. Never the whole HTML (the learner's budget is ~8 model calls).
+    `prefer_types` (the JSON-LD types the integration already reads) are listed first."""
     html = record.get("html") or ""
     lines = [f"page {record.get('id')} · site {record.get('site')} · url {record.get('canonical_url') or record.get('url')}",
              f"document.title: {json.dumps(_clip(normalize_ws(record.get('title') or ''), 200))}"]
@@ -152,13 +193,15 @@ def page_outline(record: dict, max_chars: int = 4000) -> str:
         attr_name = "property" if m.attributes.get("property") else "name"
         selector = 'meta[%s="%s"]' % (attr_name, key)
         lines.append(f"  {{css: {json.dumps(selector)}, attr: content}} → {json.dumps(_clip(content, 100))}")
+    types = jsonld_types(html)
+    lines.append(f"json-ld types on this page: {', '.join(types) if types else 'none'}")
     lines.append("json-ld ({jsonld: path, jsonld_type: T} → value):")
     n_leaves = 0
-    for obj in jsonld_objects(html):
-        types = obj.get("@type")
-        typ = types if isinstance(types, str) else (types[0] if isinstance(types, list) and types else None)
-        if not typ:
-            continue
+    prefer = [t for t in (prefer_types or []) if t]
+    objs = [o for o in jsonld_objects(html) if _types_of(o)]
+    objs.sort(key=lambda o: next((i for i, t in enumerate(prefer) if t in _types_of(o)), len(prefer)))
+    for obj in objs:
+        typ = next((t for t in prefer if t in _types_of(obj)), _types_of(obj)[0])
         for path, value in _jsonld_leaves(obj):
             if n_leaves >= 30:
                 break
@@ -177,6 +220,68 @@ def page_outline(record: dict, max_chars: int = 4000) -> str:
                 break
             out += add
     return out[:max_chars]
+
+
+# ---- what the integration already knows (V15: prompts and tools name the integration's own fields) -----
+
+def _parsers(spec: dict | None) -> list[dict]:
+    return list(((spec or {}).get("extract") or {}).get("parsers") or [])
+
+
+def integration_fields(spec: dict | None) -> list[str]:
+    """The fields every parser extracts, in the first parser's order (the spec order)."""
+    parsers = _parsers(spec)
+    if not parsers:
+        return []
+    common = set.intersection(*(set(p.get("fields") or {}) for p in parsers))
+    return [f for f in parsers[0].get("fields") or {} if f in common]
+
+
+def integration_jsonld_types(spec: dict | None) -> list[str]:
+    """The JSON-LD @types the integration's readers use (`JobPosting` for a jsonld reader without a type)."""
+    out: list[str] = []
+    for p in _parsers(spec):
+        for f in (p.get("fields") or {}).values():
+            if isinstance(f, dict) and f.get("jsonld") is not None:
+                t = f.get("jsonld_type") or "JobPosting"
+                if t not in out:
+                    out.append(t)
+    return out
+
+
+def known_readers(spec: dict | None, per_field: int = 3) -> str:
+    """`price: jsonld offers.price (Product) | css .price; name: ...`: how the existing parsers read each field."""
+    parts = []
+    for name in integration_fields(spec):
+        labels: list[str] = []
+        for p in _parsers(spec):
+            f = (p.get("fields") or {}).get(name)
+            if isinstance(f, dict):
+                lab = extractor_label(f)
+                if lab not in labels:
+                    labels.append(lab)
+        if labels:
+            parts.append(f"{name}: {' | '.join(labels[:per_field])}")
+    return "; ".join(parts)
+
+
+def rule_label(rule: dict) -> str:
+    """`title: required`, `price: number (min 0, max 10000)`, `link: url`."""
+    kind = rule.get("rule")
+    extra = ""
+    if kind == "number":
+        bounds = [f"{k} {rule[k]:g}" if isinstance(rule.get(k), (int, float)) else f"{k} {rule[k]}"
+                  for k in ("min", "max") if rule.get(k) is not None]
+        extra = f" ({', '.join(bounds)})" if bounds else ""
+    elif kind == "regex":
+        extra = f" /{rule.get('pattern')}/"
+    elif kind == "one_of":
+        extra = f" {rule.get('values')}"
+    elif kind == "date":
+        extra = " (YYYY-MM-DD)"
+    elif kind == "url":
+        extra = " (absolute http/https)"
+    return f"{rule.get('field')}: {kind}{extra}"
 
 
 # ---- running a candidate parser ---------------------------------------------------------------
@@ -255,6 +360,8 @@ def _jsonld_strings(html: str) -> list[str]:
             s = normalize_ws(o)
             if s:
                 out.append(s)
+        elif isinstance(o, (int, float)) and not isinstance(o, bool):
+            out.append(str(o))
     for obj in jsonld_objects(html):
         walk(obj)
     return out
@@ -285,6 +392,16 @@ def _check_rules(name: str, value: Any, validate: list[dict]) -> str | None:
                     return "not a positive integer"
             except (TypeError, ValueError):
                 return "not a positive integer"
+        # contracts V15: the same checks the generated validate() runs (runner.lib)
+        problem = None
+        if kind == "number":
+            problem = rule_problem_number(value, rule.get("min"), rule.get("max"))
+        elif kind == "date":
+            problem = rule_problem_date(value)
+        elif kind == "url":
+            problem = rule_problem_url(value)
+        if problem:
+            return problem
     return None
 
 
@@ -463,6 +580,6 @@ def d2_decision(*, policy: str, tests_passed: bool, evidence_ok: bool, all_corro
     return not reasons, reasons
 
 
-__all__ = ["page_outline", "run_page_parser", "evidence", "corroborated", "ambiguity", "additive_parser_patch",
+__all__ = ["integration_fields", "integration_jsonld_types", "known_readers", "rule_label", "page_outline", "jsonld_types", "infer_jsonld_type", "with_jsonld_types", "run_page_parser", "evidence", "corroborated", "ambiguity", "additive_parser_patch",
            "d2_decision", "make_page_record", "page_text", "extractor_label", "extract_field", "css_path",
            "corroboration_sources", "PAGE_METHODS"]

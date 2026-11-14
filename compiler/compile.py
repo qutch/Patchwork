@@ -98,6 +98,13 @@ def rule_line(rule: Any) -> str:
         return f"check_regex(fields, {f!r}, {rule.pattern!r})"
     if rule.rule == "one_of":
         return f"check_one_of(fields, {f!r}, {rule.values!r})"
+    if rule.rule == "number":
+        bounds = "".join(f", {k}={getattr(rule, k)!r}" for k in ("min", "max") if getattr(rule, k) is not None)
+        return f"check_number(fields, {f!r}{bounds})"
+    if rule.rule == "date":
+        return f"check_date(fields, {f!r})"
+    if rule.rule == "url":
+        return f"check_url(fields, {f!r})"
     if rule.rule == "exists":
         return (f"check_exists(http, 'sink', {rule.check.path!r}, {dict(rule.check.params)!r}, "
                 f"fields, record, where={f!r})")
@@ -247,6 +254,25 @@ def _negative_cases(spec: Spec) -> list[dict[str, Any]]:
         elif r.rule == "one_of":
             cases.append({"id": f"{r.field}_not_allowed", "field": r.field, "op": "set",
                           "value": "__patchwork_not_allowed__", "code": "VALIDATION_FAILED"})
+        elif r.rule == "number":
+            cases.append({"id": f"{r.field}_not_a_number", "field": r.field, "op": "set", "value": "n/a",
+                          "code": "VALIDATION_FAILED"})
+            if r.min is not None:
+                cases.append({"id": f"{r.field}_below_min", "field": r.field, "op": "set", "value": r.min - 1,
+                              "code": "VALIDATION_FAILED"})
+            if r.max is not None:
+                cases.append({"id": f"{r.field}_above_max", "field": r.field, "op": "set", "value": r.max + 1,
+                              "code": "VALIDATION_FAILED"})
+        elif r.rule == "date":
+            cases.append({"id": f"{r.field}_not_iso", "field": r.field, "op": "set", "value": "14/11/2026",
+                          "code": "VALIDATION_FAILED"})
+            cases.append({"id": f"{r.field}_not_a_day", "field": r.field, "op": "set", "value": "2026-02-30",
+                          "code": "VALIDATION_FAILED"})
+        elif r.rule == "url":
+            cases.append({"id": f"{r.field}_relative", "field": r.field, "op": "set", "value": "/not/absolute",
+                          "code": "VALIDATION_FAILED"})
+            cases.append({"id": f"{r.field}_not_http", "field": r.field, "op": "set", "value": "ftp://example.org/x",
+                          "code": "VALIDATION_FAILED"})
         elif r.rule == "exists":
             cases.append({"id": f"{r.field}_unknown", "field": r.field, "op": "set",
                           "value": "PATCHWORK-UNKNOWN", "missing": "PATCHWORK-UNKNOWN", "code": "NOT_FOUND"})

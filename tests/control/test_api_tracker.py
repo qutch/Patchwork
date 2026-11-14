@@ -147,7 +147,7 @@ def test_labels(workspace):
     assert out["totals"] == {"pages": 6, "ai_calls": 5, "code": 1, "learned_now": 1, "held": 2, "duplicate": 1}
     assert set(r0) == {"page_id", "seq", "captured_at", "site", "url", "title", "company", "status", "label", "reason",
                        "detail", "parser", "version", "routed_by", "parser_origin", "ai_calls", "run_id",
-                       "learn_thread_id", "incident_id"}
+                       "learn_thread_id", "incident_id", "fields"}  # V15: generic fields
     assert len(tracker.tracker_rows(store, inbox, agent, NAME, 2)["rows"]) == 2
     no_agent = tracker.page_row(store, inbox, None, NAME, pages[1]["id"])  # the inbox knows the thread; calls unknown
     assert (no_agent["label"], no_agent["ai_calls"]) == ("learned_now", 0)

@@ -5,6 +5,8 @@ test_page_parser's evidence/corroboration/ambiguity checks and save_parser's D2 
 
 The only thing scripted here is the choice a model would make: `propose_parser` picks extractors from the
 page with a fixed preference order (JSON-LD JobPosting, a single-valued heading, meta tags, the <title>).
+Fields other than a job's title/company (V15: products, papers, recipes) try the readers the integration's
+parsers already use, then the field's name as a JSON-LD path on the page's types, then the usual headings/meta.
 """
 
 from __future__ import annotations
@@ -32,6 +34,29 @@ COMPANY_CANDIDATES = [
     {"css": "head title", "regex": r"@\s*([^|–-]+?)\s*$"},
 ]
 CANDIDATES = {"title": TITLE_CANDIDATES, "company": COMPANY_CANDIDATES}
+
+
+def generic_candidates(name: str, spec: dict, rec: dict) -> list[dict]:
+    """Readers to try for a field with no fixed list (V15): the integration's own readers for it (JSON-LD
+    first), the same JSON-LD paths and the field name on every JSON-LD type of the page, then h1 / og:title."""
+    html = rec.get((spec.get("source") or {}).get("html_field") or "html") or ""
+    page_types = learn.jsonld_types(html)
+    types = list(dict.fromkeys(learn.integration_jsonld_types(spec) + page_types))
+    own = [dict(p["fields"][name]) for p in (spec.get("extract") or {}).get("parsers") or []
+           if isinstance((p.get("fields") or {}).get(name), dict)]
+    out: list[dict] = [f for f in own if f.get("jsonld") is not None]
+    for path in dict.fromkeys([str(f["jsonld"]) for f in out] + [name]):
+        out += [{"jsonld": path, "jsonld_type": t} for t in types]
+    out += [f for f in own if f.get("jsonld") is None]
+    if name in ("name", "title", "headline"):
+        out += [{"css": "h1"}, {"css": 'meta[property="og:title"]', "attr": "content"}]
+    seen, uniq = set(), []
+    for f in out:
+        key = json.dumps(f, sort_keys=True)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(f)
+    return uniq
 
 
 def _ok(out: str) -> bool:
@@ -65,7 +90,7 @@ class ScriptedV2Mixin:
         html_field = (spec.get("source") or {}).get("html_field") or "html"
         fields = {}
         for name in wanted:
-            for cand in CANDIDATES.get(name, []):
+            for cand in CANDIDATES.get(name) or generic_candidates(name, spec, rec):
                 probe = {"id": "probe", "fields": {name: cand}}
                 out = learn.run_page_parser(probe, rec, html_field)
                 if "error" in out:

@@ -1,8 +1,8 @@
 # Patchwork Chrome extension
 
-Press **Alt+Shift+P** (or click the toolbar button) on a job posting and the extension sends that page (its URL,
-title and rendered HTML) to your local Patchwork, which adds the posting to your tracker. It sends nothing unless you
-press the shortcut or click the button. It has no content scripts and does not watch the pages you visit.
+Press **Alt+Shift+P** (or click **Send this page** in the toolbar button's popup) on a page (a job posting, a
+product, a paper, ...) and the extension sends that page (its URL, title and rendered HTML) to your local Patchwork,
+which adds it to the integration you chose. It sends nothing unless you press the shortcut or click the button. It has no content scripts and does not watch the pages you visit.
 
 ## Install (once)
 
@@ -18,7 +18,12 @@ press the shortcut or click the button. It has no content scripts and does not w
 
 ## Use
 
-Open a job posting and press Alt+Shift+P. The toolbar badge shows the result. Hover the button to see the details.
+Open a page and press Alt+Shift+P. The toolbar badge shows the result. Hover the button to see the details.
+
+**Which integration.** The options page and the popup have a "Send pages to" list, read from Patchwork
+(`GET /api/extension` → `integrations`, `default_integration`). Pick one and every page goes to it (the extension
+sends `integration` with the page); leave "Patchwork's default" and pages go to the default integration
+(`jobs_to_tracker` when it exists). The popup's choice is remembered until you change it.
 
 | Badge | Meaning |
 |---|---|
@@ -33,7 +38,7 @@ The extension waits up to 30 s for the result. After that the badge stays `…` 
 ## Permissions
 
 `activeTab` + `scripting` let it read the tab you are on, and only when you press the shortcut or click the button.
-`storage` holds the address and the token. The host permissions cover `127.0.0.1` and `localhost` (any port) so it
+`storage` holds the address, the token and the chosen integration. The host permissions cover `127.0.0.1` and `localhost` (any port) so it
 can reach a local Patchwork. To use a Patchwork that is not on this computer, add that address to
 `host_permissions` in `manifest.json` and reload the extension.
 

@@ -31,6 +31,7 @@ class Stub:
         self.posts: list[dict] = []
         self.script: list[dict] = [{"status": "success", "label": "code"}]
         self.gets: dict[str, int] = {}
+        self.integrations: list[dict] | None = None  # V15: None = a control plane from before V15
         self.lock = threading.Lock()
         app = FastAPI()
 
@@ -58,7 +59,11 @@ class Stub:
 
         @app.get("/api/extension")
         def extension():
-            return {"token": TOKEN, "control_url": self.url}
+            out = {"token": TOKEN, "control_url": self.url}
+            if self.integrations is not None:
+                out.update(integrations=self.integrations,
+                           default_integration=self.integrations[0]["name"] if self.integrations else None)
+            return out
 
         @app.get("/job", response_class=HTMLResponse)
         def job():
@@ -91,8 +96,10 @@ def browser_ext(tmp_path_factory):
 @pytest.fixture
 def ext(browser_ext, stub):
     ctx, sw = browser_ext
+    sw.evaluate("chrome.storage.local.remove('integration')")
     sw.evaluate("o => chrome.storage.local.set(o)", {"controlUrl": stub.url, "token": TOKEN})
     with stub.lock:
+        stub.integrations = None
         stub.posts.clear()
         stub.gets.clear()
         stub.script = [{"status": "success", "label": "code"}]
@@ -207,7 +214,71 @@ def test_manifest_is_minimal():
     assert m["manifest_version"] == 3
     assert sorted(m["permissions"]) == ["activeTab", "scripting", "storage"]
     assert m["host_permissions"] == ["http://127.0.0.1/*", "http://localhost/*"]
-    assert "content_scripts" not in m and "default_popup" not in m.get("action", {})
+    assert "content_scripts" not in m
+    assert m["action"]["default_popup"] == "popup.html"  # V15: the popup switches the integration
+    assert (EXT / "popup.html").exists() and (EXT / "integrations.js").exists()
     assert m["commands"]["send-page"]["suggested_key"]["default"] == "Alt+Shift+P"
     for size in ("16", "32", "48", "128"):
         assert (EXT / m["icons"][size]).exists()
+
+
+# ---- V15: which integration a page goes to ----------------------------------------------------------
+
+INTEGRATIONS = [{"name": "jobs_to_tracker", "intent": "Add every job posting I send to my tracker"},
+                {"name": "track_product_prices", "intent": "Track product prices"}]
+
+
+def test_untagged_by_default(ext, stub):
+    ctx, sw = ext
+    _open_job(ctx, stub)
+    assert sw.evaluate("sendActiveTab()")["ok"]
+    assert "integration" not in stub.posts[0]["body"]  # Patchwork's default integration decides
+
+
+def test_options_dropdown_lists_integrations_and_persists_the_choice(ext, stub):
+    ctx, sw = ext
+    stub.integrations = INTEGRATIONS
+    ext_id = sw.url.split("/")[2]
+    page = ctx.new_page()
+    page.goto(f"chrome-extension://{ext_id}/options.html")
+    sel = page.locator("#integration")
+    expect(sel.locator("option")).to_have_count(3)
+    expect(sel.locator("option").first).to_have_text("Patchwork's default (jobs_to_tracker)")
+    expect(sel.locator("option").nth(2)).to_have_text("track_product_prices: Track product prices")
+    sel.select_option("track_product_prices")
+    page.click("#save")
+    expect(page.locator("#status")).to_have_text(re.compile(r"^Saved"))
+    assert sw.evaluate("chrome.storage.local.get(null)")["integration"] == "track_product_prices"
+    page.reload()
+    expect(page.locator("#integration")).to_have_value("track_product_prices")
+    page.locator("#integration").select_option("")  # back to the default: the key is removed
+    page.click("#save")
+    expect(page.locator("#status")).to_have_text(re.compile(r"^Saved"))
+    assert "integration" not in sw.evaluate("chrome.storage.local.get(null)")
+    page.close()
+
+
+def test_popup_switches_the_integration_and_pages_carry_it(ext, stub):
+    ctx, sw = ext
+    stub.integrations = INTEGRATIONS
+    ext_id = sw.url.split("/")[2]
+    popup = ctx.new_page()
+    popup.goto(f"chrome-extension://{ext_id}/popup.html")
+    expect(popup.locator("#integration option")).to_have_count(3)
+    popup.locator("#integration").select_option("track_product_prices")
+    expect(popup.locator("#status")).to_have_text(re.compile("track_product_prices"))
+    assert sw.evaluate("chrome.storage.local.get(null)")["integration"] == "track_product_prices"
+    popup.close()
+    _open_job(ctx, stub)
+    result = sw.evaluate("sendActiveTab()")
+    assert result["ok"] and stub.posts[-1]["body"]["integration"] == "track_product_prices"
+
+
+def test_popup_without_token_points_to_options(ext, stub):
+    ctx, sw = ext
+    sw.evaluate("chrome.storage.local.remove('token')")
+    ext_id = sw.url.split("/")[2]
+    popup = ctx.new_page()
+    popup.goto(f"chrome-extension://{ext_id}/popup.html")
+    expect(popup.locator("#status")).to_have_text(re.compile("token"))
+    popup.close()

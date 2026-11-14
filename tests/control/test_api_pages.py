@@ -50,7 +50,7 @@ def test_get_pages_since(v2api):
     pages = v2api.get("/api/pages").json()
     assert [p["seq"] for p in pages] == [1, 2, 3]
     assert set(pages[0]) == {"id", "seq", "url", "canonical_url", "site", "title", "html", "text", "captured_at",
-                             "captured_date"}
+                             "captured_date", "integration"}  # V15: integration (null = untagged)
     assert [p["seq"] for p in v2api.get("/api/pages", params={"since": ""}).json()] == [1, 2, 3]
     assert [p["seq"] for p in v2api.get("/api/pages", params={"since": "1"}).json()] == [2, 3]
     assert [p["seq"] for p in v2api.get("/api/pages", params={"since": 1, "limit": 1}).json()] == [2]
@@ -149,7 +149,7 @@ def test_same_posting_twice_is_duplicate(workspace, monkeypatch):
 
 def test_extension_setup_endpoint(v2api, workspace):
     ext = v2api.get("/api/extension").json()
-    assert set(ext) == {"token", "control_url"}
+    assert set(ext) == {"token", "control_url", "integrations", "default_integration"}  # V15 adds the last two
     assert ext["token"] == (workspace / "extension_token").read_text().strip() and len(ext["token"]) >= 20
     assert ext["control_url"] == str(v2api.base_url).rstrip("/")
     assert v2api.get("/api/extension").json()["token"] == ext["token"]  # stable

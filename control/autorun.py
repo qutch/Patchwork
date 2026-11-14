@@ -180,3 +180,36 @@ def page_integrations(store: Store | None = None) -> list[str]:
     names = [i["name"] for i in store.integrations()
              if i["active_version"] is not None and is_page_spec(version_spec(i["name"], i["active_version"]))]
     return sorted(names, key=lambda n: (n != "jobs_to_tracker", n))
+
+
+# ---- which pages an integration reads (docs/contracts.md V15) -----------------------------------
+
+DEFAULT_PAGE_INTEGRATION = "jobs_to_tracker"
+
+
+def default_page_integration(store: Store | None = None) -> str | None:
+    """The first page integration (`jobs_to_tracker` when present), or None if there is none yet."""
+    names = page_integrations(store)
+    return names[0] if names else None
+
+
+def page_filter(name: str | None, store: Store | None = None) -> dict[str, Any]:
+    """`PageInbox.list/summaries/clear` kwargs for the pages `name` reads: its own pages, plus untagged pages
+    when it is the default page integration (`jobs_to_tracker` while there is no page integration yet).
+    `name=None` means the default integration (an already-compiled spec without the `integration` param)."""
+    default = default_page_integration(store) or DEFAULT_PAGE_INTEGRATION
+    name = name or default
+    return {"integration": name, "include_untagged": name == default}
+
+
+def integration_of_page(page: dict[str, Any], store: Store | None = None) -> str | None:
+    """The integration a page belongs to: the one it was sent to, else the default page integration."""
+    return page.get("integration") or default_page_integration(store)
+
+
+def integration_intent(name: str, store: Store | None = None) -> str:
+    """The active spec's `intent` (the extension's integration dropdown shows it)."""
+    store = store or Store()
+    v = store.active_version(name)
+    spec = version_spec(name, v) if v is not None else None
+    return " ".join(str((spec or {}).get("intent") or "").split())

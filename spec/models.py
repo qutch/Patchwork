@@ -220,16 +220,23 @@ class Extract(_Strict):
 
 class ValidationRule(_Strict):
     field: str
-    rule: Literal["required", "positive_int", "regex", "one_of", "exists"]
+    rule: Literal["required", "positive_int", "regex", "one_of", "exists", "number", "date", "url"]
     pattern: str | None = None
     values: list[Any] | None = None
     check: HttpCall | None = None
+    # `number` only (contracts V15): inclusive bounds on the value cast to float
+    min: float | None = None
+    max: float | None = None
 
     @model_validator(mode="after")
     def _args(self) -> "ValidationRule":
         need = {"regex": "pattern", "one_of": "values", "exists": "check"}.get(self.rule)
         if need and getattr(self, need) is None:
             raise ValueError(f"rule {self.rule!r} on {self.field!r} needs '{need}'")
+        if self.rule != "number" and (self.min is not None or self.max is not None):
+            raise ValueError(f"min/max only apply to rule 'number' (on {self.field!r})")
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError(f"rule 'number' on {self.field!r}: min {self.min} is greater than max {self.max}")
         if self.rule == "exists" and self.check and self.check.method != "GET":
             raise ValueError("exists.check must be a GET")
         return self

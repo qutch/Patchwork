@@ -2,9 +2,14 @@
 store (runs, records, incidents), the page inbox, the agent (learn threads) and the compiled
 packages' manifests. No FastAPI, no network: the integrator can call these directly.
 
-    tracker_rows(store, inbox, agent, integration, limit) -> {rows: [TrackerRow] newest first, totals}
+    tracker_rows(store, inbox, agent, integration, limit) -> {rows: [TrackerRow] newest first, totals, field_names}
     page_row(store, inbox, agent, integration, page_id)   -> TrackerRow | None
     layouts(store, integration)                           -> [Layout]
+
+V15: rows are generic. Each row has `fields: {<field>: value}` (every field the integration's parsers
+extract, spec order; null until a row was written or when the value is not in the sink mapping) and the
+response has `field_names`. `title`/`company` stay (the jobs_to_tracker bench and tests read them). Only
+the integration's own pages are listed (its tagged pages, plus untagged ones for the default integration).
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from control.autorun import version_manifest, version_spec
+from control.autorun import page_filter, version_manifest, version_spec
 from runner.store import Store
 
 LABELS = ("code", "learned_now", "held", "duplicate")
@@ -37,6 +42,15 @@ def _spec_parsers(spec: dict[str, Any] | None) -> list[dict[str, Any]]:
     return list(((spec or {}).get("extract") or {}).get("parsers") or [])
 
 
+def spec_field_names(spec: dict[str, Any] | None) -> list[str]:
+    """The fields every parser extracts, in the first parser's (spec) order."""
+    parsers = _spec_parsers(spec)
+    if not parsers:
+        return []
+    common = set.intersection(*(set(p.get("fields") or {}) for p in parsers))
+    return [f for f in parsers[0].get("fields") or {} if f in common]
+
+
 class _View:
     """Everything one tracker request needs, read once."""
 
@@ -47,6 +61,8 @@ class _View:
         self.runs = [r for r in store.runs(integration, limit=50) if not r["dry_run"]]
         self._threads: dict[str, dict[str, Any]] = {}
         self._versions: dict[int, tuple[dict, dict]] = {}
+        active = store.active_version(integration)
+        self.field_names = spec_field_names(self.version(active)[0]) if active is not None else []
 
     def _latest_outcomes(self) -> dict[str, dict[str, Any]]:
         """Latest live outcome per page id, without the (large) raw page."""
@@ -104,15 +120,18 @@ class _View:
             self._threads[thread_id] = info
         return self._threads[thread_id]
 
-    def extracted(self, v: int | None, body: dict | None) -> dict[str, Any]:
-        """title/company from the mapped sink body, via the spec's `{from: title}` style mappings."""
+    def extracted(self, v: int | None, body: dict | None, names: tuple[str, ...] | None = PAGE_FIELDS) -> dict[str, Any]:
+        """Extracted values from the mapped sink body, via the spec's `{from: <field>}` mappings: title/company
+        by default, every field with `names=None`."""
         if not body:
             return {}
         spec, _ = self.version(v)
         out = {}
         for label, src in _sink_values(spec).items():
-            if isinstance(src, dict) and src.get("from") in PAGE_FIELDS and label in body:
-                out[src["from"]] = body[label]
+            field = src.get("from") if isinstance(src, dict) else None
+            if field and not str(field).startswith("record.") and (names is None or field in names) \
+                    and label in body and field not in out:
+                out[field] = body[label]
         return out
 
     def latest_run(self) -> dict[str, Any] | None:
@@ -130,7 +149,7 @@ class _View:
             "status": "pending", "label": None, "reason": None, "detail": None,
             "parser": None, "version": None, "routed_by": None, "parser_origin": None,
             "ai_calls": thread["model_calls"] if tid else 0, "run_id": None, "learn_thread_id": tid,
-            "incident_id": None,
+            "incident_id": None, "fields": {f: None for f in self.field_names},
         }
         if rec is not None:
             v = rec.get("run_version")
@@ -138,6 +157,8 @@ class _View:
                        reason=rec.get("reason"), detail=rec.get("detail"),
                        parser_origin=self.parser_origin(v, rec.get("parser")))
             row.update({k: val for k, val in self.extracted(v, rec.get("sink_body")).items() if val is not None})
+            values = self.extracted(v, rec.get("sink_body"), names=None)
+            row["fields"] = {f: values.get(f) for f in self.field_names}
             if rec["status"] == "success":
                 origin = row["parser_origin"] or {}
                 learned_here = tid is not None and origin.get("thread_id") == tid
@@ -177,10 +198,18 @@ def _totals(rows: list[dict[str, Any]]) -> dict[str, int]:
 
 def tracker_rows(store: Store, inbox: Any, agent: Any, integration: str = "jobs_to_tracker",
                  limit: int = 50) -> dict[str, Any]:
-    """{rows: newest first (at most `limit`), totals over every page in the inbox}."""
+    """{rows: newest first (at most `limit`), totals over every page of the integration, field_names}."""
     view = _View(store, inbox, agent, integration)
-    rows = [view.row(p) for p in inbox.summaries()]
-    return {"rows": rows[:max(0, int(limit))], "totals": _totals(rows)}
+    rows = [view.row(p) for p in _summaries(inbox, integration, store)]
+    return {"rows": rows[:max(0, int(limit))], "totals": _totals(rows), "field_names": list(view.field_names)}
+
+
+def _summaries(inbox: Any, integration: str, store: Store) -> list[dict[str, Any]]:
+    """The integration's pages (V15), newest first; inboxes without the filter list every page."""
+    try:
+        return inbox.summaries(**page_filter(integration, store))
+    except TypeError:
+        return inbox.summaries()
 
 
 def page_row(store: Store, inbox: Any, agent: Any, integration: str, page_id: str) -> dict[str, Any] | None:

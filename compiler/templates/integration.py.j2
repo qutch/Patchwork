@@ -8,11 +8,14 @@ The runner calls: fetch_contract (preflight) -> route -> parse -> validate -> de
 
 from runner.lib import (  # noqa: F401
     T,
+    check_date,
     check_exists,
+    check_number,
     check_one_of,
     check_positive_int,
     check_regex,
     check_required,
+    check_url,
     lookup_ref,
     render,
 )

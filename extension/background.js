@@ -1,13 +1,15 @@
-// Patchwork extension service worker (docs/contracts.md V11, consumes V9).
+// Patchwork extension service worker (docs/contracts.md V11, consumes V9 and V15).
 //
 // Sends the active tab's page (URL, document.title, rendered DOM) to the Patchwork control plane, but only when
-// the person presses the `send-page` shortcut (default Alt+Shift+P) or clicks the toolbar button. Nothing runs
-// in the background: no content scripts, no listeners on page loads, no polling except for the page just sent.
+// the person presses the `send-page` shortcut (default Alt+Shift+P) or clicks "Send this page" in the popup.
+// Nothing runs in the background: no content scripts, no listeners on page loads, no polling except for the page
+// just sent. The page goes to the integration chosen in the options or the popup (`integration` in storage; none
+// chosen = Patchwork's default integration).
 //
 // Badge: "…" sending / working, "✓" written by code, "AI" learned now, "dup" already in the tracker,
 // "!" held or failed (hover the button for why).
 
-const DEFAULTS = { controlUrl: 'http://127.0.0.1:8000', token: '' };
+const DEFAULTS = { controlUrl: 'http://127.0.0.1:8000', token: '', integration: '' };
 const POLL_MS = 700;
 const POLL_LIMIT_MS = 30000;
 const BADGES = {
@@ -21,7 +23,11 @@ const BADGES = {
 
 async function getOptions() {
   const o = await chrome.storage.local.get(DEFAULTS);
-  return { controlUrl: String(o.controlUrl || DEFAULTS.controlUrl).trim().replace(/\/+$/, ''), token: String(o.token || '').trim() };
+  return {
+    controlUrl: String(o.controlUrl || DEFAULTS.controlUrl).trim().replace(/\/+$/, ''),
+    token: String(o.token || '').trim(),
+    integration: String(o.integration || '').trim(),
+  };
 }
 
 async function setBadge(tabId, state, title) {
@@ -50,8 +56,8 @@ function outcomeOf(row) {
 function describe(state, row) {
   const what = [row && row.title, row && row.company].filter(Boolean).join(' at ');
   switch (state) {
-    case 'code': return `added ${what || 'the posting'} (no AI)`;
-    case 'learned_now': return `learned this layout and added ${what || 'the posting'}`;
+    case 'code': return `added ${what || 'the page'} (no AI)`;
+    case 'learned_now': return `learned this layout and added ${what || 'the page'}`;
     case 'duplicate': return 'already in your tracker';
     default: return `held for you in Patchwork${row && row.reason ? ` (${row.reason})` : ''}`;
   }
@@ -109,13 +115,17 @@ async function sendActiveTab(tab) {
     resp = await fetch(`${opts.controlUrl}/api/pages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Patchwork-Token': opts.token },
-      body: JSON.stringify({ url: page.url, title: page.title, html: page.html }),
+      body: JSON.stringify({ url: page.url, title: page.title, html: page.html,
+                             ...(opts.integration ? { integration: opts.integration } : {}) }),
     });
   } catch (e) {
     return fail(tabId, `Patchwork is not reachable at ${opts.controlUrl}`);
   }
   if (resp.status === 401) return fail(tabId, 'token rejected: copy it again from Patchwork');
   if (resp.status === 413) return fail(tabId, 'page too large to send');
+  if (resp.status === 422 && opts.integration) {
+    return fail(tabId, `Patchwork has no integration ${opts.integration}: pick another one in the popup`);
+  }
   if (!resp.ok) return fail(tabId, `Patchwork answered HTTP ${resp.status}`);
   const created = await resp.json();
 
@@ -132,4 +142,9 @@ async function sendActiveTab(tab) {
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === 'send-page') sendActiveTab(tab);
 });
-chrome.action.onClicked.addListener(tab => { sendActiveTab(tab); });
+// The popup's "Send this page" button (the toolbar button opens the popup, V15).
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== 'send-page') return false;
+  sendActiveTab().then(sendResponse, e => sendResponse({ ok: false, error: String(e && e.message || e) }));
+  return true;  // answer asynchronously
+});

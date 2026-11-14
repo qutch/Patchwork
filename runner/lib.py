@@ -157,6 +157,76 @@ def check_one_of(fields: dict, name: str, values: list) -> None:
         raise Quarantine("VALIDATION_FAILED", f"{name}: {fields.get(name)!r} not in {values}")
 
 
+def rule_problem_number(value: Any, min: float | None = None, max: float | None = None) -> str | None:
+    """contracts V15 `number`: the value casts to a finite float (as `cast: float` does: commas removed),
+    within the inclusive bounds. None if it passes, else what is wrong."""
+    if isinstance(value, bool) or value in (None, ""):
+        return f"expected a number, got {value!r}"
+    try:
+        n = float(str(value).replace(",", "").strip())
+    except ValueError:
+        return f"expected a number, got {value!r}"
+    if n != n or n in (float("inf"), float("-inf")):
+        return f"expected a number, got {value!r}"
+    if min is not None and n < min:
+        return f"{n:g} is below the minimum {min:g}"
+    if max is not None and n > max:
+        return f"{n:g} is above the maximum {max:g}"
+    return None
+
+
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def rule_problem_date(value: Any) -> str | None:
+    """contracts V15 `date`: an ISO calendar date YYYY-MM-DD (a real day)."""
+    from datetime import date as _date
+    if isinstance(value, datetime):
+        value = value.date().isoformat()
+    elif isinstance(value, _date):
+        value = value.isoformat()
+    s = str(value if value is not None else "").strip()
+    if not _ISO_DATE.match(s):
+        return f"expected a date YYYY-MM-DD, got {value!r}"
+    try:
+        _date.fromisoformat(s)
+    except ValueError:
+        return f"{s!r} is not a real date"
+    return None
+
+
+def rule_problem_url(value: Any) -> str | None:
+    """contracts V15 `url`: an absolute http(s) URL with a host and no whitespace."""
+    from urllib.parse import urlsplit
+    s = str(value if value is not None else "").strip()
+    try:
+        parts = urlsplit(s)
+    except ValueError:
+        parts = None
+    if not s or re.search(r"\s", s) or parts is None or parts.scheme.lower() not in ("http", "https") \
+            or not parts.hostname:
+        return f"expected an absolute http(s) URL, got {value!r}"
+    return None
+
+
+def check_number(fields: dict, name: str, min: float | None = None, max: float | None = None) -> None:
+    problem = rule_problem_number(fields.get(name), min, max)
+    if problem:
+        raise Quarantine("VALIDATION_FAILED", f"{name}: {problem}")
+
+
+def check_date(fields: dict, name: str) -> None:
+    problem = rule_problem_date(fields.get(name))
+    if problem:
+        raise Quarantine("VALIDATION_FAILED", f"{name}: {problem}")
+
+
+def check_url(fields: dict, name: str) -> None:
+    problem = rule_problem_url(fields.get(name))
+    if problem:
+        raise Quarantine("VALIDATION_FAILED", f"{name}: {problem}")
+
+
 def check_exists(http, target: str, path: str, params: dict, fields: dict, record: dict, where: str) -> None:
     resp = http.request(target, "GET", render(path, fields, record, url=True),
                         params={k: render(v, fields, record) for k, v in params.items()} or None)

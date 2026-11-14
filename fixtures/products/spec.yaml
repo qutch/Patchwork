@@ -1,0 +1,45 @@
+# Test fixture (contracts V15): a page integration that is not about jobs. Product pages sent from the
+# extension with `integration: track_product_prices` -> a product tracker form (demo_apps/tracker_form with
+# the questions in fixtures/products/pages.py FORM_QUESTIONS). Synthetic pages, JSON-LD Product. Tests
+# override sink.url. Uses the V15 validation rules number/date/url.
+spec_version: 1
+name: track_product_prices
+intent: "Track product prices"
+source:
+  kind: api
+  base_url: patchwork://control
+  list: {method: GET, path: /api/pages, params: {since: "{cursor}", integration: track_product_prices}}
+  record_id: id
+  text_field: text
+  html_field: html
+  cursor_field: seq
+extract:
+  route_by: site
+  parsers:
+    - id: shop_a
+      match: {site: shop-a.example.com}
+      origin: {kind: fixture}
+      fields:
+        name:     {css: "h1.product-title"}
+        price:    {jsonld: "offers.price", jsonld_type: Product}
+        released: {jsonld: "releaseDate", jsonld_type: Product}
+        image:    {jsonld: "image", jsonld_type: Product}
+validate:
+  - {field: name, rule: required}
+  - {field: price, rule: number, min: 0, max: 100000}
+  - {field: released, rule: date}
+  - {field: image, rule: url}
+dedupe: {key: [record.canonical_url]}
+sink:
+  kind: form
+  url: http://127.0.0.1:18010/
+  fields:
+    Product:    {from: name}
+    Price:      {from: price}
+    Released:   {from: released}
+    Image:      {from: image}
+    Link:       {from: record.canonical_url}
+    Date Added: {from: record.captured_date}
+  submit: Submit
+  verify: {confirmation_text: "Your response has been recorded"}
+on_error: quarantine

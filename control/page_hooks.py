@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from control.autorun import AutoRunner, is_page_integration, is_page_spec, version_spec
+from control.autorun import AutoRunner, default_page_integration, is_page_integration, is_page_spec, version_spec
 from runner.html import platform_of
 from runner.store import Store
 
@@ -104,6 +104,7 @@ class PageHooks:
         if agent is None or not hasattr(agent, "start_learn"):
             return []
         started = []
+        default = default_page_integration()
         with self._lock:  # one decision at a time, so two finishing runs can't both start a site's learn
             learns = self.inbox.learns(name)
             for pid in page_ids:
@@ -112,6 +113,8 @@ class PageHooks:
                 page = self.inbox.get(pid)
                 if page is None:
                     continue
+                if (page.get("integration") or default or name) != name:
+                    continue  # V15: a page is learned only for the integration it was sent to
                 site = page["site"]
                 if self._site_active(agent, learns, site) or any(  # one learn per platform at a time
                         self._site_active(agent, learns, s) for s in {x["site"] for x in learns.values()}
