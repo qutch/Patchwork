@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from control.credentials import list_credentials, redact
+from control import credentials as store
+from control.credentials import list_credentials, redact, workspace_credentials
 
 router = APIRouter(prefix="/api")
 
@@ -21,6 +23,22 @@ router = APIRouter(prefix="/api")
 def get_credentials() -> list[dict[str, Any]]:
     """[{name, set, used_by: [integration, ...]}] for every credential a spec in the workspace references."""
     return list_credentials()
+
+
+class CredentialBody(BaseModel):
+    name: str
+    value: str
+
+
+@router.post("/credentials", status_code=201)
+def post_credential(body: CredentialBody) -> dict[str, Any]:
+    """Add or replace a credential from the UI. The value goes to `.env` and the environment; the response
+    never carries it."""
+    try:
+        store.set_credential(body.name, body.value)
+    except ValueError as e:
+        raise HTTPException(422, str(e).replace(body.value, "***")) from None
+    return {"name": body.name, "set": True, "used_by": workspace_credentials().get(body.name, [])}
 
 
 class RedactErrorsMiddleware:

@@ -43,10 +43,10 @@ def runner_env(spec: Any = None) -> dict[str, str]:
     name in `credential_names(spec)` only, PATCHWORK_CRED__<NAME>=<value from .env>. Raises CredentialError
     (message names the credential, never a value) when one is not set or names a model key. Without a spec
     (generated tests, v1/v2 integrations) no credential is added."""
-    from control.credentials import workspace_credentials
+    from control.credentials import known_names
 
     names = credential_names(spec)
-    plain = {*workspace_credentials(), *names}
+    plain = {*known_names(), *names}
     keep = {k: v for k, v in os.environ.items()
             if not SECRET_ENV.search(k) and not k.startswith(CRED_PREFIX) and k not in plain}
     keep["PYTHONPATH"] = str(REPO_ROOT)
