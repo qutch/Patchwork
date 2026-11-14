@@ -53,7 +53,22 @@ def fetch_contract(spec: Any) -> dict[str, Any]:
         from runner.forms import fetch_form_contract
 
         return fetch_form_contract(spec.sink.url)
+    if getattr(spec.sink, "kind", "api") == "airtable":  # contracts V14: the table's writable fields
+        return fetch_airtable_contract(spec.sink.base_id, spec.sink.table, spec.sink.auth.credential)
     return fetch_sink_openapi(spec.sink.base_url)
+
+
+def fetch_airtable_contract(base_id: str, table: str, credential: str) -> dict[str, Any]:
+    """The Airtable table's V14 contract, read with the named credential from this process's environment
+    (.env). Errors name the credential, never its value."""
+    from runner import airtable, credentials
+    from runner.lib import Quarantine
+
+    try:
+        return airtable.fetch_contract(base_id, table, credentials.headers({"credential": credential}),
+                                       credential=credential)
+    except Quarantine as q:
+        raise RuntimeError(f"{q.code}: {credentials.redact(q.detail, names=[credential])}") from None
 
 
 def compile_and_test(spec_path: str | Path, *, examples_path: str | Path | None = None,

@@ -53,6 +53,18 @@ class FakeHttp:
     def form_contract(self, url: str) -> dict:
         raise RuntimeError("FakeHttp has no form contract; tests read contract/openapi.json")
 
+    # -- Airtable sinks (contracts V14): the same bookkeeping as an API write to POST /records --------
+    def airtable_submit(self, base_id: str, table: str, values: dict) -> FakeResponse:
+        self.calls.append(("sink", "POST", "/records", dict(values)))
+        if self.sink_status < 300:
+            self.rows.append(dict(values))
+        return FakeResponse(200 if self.sink_status < 300 else self.sink_status,
+                            {"id": f"recFAKE{len(self.rows):010d}"} if self.sink_status < 300 else
+                            {"error": {"type": "INVALID_REQUEST", "message": "rejected by FakeHttp"}})
+
+    def airtable_contract(self, base_id: str, table: str) -> dict:
+        raise RuntimeError("FakeHttp has no Airtable contract; tests read contract/openapi.json")
+
     def request(self, target: str, method: str, path: str, *, params: dict | None = None,
                 json: Any = None) -> FakeResponse:
         self.calls.append((target, method, path, json if json is not None else params))

@@ -38,10 +38,19 @@ class SettingsUpdate(BaseModel):
     learn_policy: Literal["auto", "approve"] | None = None
 
 
+class Destination(BaseModel):
+    """V14: teach a page→form recording into an Airtable table instead of the recorded form."""
+    kind: Literal["airtable"]
+    base_id: str
+    table: str
+    credential: str = "AIRTABLE_TOKEN"
+
+
 class BuildRequest(BaseModel):
     recording_id: str
     name: str | None = None  # default: "jobs_to_tracker" for page→form recordings, else the agent's choice
     form_url: str | None = None  # page→form only: teach against this form instead of the one recorded (V9)
+    destination: Destination | None = None  # page→form only: write to this destination instead (V14)
 
 
 class ResumeRequest(BaseModel):
@@ -185,6 +194,41 @@ def retarget_recording_form(recording_id: str, form_url: str) -> None:
     out.write_text(json.dumps(cands, indent=2))
 
 
+def retarget_recording_destination(recording_id: str, dest: Destination | None) -> None:
+    """V14: record (or clear) the destination a page→form recording is taught into, as `destination` in
+    $WS/recordings/<id>/candidates.json (the agents read it there). The recorded form (`sink.url`) stays as
+    is; matching labels to the table's fields is the TEACH agent's job (it asks about every label without
+    a field of the same name, never guesses)."""
+    from spec.models import AIRTABLE_BASE_ID
+    from runner.credentials import check_name
+    if dest is not None:
+        if not recordings.is_page_form(recording_id):
+            raise HTTPException(422, f"recording {recording_id} is not a page→form recording; destination does not apply")
+        if not AIRTABLE_BASE_ID.match(dest.base_id):
+            raise HTTPException(422, "destination.base_id must look like appXXXXXXXXXXXXXX (from the base URL)")
+        if not dest.table.strip():
+            raise HTTPException(422, "destination.table must be a table name or id")
+        try:
+            check_name(dest.credential)
+        except ValueError as e:
+            raise HTTPException(422, f"destination.credential: {e}") from None
+    cands = recordings._candidates(recording_id)
+    if not isinstance(cands, dict) or not isinstance(cands.get("sink"), dict):
+        if dest is None:
+            return
+        raise HTTPException(409, f"recording {recording_id} has no candidates yet")
+    new = dest.model_dump() if dest is not None else None
+    if cands.get("destination") == new:
+        return
+    if new is None:
+        cands.pop("destination", None)
+    else:
+        cands["destination"] = new
+    out = recordings.recording_dir(recording_id) / "candidates.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(cands, indent=2))
+
+
 @api.post("/integrations/build")
 def build(body: BuildRequest, request: Request) -> dict[str, str]:
     require_ai(request)
@@ -192,6 +236,8 @@ def build(body: BuildRequest, request: Request) -> dict[str, str]:
     name = body.name or (PAGE_INTEGRATION if recordings.is_page_form(body.recording_id) else None)
     if body.form_url is not None:
         retarget_recording_form(body.recording_id, body.form_url)
+    if body.destination is not None or recordings.is_page_form(body.recording_id):
+        retarget_recording_destination(body.recording_id, body.destination)  # a build without one clears it
     svc = agent_service(request)
     if name is not None and _accepts_name(svc.start_build):
         return {"thread_id": svc.start_build(body.recording_id, name)}

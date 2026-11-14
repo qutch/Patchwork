@@ -175,7 +175,8 @@ class ScriptedV2Mixin:
         path = workspace_dir() / "integrations" / name / f"v{active}" / "spec.yaml"
         if not active or not path.exists():
             return False
-        return ((yaml.safe_load(path.read_text()) or {}).get("sink") or {}).get("kind") == "form"
+        from agents.deep_tools import is_label_keyed
+        return is_label_keyed(yaml.safe_load(path.read_text()) or {})  # form or Airtable (V14): same repair
 
     def _repair_form(self, t: _Thread, inc: dict) -> Any:
         from agents.deep_tools import ToolContext, seed_repair_workdir, tool_functions
@@ -188,7 +189,9 @@ class ScriptedV2Mixin:
                  {"content": "Compile and test the new version", "status": "pending"},
                  {"content": "Request deploy", "status": "pending"}]
         self.emit(t, "todos", todos=todos)
-        self.emit(t, "subagent_start", name="repairer", task=f"Incident #{inc['id']}: {inc['type']} (form)")
+        kind = (ctx.spec_dict().get("sink") or {}).get("kind", "form")
+        dest = "Airtable table" if kind == "airtable" else "form"
+        self.emit(t, "subagent_start", name="repairer", task=f"Incident #{inc['id']}: {inc['type']} ({kind})")
         self._call(t, "repairer", fns, "get_incident", incident_id=inc["id"])
         d = json.loads(self._call(t, "repairer", fns, "diff_openapi"))
         patch = list(d.get("patch_hint") or [])
@@ -207,7 +210,8 @@ class ScriptedV2Mixin:
         if not patch:
             raise RuntimeError("diff_openapi found nothing to patch")
         renames = ", ".join(f"{op['from'].rsplit('/', 1)[-1]} → {op['path'].rsplit('/', 1)[-1]}" for op in patch if op["op"] == "move")
-        self.emit(t, "message", agent="repairer", text=f"The form renamed a question ({renames or 'see patch'}). Patching sink.fields.")
+        what = "a field" if kind == "airtable" else "a question"
+        self.emit(t, "message", agent="repairer", text=f"The {dest} renamed {what} ({renames or 'see patch'}). Patching sink.fields.")
         todos[0]["status"], todos[1]["status"] = "completed", "in_progress"
         self.emit(t, "todos", todos=todos)
         out = self._call(t, "repairer", fns, "propose_spec_patch", patch=patch, reason="follow the form's question rename")
@@ -227,5 +231,5 @@ class ScriptedV2Mixin:
         todos[2]["status"], todos[3]["status"] = "completed", "in_progress"
         self.emit(t, "todos", todos=todos)
         self._call(t, "supervisor", fns, "request_deploy", version=ctx.last_version["version"],
-                   summary=f"Follow the tracker form's change ({renames or 'see patch'}).")
+                   summary=f"Follow the tracker {dest}'s change ({renames or 'see patch'}).")
         return {"model_calls": 0, **(ctx.deploy_result or {"deployed": False, "version": ctx.last_version["version"]})}

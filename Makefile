@@ -63,6 +63,11 @@ smoke-v2:
 smoke-v2-offline:
 	$(PY) scripts/smoke_v2.py --in-process
 
+# smoke-v2-airtable-offline: the same beats with an Airtable destination (V14), into the fake Airtable.
+.PHONY: smoke-v2-airtable-offline
+smoke-v2-airtable-offline:
+	$(PY) scripts/smoke_v2.py --sink airtable --in-process
+
 # v2 stage (I-2): control plane on :38091 over workspace-v2/ (gitignored; holds the TEACH + Greenhouse/Ashby baseline
 # built on the demo Google Form), deep agent. Never touches 8000-8003/5180. smoke-v2-stage runs the 2-minute script
 # against it on the demo Form + Sheet: it pauses for you to rename "Company" -> "Employer" in the Form editor.

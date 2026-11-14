@@ -84,7 +84,8 @@ Steps for a CONTRACT_CHANGED incident (call tools, don't describe them):
 4. propose_spec_patch with ALL operations in one patch, then migrate_golden_examples, then validate_spec.
 5. Reply with 2 sentences: what changed and why.
 For NEW_SOURCE_FORMAT: get_quarantined, write a new parser, test_parser, propose_spec_patch, add_test_case.
-For a FORM sink (sink.kind form; its fields are keyed by the form's question labels): get_incident, diff_openapi,
+For a FORM or AIRTABLE sink (sink.kind form/airtable; its fields are keyed by the form's question labels or the
+table's field names): get_incident, diff_openapi,
 then propose_spec_patch with exactly the ops in diff_openapi.patch_hint (a `move` per renamed question, e.g.
 {{"op": "move", "from": "/sink/fields/Company", "path": "/sink/fields/Employer"}}), then migrate_golden_examples.
 Ask (ask_user, the suggested_questions word for word) only if diff_openapi returned suggested_questions.
@@ -132,6 +133,6 @@ for site {site}, save it."""
 LEARN_NUDGE = """No parser has been saved yet. Delegate to the learner once more: get_page, test_page_parser,
 then save_parser with the parser that passed."""
 
-FORM_REPAIR_HINT = """The sink is a FORM (sink.fields keyed by question labels). Don't read files (the golden
+FORM_REPAIR_HINT = """The sink is a FORM or an AIRTABLE table (sink.fields keyed by labels). Don't read files (the golden
 examples hold whole pages). Plan: repairer -> get_incident, diff_openapi, propose_spec_patch with exactly
 diff_openapi.patch_hint, migrate_golden_examples; then builder -> compile_spec; then request_deploy."""

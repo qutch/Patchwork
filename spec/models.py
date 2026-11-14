@@ -327,7 +327,54 @@ class FormSink(_Strict):
         return v
 
 
-Sink = Annotated[ApiSink | FormSink, Field(discriminator="kind")]
+class AirtableVerify(_Strict):
+    read_back: bool = True
+
+
+AIRTABLE_BASE_ID = re.compile(r"^app[A-Za-z0-9]{14}$")
+
+
+class AirtableSink(_Strict):
+    """v3 (contracts V14): records created in an Airtable table through its REST API. Keys of `fields`
+    are Airtable field NAMES (label-keyed, like a form's); values use the same vocabulary and reference
+    checks as `body`. `auth` names the credential (V13); a value never appears in a spec."""
+
+    kind: Literal["airtable"]
+    base_id: str
+    table: str
+    auth: Auth
+    fields: dict[str, ValueSource]
+    typecast: bool = False
+    verify: AirtableVerify | None = None
+
+    @field_validator("base_id")
+    @classmethod
+    def _base_id(cls, v: str) -> str:
+        if not AIRTABLE_BASE_ID.match(v):
+            raise ValueError(f"airtable base_id {v!r} must look like app + 14 letters/digits "
+                             "(from the base URL airtable.com/appXXXXXXXXXXXXXX/...)")
+        return v
+
+    @field_validator("table")
+    @classmethod
+    def _table(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("airtable table must be a table name or id (tbl...)")
+        return v
+
+    @field_validator("fields")
+    @classmethod
+    def _fields(cls, v: dict[str, ValueSource]) -> dict[str, ValueSource]:
+        if not v:
+            raise ValueError("airtable sink needs at least one field")
+        if any(not name.strip() for name in v):
+            raise ValueError("airtable field names must not be empty")
+        return v
+
+
+LABEL_KEYED_SINKS = ("form", "airtable")  # sinks whose `fields` are keyed by the destination's own labels
+
+Sink = Annotated[ApiSink | FormSink | AirtableSink, Field(discriminator="kind")]
 
 
 class Assumption(_Strict):
@@ -409,7 +456,7 @@ class Spec(_Strict):
         return "body" if isinstance(self.sink, ApiSink) else "fields"
 
     def sink_values(self) -> dict[str, ValueSource]:
-        """The sink's value mapping: `body` for API sinks, `fields` for form sinks."""
+        """The sink's value mapping: `body` for API sinks, `fields` for form and Airtable sinks."""
         return self.sink.body if isinstance(self.sink, ApiSink) else self.sink.fields
 
     def _templated_calls(self) -> list[tuple[str, str]]:

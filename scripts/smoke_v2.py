@@ -7,6 +7,16 @@
     PATCHWORK_FORM=google python scripts/smoke_v2.py         # against `make up` and the demo Google Form + Sheet:
                                                              # waits for you to rename the question by hand, checks
                                                              # the Sheet's CSV row delta (submits ~6 real rows)
+    python scripts/smoke_v2.py --sink airtable --in-process  # V14: the same beats into the fake Airtable
+                                                             # (demo_apps.fake_airtable, a table without Email like
+                                                             # the real base; renamed via /admin/rename)
+    python scripts/smoke_v2.py --sink airtable --bootstrap   # against `make up` and the real base
+                                                             # $PATCHWORK_AIRTABLE_BASE_ID / $PATCHWORK_AIRTABLE_TABLE
+                                                             # (credential AIRTABLE_TOKEN): pauses for the rename
+
+With --sink airtable, TEACH retargets `fixture-jobs` to the table (POST /api/integrations/build `destination`);
+the recording's Email question has no field in the real table, so TEACH asks and the smoke answers "Skip this
+field" (bench.v2.client.presenter_answer).
 
 Beats: v2 reset to baseline -> 3 known postings (code, 0 AI calls) -> a new platform (learned now) -> a second
 posting of it (code, 0 AI calls) -> rename "Company" -> "Employer" -> next posting held before any write ->
@@ -101,8 +111,58 @@ class GoogleForm:
         return row.get("Link")
 
 
+class AirtableTable:
+    """An Airtable table as the destination (V14): the fake (rows from /admin/records, rename via /admin/rename)
+    or a real base (rows through the REST API with the credential; a person renames the field)."""
+    kind = "airtable"
+
+    def __init__(self, base_id: str, table: str, credential: str = "AIRTABLE_TOKEN", *, fake_url: str | None = None):
+        self.base_id, self.table, self.credential, self.fake_url = base_id, table, credential, fake_url
+        if fake_url:
+            self.kind = "fake airtable"
+
+    def destination(self) -> dict:
+        return {"kind": "airtable", "base_id": self.base_id, "table": self.table, "credential": self.credential}
+
+    def reset(self) -> None:
+        if self.fake_url:
+            httpx.post(f"{self.fake_url}/admin/reset", timeout=10).raise_for_status()
+            return
+        input(f"  Reset by hand: in Airtable the field must read 'Company' (not 'Employer') in table {self.table!r}; "
+              "delete the rehearsal rows if you want a clean screen. Press Enter when done ... ")
+
+    def rows(self) -> list[dict]:
+        if self.fake_url:
+            return httpx.get(f"{self.fake_url}/admin/records", params={"table": self.table}, timeout=10).json()
+        from runner import airtable, credentials
+        out, offset = [], None
+        headers = credentials.headers({"credential": self.credential})
+        while True:
+            r = httpx.get(f"{airtable.api_url()}/{self.base_id}/{self.table}", headers=headers, timeout=20,
+                          params={"pageSize": 100, **({"offset": offset} if offset else {})})
+            check(r.status_code == 200, f"Airtable list records -> {r.status_code} {credentials.redact(r.text[:200])}")
+            data = r.json()
+            out += [rec.get("fields") or {} for rec in data.get("records") or []]
+            offset = data.get("offset")
+            if not offset:
+                return out
+
+    def rename(self, old: str, new: str) -> None:
+        if self.fake_url:
+            r = httpx.post(f"{self.fake_url}/admin/rename", json={"table": self.table, "from": old, "to": new}, timeout=10)
+            check(r.status_code == 200, f"fake Airtable rename -> {r.status_code} {r.text[:200]}")
+            return
+        input(f"  In Airtable, rename the field '{old}' to '{new}' in table {self.table!r}. Press Enter when done ... ")
+
+    def company(self, row: dict) -> Any:
+        return row.get("Employer") or row.get("Company")
+
+    def link(self, row: dict) -> Any:
+        return row.get("Link")
+
+
 class Smoke:
-    def __init__(self, c: Control, form: FixtureForm | GoogleForm, *, timeout: float, agent: str):
+    def __init__(self, c: Control, form: FixtureForm | GoogleForm | AirtableTable, *, timeout: float, agent: str):
         self.c, self.form, self.timeout, self.agent = c, form, timeout, agent
         self.key = {e["file"]: e for e in load_key()}
         self.timings: list[tuple[str, float, bool, str]] = []
@@ -156,13 +216,18 @@ class Smoke:
     # -- bootstrap (what I-2 does off camera) --------------------------------------------------
     def bootstrap(self, retarget: Callable[[], Any] | None = None, form_url: str | None = None) -> None:
         def teach() -> str:
-            body = {"recording_id": "fixture-jobs", "name": NAME}
-            if form_url:  # teach against this run's form, not the one in the recording (V9 build form_url)
+            body: dict[str, Any] = {"recording_id": "fixture-jobs", "name": NAME}
+            if isinstance(self.form, AirtableTable):  # V14: teach into the table instead of the recorded form
+                body["destination"] = self.form.destination()
+            elif form_url:  # teach against this run's form, not the one in the recording (V9 build form_url)
                 body["form_url"] = form_url
             tid = self.c.post("/api/integrations/build", body)["thread_id"]
-            d = self.c.answer_until_deploy(tid, self.timeout)
+            asked: list = []
+            d = self.c.answer_until_deploy(tid, self.timeout, log=asked)
             moved = retarget() if retarget else None
-            return f"v{d.get('version')} from fixture-jobs" + (f"; form URL retargeted to {moved['to']}" if moved else "")
+            said = "".join(f"; asked {q['question']!r} -> {q['answer']!r}" for q in asked)
+            return (f"v{d.get('version')} from fixture-jobs" + (f"; form URL retargeted to {moved['to']}" if moved else "")
+                    + said)
 
         self.beat("bootstrap: TEACH jobs_to_tracker", teach)
         for f in BOOTSTRAP:
@@ -294,6 +359,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="smoke_v2", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--control", default=os.environ.get("PATCHWORK_CONTROL", "http://127.0.0.1:8000"))
     ap.add_argument("--form", choices=("fixture", "google"), default=os.environ.get("PATCHWORK_FORM", "fixture"))
+    ap.add_argument("--sink", choices=("form", "airtable"), default=os.environ.get("PATCHWORK_SMOKE_SINK", "form"),
+                    help="airtable: TEACH into an Airtable table (the fake with --in-process, else the real base)")
+    ap.add_argument("--airtable-base", default=os.environ.get("PATCHWORK_AIRTABLE_BASE_ID"))
+    ap.add_argument("--airtable-table", default=os.environ.get("PATCHWORK_AIRTABLE_TABLE", "Applications"))
+    ap.add_argument("--credential", default=None,
+                    help="credential name for --sink airtable (default AIRTABLE_TOKEN; in-process: FAKE_AIRTABLE_PAT)")
     ap.add_argument("--form-url", default=os.environ.get("PATCHWORK_TRACKER_FORM_URL", "http://127.0.0.1:18010/"))
     ap.add_argument("--sheet-csv", default=os.environ.get("PATCHWORK_DEMO_SHEET_CSV"))
     ap.add_argument("--in-process", action="store_true", help="own stack on free ports, scripted agent, fixture form")
@@ -308,16 +379,26 @@ def main(argv: list[str] | None = None) -> int:
             return _in_process(args)
         c = Control(args.control)
         c.get("/api/health")
-        form = GoogleForm(args.sheet_csv) if args.form == "google" else FixtureForm(args.form_url, c)
-        if args.form == "google" and not args.sheet_csv:
+        if args.sink == "airtable":
+            if not args.airtable_base:
+                print("--sink airtable needs PATCHWORK_AIRTABLE_BASE_ID (or --airtable-base)", file=sys.stderr)
+                return 2
+            from control.api.settings import load_dotenv
+            load_dotenv()  # the credential for reading rows back; never printed
+            form = AirtableTable(args.airtable_base, args.airtable_table, args.credential or "AIRTABLE_TOKEN")
+        else:
+            form = GoogleForm(args.sheet_csv) if args.form == "google" else FixtureForm(args.form_url, c)
+        if args.sink == "form" and args.form == "google" and not args.sheet_csv:
             print("PATCHWORK_FORM=google needs PATCHWORK_DEMO_SHEET_CSV (docs/contracts.md V0)", file=sys.stderr)
             return 2
         s = Smoke(c, form, timeout=args.timeout, agent=_agent_kind(c))
-        print(f"smoke-v2 against {args.control}, {form.kind} form, {s.agent} agent")
+        print(f"smoke-v2 against {args.control}, {form.kind} destination, {s.agent} agent")
         if args.bootstrap:
             s.bootstrap(form_url=(os.environ.get("PATCHWORK_DEMO_FORM_URL") if args.form == "google" else args.form_url))
         s.run()
-        if args.form == "google":
+        if args.sink == "airtable":
+            print(f"  reminder: rename 'Employer' back to 'Company' in the Airtable table {args.airtable_table!r}")
+        elif args.form == "google":
             print("  reminder: rename 'Employer' back to 'Company' in the Form editor (docs/demo-v2.md §4)")
     except (Fail, httpx.HTTPError, KeyError, AssertionError) as e:
         print(f"\nsmoke-v2 FAILED after {time.monotonic() - t0:.1f}s: {e}", file=sys.stderr)
@@ -338,6 +419,12 @@ def _in_process(args: argparse.Namespace) -> int:
         print("smoke-v2 --in-process needs the integrated stack:", *gaps, sep="\n  - ", file=sys.stderr)
         return 2
     ws = args.workspace or Path(tempfile.mkdtemp(prefix="patchwork-smoke-v2-"))
+    if args.sink == "airtable":
+        try:
+            return _in_process_airtable(args, ws)
+        finally:
+            if args.workspace is None:
+                shutil.rmtree(ws, ignore_errors=True)
     try:
         with V2Stack(ws) as st:
             c = Control(st.control, timeout=120)
@@ -348,6 +435,37 @@ def _in_process(args: argparse.Namespace) -> int:
     finally:
         if args.workspace is None:
             shutil.rmtree(ws, ignore_errors=True)
+    return 0
+
+
+def _in_process_airtable(args: argparse.Namespace, ws: Path) -> int:
+    """The 2-minute script into the fake Airtable (a table without Email, like the real base) on a free port."""
+    from bench.stack import Server
+    from bench.v2.stack import V2Stack
+    from demo_apps.fake_airtable.app import BASE_ID, REAL_BASE_FIELDS, TABLE, TOKEN, create_app
+
+    # control.ops.runner_env strips *_TOKEN variables; until the credential pass-through (V13, A1) reaches the
+    # runner, the in-process smoke names a credential the strip keeps. --credential AIRTABLE_TOKEN once it has.
+    credential = args.credential or "FAKE_AIRTABLE_PAT"
+    old = {k: os.environ.get(k) for k in ("PATCHWORK_AIRTABLE_API_URL", credential)}
+    with Server(create_app(fields=REAL_BASE_FIELDS)) as fake:
+        os.environ["PATCHWORK_AIRTABLE_API_URL"] = fake.url + "/v0"
+        os.environ[credential] = TOKEN
+        try:
+            with V2Stack(ws) as st:
+                c = Control(st.control, timeout=120)
+                table = AirtableTable(BASE_ID, TABLE, credential, fake_url=fake.url)
+                s = Smoke(c, table, timeout=args.timeout, agent="scripted")
+                print(f"smoke-v2 in-process: control {st.control}, fake Airtable {fake.url} (no Email field), "
+                      "scripted agent")
+                s.bootstrap()
+                s.run()
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
     return 0
 
 
