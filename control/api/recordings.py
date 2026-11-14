@@ -23,6 +23,18 @@ from runner.store import workspace_dir
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ID = "fixture"
 FIXTURE_PATH = REPO_ROOT / "fixtures" / "recording.json"
+# v2 (V11): the page→form teaching recording, made by W2 (`scripts/make_recording_jobs.py`).
+FIXTURE_JOBS_ID = "fixture-jobs"
+FIXTURE_JOBS_DIR = REPO_ROOT / "fixtures" / "recording_jobs"
+
+
+def fixture_paths() -> dict[str, Path]:
+    """Built-in recording ids → recording.json (read at call time so tests can point them elsewhere)."""
+    return {FIXTURE_ID: FIXTURE_PATH, FIXTURE_JOBS_ID: FIXTURE_JOBS_DIR / "recording.json"}
+
+
+def is_fixture(recording_id: str) -> bool:
+    return recording_id in fixture_paths() and (recording_id == FIXTURE_ID or fixture_paths()[recording_id].exists())
 
 router = APIRouter(prefix="/api/recordings", tags=["recordings"])
 
@@ -53,8 +65,8 @@ def recording_dir(recording_id: str) -> Path:
     return workspace_dir() / "recordings" / recording_id
 
 
-def _fixture() -> dict[str, Any]:
-    return json.loads(FIXTURE_PATH.read_text())
+def _fixture(recording_id: str = FIXTURE_ID) -> dict[str, Any]:
+    return json.loads(fixture_paths()[recording_id].read_text())
 
 
 def _summary(rec: dict[str, Any], recording_id: str, status: str = "stopped") -> dict[str, Any]:
@@ -65,7 +77,22 @@ def _summary(rec: dict[str, Any], recording_id: str, status: str = "stopped") ->
 
 def _candidates(recording_id: str) -> dict[str, Any] | None:
     path = recording_dir(recording_id) / "candidates.json"
+    if not path.exists() and recording_id in fixture_paths() and recording_id != FIXTURE_ID:
+        path = fixture_paths()[recording_id].with_name("candidates.json")  # shipped with the fixture
     return json.loads(path.read_text()) if path.exists() else None
+
+
+def is_page_form(recording_id: str) -> bool:
+    """A page→form recording (V11 candidates: source.kind page or sink.kind form)."""
+    if recording_id == FIXTURE_JOBS_ID:
+        return True
+    try:
+        cands = _candidates(recording_id)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(cands, dict):
+        return False
+    return (cands.get("sink") or {}).get("kind") == "form" or (cands.get("source") or {}).get("kind") == "page"
 
 
 def _session(recording_id: str):
@@ -88,8 +115,8 @@ def _entry(recording_id: str) -> dict[str, Any]:
 
 def load_recording(recording_id: str) -> dict[str, Any]:
     """The final recording.json (fixture or captured). 404 if unknown, 409 if still recording."""
-    if recording_id == FIXTURE_ID:
-        return _fixture()
+    if is_fixture(recording_id):
+        return _fixture(recording_id)
     path = recording_dir(recording_id) / "recording.json"
     if path.exists():
         return json.loads(path.read_text())
@@ -111,7 +138,7 @@ def start(body: StartRecording) -> dict[str, Any]:
 
 @router.get("")
 def list_all() -> list[dict[str, Any]]:
-    out = [{**_summary(_fixture(), FIXTURE_ID), "fixture": True}] if FIXTURE_PATH.exists() else []
+    out = [{**_summary(_fixture(rid), rid), "fixture": True} for rid, path in fixture_paths().items() if path.exists()]
     try:
         cap = importlib.import_module("capture.session")
     except ImportError:
@@ -122,8 +149,8 @@ def list_all() -> list[dict[str, Any]]:
 @router.post("/{recording_id}/stop")
 def stop(recording_id: str) -> dict[str, Any]:
     # sync def: FastAPI runs it in the threadpool, since session.stop() blocks up to 20 s
-    if recording_id == FIXTURE_ID:
-        return _summary(_fixture(), FIXTURE_ID)
+    if is_fixture(recording_id):
+        return _summary(_fixture(recording_id), recording_id)
     rec = _session(recording_id).stop()
     return {**_summary(rec, recording_id), **{k: v for k, v in _entry(recording_id).items() if v is not None},
             "status": "stopped", "n_events": len(rec.get("events", []))}
@@ -131,9 +158,10 @@ def stop(recording_id: str) -> dict[str, Any]:
 
 @router.get("/{recording_id}")
 def get(recording_id: str) -> dict[str, Any]:
-    if recording_id == FIXTURE_ID:
-        rec = _fixture()
-        return {**_summary(rec, FIXTURE_ID), "events": rec["events"], "candidates": _candidates(FIXTURE_ID)}
+    if is_fixture(recording_id):
+        rec = _fixture(recording_id)
+        return {**_summary(rec, recording_id), "events": rec["events"], "candidates": _candidates(recording_id),
+                "fixture": True}
     s = _session(recording_id)
     entry = _entry(recording_id)
     events = s.events()
@@ -151,13 +179,13 @@ async def stream(recording_id: str, request: Request, after: int | None = None):
     """SSE: one `capture` event per captured event (id = 1-based index), then `stopped`."""
     start_at = sse.resume_from(request, after)
 
-    if recording_id == FIXTURE_ID:
-        rec = _fixture()
+    if is_fixture(recording_id):
+        rec = _fixture(recording_id)
 
         async def fixture_gen():
             for i, ev in enumerate(rec["events"][start_at:], start=start_at + 1):
                 yield sse.sse("capture", ev, i)
-            yield sse.sse("stopped", _summary(rec, FIXTURE_ID), len(rec["events"]) + 1)
+            yield sse.sse("stopped", _summary(rec, recording_id), len(rec["events"]) + 1)
         return sse.stream(fixture_gen())
 
     s = _session(recording_id)

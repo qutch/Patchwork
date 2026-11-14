@@ -298,9 +298,11 @@ class RunManager:
         except Exception:  # noqa: BLE001 - the workspace may have been reset under us
             pass
         finally:
-            live.done = True
-            shutil.rmtree(live.scratch, ignore_errors=True)
-        self._notify_finished(live.run_id)
+            try:
+                self._notify_finished(live.run_id)  # before `done`, so stop()/stop_all() also wait for the hooks
+            finally:
+                live.done = True
+                shutil.rmtree(live.scratch, ignore_errors=True)
 
     @staticmethod
     def _stderr_tail(scratch: Path) -> str:
@@ -325,6 +327,25 @@ class RunManager:
         for r in [*live, *adopted]:
             while not r.done and time.monotonic() < deadline:
                 time.sleep(0.02)
+
+    def stop(self, integration: str, wait_s: float = 5) -> list[int]:
+        """Kill this integration's runs in progress (v2 demo reset); returns their ids."""
+        with self._lock:
+            live = [r for r in self._runs.values() if r.integration == integration and not r.done]
+            adopted = [a for a in self._adopted.values() if a.integration == integration and not a.done]
+        for r in live:
+            if r.proc.poll() is None:
+                r.proc.kill()
+        for a in adopted:
+            try:
+                os.kill(a.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + wait_s
+        for r in [*live, *adopted]:
+            while not r.done and time.monotonic() < deadline:
+                time.sleep(0.02)
+        return [r.run_id for r in [*live, *adopted] if r.run_id is not None]
 
     def clear(self) -> None:
         with self._lock:

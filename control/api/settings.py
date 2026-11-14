@@ -16,6 +16,8 @@ from typing import Any
 from runner.store import workspace_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+LEARN_POLICIES = ("auto", "approve")
+DEFAULT_LEARN_POLICY = "auto"
 
 
 def load_dotenv(path: Path | None = None) -> list[str]:
@@ -41,6 +43,9 @@ def load_dotenv(path: Path | None = None) -> list[str]:
 
 
 class Settings:
+    """`Settings().ai_enabled` / `Settings().learn_policy` read the file each time (no FastAPI import),
+    so the agents' tools can use them too."""
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
 
@@ -58,6 +63,12 @@ class Settings:
     @property
     def ai_enabled(self) -> bool:
         return bool(self._read()["ai_enabled"])
+
+    @property
+    def learn_policy(self) -> str:
+        """D2: "auto" (deploy a learned reader when every code check passes) or "approve" (always ask)."""
+        value = self._read().get("learn_policy", DEFAULT_LEARN_POLICY)
+        return value if value in LEARN_POLICIES else DEFAULT_LEARN_POLICY
 
     def update(self, **changes: Any) -> dict[str, Any]:
         with self._lock:

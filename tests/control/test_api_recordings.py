@@ -68,8 +68,11 @@ def fake_capture(workspace, monkeypatch):
 
 
 @pytest.fixture
-def plain_api(workspace):
-    """The API without demo apps (recordings don't need them)."""
+def plain_api(workspace, monkeypatch, tmp_path):
+    """The API without demo apps (recordings don't need them). The v2 `fixture-jobs` recording is
+    hidden here (tests/control/test_api_v2_demo.py covers it), so these v1 assertions hold after W2 lands."""
+    from control.api import recordings
+    monkeypatch.setattr(recordings, "FIXTURE_JOBS_DIR", tmp_path / "no-recording-jobs")
     with _Server(create_app(dotenv=False)) as srv, httpx.Client(base_url=srv.url, timeout=30) as c:
         yield c
 

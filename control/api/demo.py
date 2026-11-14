@@ -1,7 +1,8 @@
 """Demo controls (proxies to the demo apps) and the accuracy benchmark.
 
 App URLs: PATCHWORK_INBOX_URL, PATCHWORK_STOCKROOM_URL, PATCHWORK_STAGING_URL
-(defaults http://localhost:8001, :8002, :8003). Upstream status codes are passed through,
+(defaults http://localhost:8001, :8002, :8003), and for v2 the fixture tracker form
+PATCHWORK_TRACKER_FORM_URL (default http://127.0.0.1:18010; offline rehearsal only). Upstream status codes are passed through,
 so an Inbox without /admin/deliver answers 404 here too. Unreachable apps answer 502.
 """
 
@@ -25,7 +26,8 @@ router = APIRouter(prefix="/api", tags=["demo"])
 
 DEFAULTS = {"inbox": ("PATCHWORK_INBOX_URL", "http://localhost:8001"),
             "stockroom": ("PATCHWORK_STOCKROOM_URL", "http://localhost:8002"),
-            "staging": ("PATCHWORK_STAGING_URL", "http://localhost:8003")}
+            "staging": ("PATCHWORK_STAGING_URL", "http://localhost:8003"),
+            "tracker_form": ("PATCHWORK_TRACKER_FORM_URL", "http://127.0.0.1:18010")}
 
 
 def app_url(app: str) -> str:
@@ -153,5 +155,172 @@ def bench_results() -> JSONResponse:
         return JSONResponse(json.loads(path.read_text()))
     except FileNotFoundError:
         raise HTTPException(404, "no benchmark results yet: run `make bench`") from None
+    except ValueError as e:
+        raise HTTPException(500, f"{path.name} is not valid JSON: {e}") from None
+
+
+# ---- v2 demo controls (docs/contracts.md V9) ------------------------------------------------------
+
+V2_INTEGRATION = "jobs_to_tracker"
+BENCH_V2_RESULTS = Path(__file__).resolve().parents[2] / "bench" / "v2" / "results.json"
+
+
+class FormRename(BaseModel):
+    from_: str = Field(alias="from", min_length=1)
+    to: str = Field(min_length=1)
+
+
+class V2Target(BaseModel):
+    integration: str = V2_INTEGRATION
+
+
+@router.post("/demo/form/rename")
+async def form_rename(body: FormRename) -> JSONResponse:
+    """The break beat on the fixture tracker form (the Google Form is renamed by a person)."""
+    return await _proxy("tracker_form", "POST", "/admin/rename", {"from": body.from_, "to": body.to})
+
+
+def _baseline_dir() -> Path:
+    from runner.store import workspace_dir
+    return workspace_dir() / "v2_baseline"
+
+
+def _read_baseline() -> dict[str, Any] | None:
+    try:
+        return json.loads((_baseline_dir() / "baseline.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+@router.post("/demo/v2/save-baseline")
+def save_baseline(body: V2Target | None = None) -> dict[str, Any]:
+    """Remember the integration's versions, active pointer and agent work dir as the rehearsal baseline."""
+    import shutil
+    from datetime import datetime, timezone
+
+    name = (body or V2Target()).integration
+    store = Store()
+    active = store.active_version(name)
+    if active is None:
+        raise HTTPException(409 if store.versions(name) else 404, f"{name} has no active version to save as the baseline")
+    bdir = _baseline_dir()
+    work = ops.version_dir(name, 0).parent / "work"
+    if (bdir / "work").exists():
+        shutil.rmtree(bdir / "work")
+    bdir.mkdir(parents=True, exist_ok=True)
+    if work.is_dir():
+        shutil.copytree(work, bdir / "work")
+    baseline = {"integration": name, "active_version": active,
+                "versions": [v["version"] for v in store.versions(name)], "has_work": work.is_dir(),
+                "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    (bdir / "baseline.json").write_text(json.dumps(baseline, indent=2))
+    return baseline
+
+
+def cancel_threads(svc: Any, ids: list[str], timeout: float = 5.0) -> list[str]:
+    """Cancel some agent threads (learn/repair of the v2 integration), leaving the rest alone.
+    Uses the agent's own `cancel(thread_id)` if it has one, else ThreadedAgentService's internals the
+    way its `reset()` does (cancelled flag under its lock, wake, join)."""
+    import time
+
+    if svc is None or not ids:
+        return []
+    if hasattr(svc, "cancel"):
+        for tid in ids:
+            try:
+                svc.cancel(tid)
+            except KeyError:
+                pass
+        return list(ids)
+    lock, threads = getattr(svc, "_lock", None), getattr(svc, "_threads", None)
+    if lock is None or threads is None:
+        return []
+    with lock:
+        picked = [threads.pop(tid) for tid in ids if tid in threads]
+        for t in picked:
+            t.cancelled, t.pending, t.answer = True, None, None
+    for t in picked:
+        t.wake.set()
+    deadline = time.monotonic() + timeout
+    for t in picked:
+        if getattr(t, "worker", None) is not None:
+            t.worker.join(max(0.0, deadline - time.monotonic()))
+    return [t.id for t in picked]
+
+
+def _reset_integration_rows(name: str, keep_versions: list[int], active: int) -> dict[str, int]:
+    """Delete the integration's runs, records, processed keys, cursors and incidents, and versions
+    newer than the baseline. Other integrations' rows are never touched."""
+    import shutil
+
+    from runner.store import workspace_dir
+
+    store = Store()
+    db = store.db
+    run_ids = [r[0] for r in db.execute("SELECT id FROM runs WHERE integration=?", (name,))]
+    removed = {"runs": len(run_ids)}
+    removed["records"] = db.execute(
+        "DELETE FROM records WHERE run_id IN (SELECT id FROM runs WHERE integration=?)", (name,)).rowcount
+    db.execute("DELETE FROM runs WHERE integration=?", (name,))
+    removed["processed"] = db.execute("DELETE FROM processed WHERE integration=?", (name,)).rowcount
+    db.execute("DELETE FROM cursors WHERE integration=?", (name,))
+    removed["incidents"] = db.execute("DELETE FROM incidents WHERE integration=?", (name,)).rowcount
+    drop = [v["version"] for v in store.versions(name) if v["version"] not in keep_versions]
+    for v in drop:
+        db.execute("DELETE FROM versions WHERE name=? AND version=?", (name, v))
+        shutil.rmtree(ops.version_dir(name, v), ignore_errors=True)
+    removed["versions"] = len(drop)
+    db.execute("UPDATE integrations SET active_version=? WHERE name=?", (active, name))
+    store.close()
+    for rid in run_ids:
+        (workspace_dir() / "runs" / f"{rid}.jsonl").unlink(missing_ok=True)
+    return removed
+
+
+@router.post("/demo/v2/reset")
+async def v2_reset(request: Request) -> dict[str, Any]:
+    """Restore the saved baseline of jobs_to_tracker: stop its runs, cancel its learn (and repair)
+    threads, clear pages and its runs/records/processed/cursor/incidents, drop newer versions, put the
+    active pointer and the agent's work dir back. Never touches po_to_stockroom (v1's reset is unchanged)."""
+    import shutil
+
+    baseline = _read_baseline()
+    if baseline is None:
+        raise HTTPException(409, "no v2 baseline saved yet: POST /api/demo/v2/save-baseline first")
+    name = baseline["integration"]
+    state = request.app.state
+    state.auto.forget(name)
+    stopped = await run_in_threadpool(state.runs.stop, name)
+    svc = getattr(state, "agent", None)
+    thread_ids = [learn["thread_id"] for learn in state.inbox.learns(name).values()]
+    if svc is not None:
+        incident_ids = {str(i["id"]) for i in Store().incidents(name, status=None)}
+        for t in svc.list_threads():
+            if t.get("mode") == "repair" and str(t.get("subject")) in incident_ids:
+                thread_ids.append(t["thread_id"])
+    cancelled = await run_in_threadpool(cancel_threads, svc, thread_ids)
+    state.auto.forget(name)  # anything a cancelled thread queued on its way out
+    removed = await run_in_threadpool(_reset_integration_rows, name, baseline["versions"], baseline["active_version"])
+    removed["pages"] = state.inbox.clear()
+    work = ops.version_dir(name, 0).parent / "work"
+    if baseline.get("has_work") and (_baseline_dir() / "work").is_dir():
+        shutil.rmtree(work, ignore_errors=True)
+        shutil.copytree(_baseline_dir() / "work", work)
+    out: dict[str, Any] = {"ok": True, "integration": name, "active_version": baseline["active_version"],
+                           "removed": removed, "stopped_runs": stopped, "cancelled_threads": cancelled}
+    if os.environ.get("PATCHWORK_TRACKER_FORM_URL"):  # the offline fixture form: rows and labels back to default
+        status, _ = await _call("tracker_form", "POST", "/admin/reset")
+        out["form"] = {"status": status}
+    return out
+
+
+@router.get("/bench/v2")
+def bench_v2() -> JSONResponse:
+    """bench/v2/results.json (W5, V12; `PATCHWORK_BENCH_V2_RESULTS` overrides the path). 404 until it exists."""
+    path = Path(os.environ.get("PATCHWORK_BENCH_V2_RESULTS") or BENCH_V2_RESULTS)
+    try:
+        return JSONResponse(json.loads(path.read_text()))
+    except FileNotFoundError:
+        raise HTTPException(404, "no v2 benchmark results yet: run `make bench-v2`") from None
     except ValueError as e:
         raise HTTPException(500, f"{path.name} is not valid JSON: {e}") from None

@@ -32,11 +32,13 @@ EXTENSION_ORIGIN_REGEX = r"chrome-extension://[a-z0-9]+"
 # ---- request bodies ---------------------------------------------------------------------------
 
 class SettingsUpdate(BaseModel):
-    ai_enabled: bool
+    ai_enabled: bool | None = None
+    learn_policy: Literal["auto", "approve"] | None = None
 
 
 class BuildRequest(BaseModel):
     recording_id: str
+    name: str | None = None  # default: "jobs_to_tracker" for page→form recordings, else the agent's choice
 
 
 class ResumeRequest(BaseModel):
@@ -76,6 +78,19 @@ def agent_kind(svc: Any | None) -> str:
     if svc is None:
         return os.environ.get("PATCHWORK_AGENT", "scripted")
     return "scripted" if "Scripted" in type(svc).__name__ else "deep"
+
+
+PAGE_INTEGRATION = "jobs_to_tracker"
+
+
+def _accepts_name(fn) -> bool:
+    """V10 `start_build(recording_id, name=None)`; agents from before W3 take only the recording id."""
+    import inspect
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return "name" in params or any(p.kind is p.VAR_POSITIONAL for p in params.values()) or len(params) >= 2
 
 
 def require_ai(request: Request) -> None:
@@ -133,12 +148,16 @@ def health(request: Request) -> dict[str, Any]:
 def get_settings(request: Request) -> dict[str, Any]:
     kind = agent_kind(request.app.state.agent)
     model = "scripted" if kind == "scripted" else os.environ.get("PATCHWORK_MODEL", "")
-    return {"ai_enabled": request.app.state.settings.ai_enabled, "agent": kind, "model": model}
+    settings = request.app.state.settings
+    return {"ai_enabled": settings.ai_enabled, "agent": kind, "model": model, "learn_policy": settings.learn_policy}
 
 
 @api.put("/settings")
 def put_settings(body: SettingsUpdate, request: Request) -> dict[str, Any]:
-    request.app.state.settings.update(ai_enabled=body.ai_enabled)
+    changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not changes:
+        raise HTTPException(422, "send ai_enabled and/or learn_policy")
+    request.app.state.settings.update(**changes)
     return get_settings(request)
 
 
@@ -148,7 +167,11 @@ def put_settings(body: SettingsUpdate, request: Request) -> dict[str, Any]:
 def build(body: BuildRequest, request: Request) -> dict[str, str]:
     require_ai(request)
     recordings.load_recording(body.recording_id)  # 404 unknown, 409 still recording
-    return {"thread_id": agent_service(request).start_build(body.recording_id)}
+    name = body.name or (PAGE_INTEGRATION if recordings.is_page_form(body.recording_id) else None)
+    svc = agent_service(request)
+    if name is not None and _accepts_name(svc.start_build):
+        return {"thread_id": svc.start_build(body.recording_id, name)}
+    return {"thread_id": svc.start_build(body.recording_id)}
 
 
 @api.post("/incidents/{incident_id}/repair")

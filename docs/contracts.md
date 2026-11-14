@@ -511,6 +511,22 @@ quarantined records, then run once more (pages blocked by preflight were never f
 - Layouts: active parsers first (active spec order), then removed ones (newest first). Revert also answers
   `name, previous_version, removed_parser, dropped_examples` (golden examples the removed parser handled are dropped);
   404 for an unknown integration or parser.
+- Settings: `PUT /api/settings` takes `ai_enabled` and/or `learn_policy` (both optional, at least one; other values 422).
+  Agents read it with `control.api.settings.Settings().learn_policy` (no FastAPI import).
+- Build: with no `name`, page→form recordings (`fixture-jobs`, or candidates with `sink.kind: form` / `source.kind: page`)
+  get `jobs_to_tracker`; others call `start_build(recording_id)` as in v1. Agents whose `start_build` takes only the
+  recording id still work.
+- Recordings: `fixture-jobs` (`fixtures/recording_jobs/recording.json`) is listed after `fixture`, with `fixture: true`,
+  only once that file exists; its candidates come from `fixtures/recording_jobs/candidates.json` until re-matched.
+- `POST /api/demo/v2/save-baseline [{integration}]` → `{integration, active_version, versions, has_work, saved_at}` (404
+  unknown integration, 409 no active version); it also snapshots `integrations/<name>/work/` (the agent's files).
+  `POST /api/demo/v2/reset` → `{ok, integration, active_version, removed: {runs, records, processed, incidents, versions,
+  pages}, stopped_runs, cancelled_threads, form?}`; 409 before a baseline is saved. It deletes versions newer than the
+  baseline (rows and package dirs), restores the work dir, and resets the fixture form (`/admin/reset`) only when
+  `PATCHWORK_TRACKER_FORM_URL` is set. Agents with a `cancel(thread_id)` method are asked to cancel; otherwise the
+  ThreadedAgentService threads are cancelled the way `reset()` does, but only the integration's learn/repair threads.
+- `POST /api/demo/form/rename` passes the form's status/JSON through (502 unreachable, 422 without `from`/`to`).
+  `GET /api/bench/v2`: `PATCHWORK_BENCH_V2_RESULTS` overrides the path.
 
 ## V10. Agents (W3): LEARN mode and the TEACH/REPAIR additions
 

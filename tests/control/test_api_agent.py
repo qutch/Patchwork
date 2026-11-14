@@ -10,7 +10,7 @@ from tests.control.conftest import finish_run, read_sse, wait_thread
 def test_health_and_settings_persist(api, workspace):
     assert api.get("/api/health").json()["status"] == "ok"
     s = api.get("/api/settings").json()
-    assert s == {"ai_enabled": True, "agent": "scripted", "model": "scripted"}
+    assert s == {"ai_enabled": True, "agent": "scripted", "model": "scripted", "learn_policy": "auto"}  # V9 adds learn_policy
     s = api.put("/api/settings", json={"ai_enabled": False}).json()
     assert s["ai_enabled"] is False
     assert api.get("/api/settings").json()["ai_enabled"] is False
