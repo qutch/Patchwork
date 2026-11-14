@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Layout, Settings, TrackerRow } from "../api";
-import { aiCalls, heldHint, labelKind, labelText, layoutRows, localDay, originText, totals } from "./tracker";
+import { aiCalls, fieldColumns, fieldLabel, fieldValue, heldHint, isLegacyColumns, labelKind, labelText, layoutRows, localDay, originText, totals } from "./tracker";
+import { wordingFor } from "./integrations";
 
 const row = (over: Partial<TrackerRow> = {}): TrackerRow => ({
   page_id: "pg-000001", seq: 1, captured_at: "2026-11-14T14:02:11+00:00", site: "jobs.lever.co", url: "https://jobs.lever.co/x/1",
@@ -114,5 +115,49 @@ describe("layouts", () => {
     expect(originText({ kind: "taught", at: null, thread_id: null, approved_by: "human" })).toEqual({ how: "taught from one recording", approval: "approved by a person" });
     expect(originText({ kind: "fixture", at: null, thread_id: null, approved_by: null })).toEqual({ how: "built in (test fixture)", approval: "—" });
     expect(originText(null)).toEqual({ how: "unknown origin", approval: "—" });
+  });
+});
+
+describe("generic rows (V15)", () => {
+  it("columns come from field_names, else title and company", () => {
+    expect(fieldColumns({ field_names: ["product", "price", "store"] })).toEqual(["product", "price", "store"]);
+    expect(fieldColumns({})).toEqual(["title", "company"]);
+    expect(fieldColumns({ field_names: [] })).toEqual(["title", "company"]);
+    expect(fieldColumns(null)).toEqual(["title", "company"]);
+    expect(isLegacyColumns(["title", "company"])).toBe(true);
+    expect(isLegacyColumns(["title", "authors", "year"])).toBe(false);
+  });
+  it("reads fields, falling back to title/company on older rows", () => {
+    expect(fieldValue(row(), "title")).toBe("American Tech Fellowship");
+    expect(fieldValue(row(), "company")).toBe("Palantir Technologies");
+    expect(fieldValue(row(), "price")).toBeNull();
+    const p = row({ title: "Kindle : Amazon.com", company: null, fields: { product: "Kindle", price: 149.99, store: "Amazon", tags: ["a"] } });
+    expect(fieldValue(p, "price")).toBe("149.99");
+    expect(fieldValue(p, "product")).toBe("Kindle");
+    expect(fieldValue(p, "tags")).toBe('["a"]');
+    expect(fieldValue(row({ fields: { title: "From fields" } }), "title")).toBe("From fields");
+    expect(fieldValue(row({ fields: {} }), "title")).toBe("American Tech Fellowship");
+    expect(fieldLabel("date_applied")).toBe("Date applied");
+  });
+});
+
+describe("wording per integration", () => {
+  const w = wordingFor("track_product_prices", { kind: "airtable" });
+  it("labels and hints never mention jobs for other integrations", () => {
+    expect(labelText(row({ status: "running", label: null }), deep, w)).toBe("writing to Airtable…");
+    expect(labelText(row({ status: "duplicate", label: "duplicate" }), deep, w)).toBe("already sent");
+    expect(labelText(row({ status: "held", label: "held", reason: "SINK_CONTRACT" }), deep, w)).toBe("held: table changed");
+    expect(labelText(row({ status: "held", label: "held", reason: "VALIDATION_FAILED" }), deep, w)).toBe("held: a field is missing");
+    expect(heldHint(row({ status: "held", label: "held", reason: "VALIDATION_FAILED" }), deep, w)).not.toMatch(/title or company/);
+    expect(heldHint(row({ status: "held", label: "held", reason: "CONTRACT_CHANGED" }), deep, w)).toMatch(/Airtable table changed/);
+  });
+  it("a rejected credential is held with a fix that never shows its value", () => {
+    const r = row({ status: "held", label: "held", reason: "AUTH" });
+    expect(labelText(r, deep, w)).toBe("held: credential rejected");
+    expect(heldHint(r, deep, w)).toMatch(/\.env.*never shows it/);
+  });
+  it("a run that could not start for want of a credential says which one", () => {
+    const r = row({ status: "failed", label: null, detail: "credential AIRTABLE_TOKEN is not set: add AIRTABLE_TOKEN=... to .env" });
+    expect(labelText(r, deep, w)).toBe("failed: AIRTABLE_TOKEN not set");
   });
 });

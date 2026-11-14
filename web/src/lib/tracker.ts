@@ -2,7 +2,8 @@
 // Wording rules (design §3 anti-goals): a learned row says it used AI, how many calls, and that code
 // checked it; a code row says 0 AI calls; with the scripted agent we say "scripted agent", never imply
 // a model ran; held rows say why and what a person can do.
-import type { Layout, ParserOrigin, Settings, TrackerRow, TrackerTotals } from "../api";
+import type { Layout, ParserOrigin, Settings, TrackerResponse, TrackerRow, TrackerTotals } from "../api";
+import { JOBS_WORDING, type Wording } from "./integrations";
 
 type S = Pick<Settings, "agent" | "ai_enabled"> | null | undefined;
 
@@ -10,29 +11,36 @@ export const aiCalls = (n: number) => `${n} AI call${n === 1 ? "" : "s"}`;
 const scriptedAgent = (s: S) => s?.agent === "scripted";
 
 const FORM_CHANGED = new Set(["CONTRACT_CHANGED", "SINK_CONTRACT"]);
-const HELD_WHY: Record<string, string> = {
-  PARSE_NO_MATCH: "unknown layout",
-  CONTRACT_CHANGED: "form changed",
-  SINK_CONTRACT: "form changed",
-  VALIDATION_FAILED: "title or company missing",
-  VERIFY_MISMATCH: "form did not confirm",
-};
+const heldWhy = (reason: string, w: Wording): string | undefined =>
+  ({
+    PARSE_NO_MATCH: "unknown layout",
+    CONTRACT_CHANGED: w.changed,
+    SINK_CONTRACT: w.changed,
+    VALIDATION_FAILED: w.missing,
+    VERIFY_MISMATCH: w.unconfirmed,
+    AUTH: "credential rejected",
+  } as Record<string, string>)[reason];
 
-/** The short label on a row's chip. */
-export function labelText(row: TrackerRow, s: S): string {
+/** The short label on a row's chip. `w` words it for the integration (default: the jobs demo). */
+export function labelText(row: TrackerRow, s: S, w: Wording = JOBS_WORDING): string {
   if (row.status === "pending") return "sending…";
-  if (row.status === "running") return "writing to the form…";
+  if (row.status === "running") return w.writing;
   if (row.status === "learning") return scriptedAgent(s) ? "learning this layout (scripted agent)…" : "learning this layout with AI…";
-  if (row.status === "failed") return row.reason ? `failed: ${row.reason}` : "failed";
+  if (row.status === "failed") {
+    // V13: a run whose spec names an unset credential fails to start ("credential <NAME> is not set: ...")
+    const cred = /^credential ([A-Z][A-Z0-9_]*) is not set/.exec(row.detail ?? "");
+    if (cred) return `failed: ${cred[1]} not set`;
+    return row.reason ? `failed: ${row.reason}` : "failed";
+  }
   switch (row.label) {
     case "learned_now":
       return scriptedAgent(s)
         ? `learned now · scripted agent, ${aiCalls(row.ai_calls)} (checked by code)`
         : `learned now · ${aiCalls(row.ai_calls)} (checked by code)`;
     case "held":
-      return row.reason && HELD_WHY[row.reason] ? `held: ${HELD_WHY[row.reason]}` : row.reason ? `held: ${row.reason}` : "held";
+      return row.reason && heldWhy(row.reason, w) ? `held: ${heldWhy(row.reason, w)}` : row.reason ? `held: ${row.reason}` : "held";
     case "duplicate":
-      return "already in tracker";
+      return w.duplicate;
     case "code":
     default:
       return `code · ${aiCalls(row.ai_calls)}`;
@@ -53,16 +61,17 @@ export function labelKind(row: TrackerRow): LabelKind {
 export const isFormChanged = (row: TrackerRow) => !!row.reason && FORM_CHANGED.has(row.reason);
 
 /** What a person can do about a held row (null for rows that aren't held). */
-export function heldHint(row: TrackerRow, s: S): string | null {
+export function heldHint(row: TrackerRow, s: S, w: Wording = JOBS_WORDING): string | null {
   if (row.label !== "held" && row.status !== "held") return null;
   if (row.reason === "PARSE_NO_MATCH") {
     if (s && !s.ai_enabled) return "No reader knows this layout and AI is off, so nothing was learned or written. Turn AI on and replay held pages: Patchwork learns the layout once, checks it in code, and writes the row.";
     if (row.learn_thread_id) return "A reader for this layout was learned but needs a person: check its evidence and approve it in Agent Activity. The page goes in once it is approved.";
     return "No reader knows this layout yet. Replay held pages to learn it once with AI (checked by code).";
   }
-  if (isFormChanged(row)) return "The tracker form changed since this integration was built, so nothing was written. Repair with AI, check the proposed mapping and approve it; the held pages then go in.";
-  if (row.reason === "VALIDATION_FAILED") return "The reader found no title or company on this page, so it was held instead of writing a half-empty row. Open the page to check; if the layout changed, revert its reader and replay to learn it again.";
-  if (row.reason === "VERIFY_MISMATCH") return "The form was submitted but never showed its confirmation, so this row may not be in the Sheet. Check the Sheet, then replay held pages.";
+  if (isFormChanged(row)) return w.changedHint;
+  if (row.reason === "VALIDATION_FAILED") return w.missingHint;
+  if (row.reason === "VERIFY_MISMATCH") return w.unconfirmedHint;
+  if (row.reason === "AUTH") return "The destination rejected its credential, so nothing was written. Check the credential's value in .env (Patchwork never shows it), restart the control plane, then replay held pages.";
   return row.detail ?? "Held for a person. Check the page, then replay held pages.";
 }
 
@@ -113,4 +122,33 @@ export function routedText(row: TrackerRow): string {
   if (row.routed_by === "fingerprint") return `recognised by page structure as ${row.parser ?? "?"}`;
   if (row.routed_by === "match") return "matched by site";
   return "default parser";
+}
+
+// ------------------------------------------------------------------ generic rows (V15 item 3)
+/** What older backends send: title and company on every row, no `field_names`. */
+export const LEGACY_FIELDS = ["title", "company"];
+
+/** The columns to show: the response's `field_names`, else title and company. */
+export function fieldColumns(resp: Pick<TrackerResponse, "field_names"> | null | undefined): string[] {
+  const f = resp?.field_names;
+  const cols = Array.isArray(f) ? f.filter((x) => typeof x === "string" && x) : [];
+  return cols.length ? cols : LEGACY_FIELDS;
+}
+
+/** True when the columns are the jobs demo's title/company, shown the way they always were. */
+export const isLegacyColumns = (cols: string[]) => cols.length > 0 && cols.every((c) => c === "title" || c === "company");
+
+/** A row's value for one field: `fields[name]`, else the legacy `title`/`company`. null when empty. */
+export function fieldValue(row: TrackerRow, name: string): string | null {
+  const has = !!row.fields && typeof row.fields === "object" && name in row.fields;
+  const v = has ? row.fields![name] : name === "title" ? row.title : name === "company" ? row.company : undefined;
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+/** "product" → "Product", "date_applied" → "Date applied". */
+export function fieldLabel(name: string): string {
+  const s = name.replace(/[_-]+/g, " ").trim();
+  return s ? s[0].toUpperCase() + s.slice(1) : name;
 }

@@ -38,6 +38,26 @@ def _check_ident(value: str, what: str) -> str:
     return value
 
 
+class Auth(_Strict):
+    """contracts V13: how a sink (or API source) authenticates. Names a credential; never holds a value."""
+
+    scheme: Literal["bearer", "header"] = "bearer"
+    credential: str
+    header: str | None = None  # scheme: header, e.g. X-Api-Key
+
+    @field_validator("credential")
+    @classmethod
+    def _credential(cls, v: str) -> str:
+        from runner.credentials import check_name
+        return check_name(v)
+
+    @model_validator(mode="after")
+    def _header(self) -> "Auth":
+        if self.scheme == "header" and not (self.header and re.fullmatch(r"[A-Za-z0-9-]{1,64}", self.header)):
+            raise ValueError("auth.scheme 'header' needs auth.header (an HTTP header name, e.g. X-Api-Key)")
+        return self
+
+
 class HttpCall(_Strict):
     method: Literal["GET", "POST", "PUT", "PATCH"]
     path: str
@@ -59,6 +79,7 @@ class Source(_Strict):
     text_field: str
     html_field: str | None = None  # v2: the record field holding page HTML (css/jsonld/fingerprint read it)
     cursor_field: str | None = None
+    auth: Auth | None = None  # contracts V13: sent on every source request (names a credential, never a value)
 
     @model_validator(mode="after")
     def _api_only(self) -> "Source":
@@ -260,26 +281,6 @@ class ValueSource(_Strict):
         return self
 
 
-class Auth(_Strict):
-    """contracts V13: how a sink (or API source) authenticates. Names a credential; never holds a value."""
-
-    scheme: Literal["bearer", "header"] = "bearer"
-    credential: str
-    header: str | None = None  # scheme: header, e.g. X-Api-Key
-
-    @field_validator("credential")
-    @classmethod
-    def _credential(cls, v: str) -> str:
-        from runner.credentials import check_name
-        return check_name(v)
-
-    @model_validator(mode="after")
-    def _header(self) -> "Auth":
-        if self.scheme == "header" and not (self.header and re.fullmatch(r"[A-Za-z0-9-]{1,64}", self.header)):
-            raise ValueError("auth.scheme 'header' needs auth.header (an HTTP header name, e.g. X-Api-Key)")
-        return self
-
-
 class Verify(_Strict):
     method: Literal["GET"] = "GET"
     path: str
@@ -294,6 +295,7 @@ class ApiSink(_Strict):
     call: HttpCall
     body: dict[str, ValueSource]
     verify: Verify | None = None
+    auth: Auth | None = None  # contracts V13: sent on every sink request (names a credential, never a value)
 
     @field_validator("call")
     @classmethod

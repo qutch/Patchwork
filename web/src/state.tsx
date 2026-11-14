@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  api, streams, ApiError, TRACKER,
-  type AgentEvent, type IncidentSummary, type IntegrationSummary, type Settings, type ThreadStatus,
+  api, streams, ApiError,
+  type AgentEvent, type Credential, type ExtensionInfo, type IncidentSummary, type IntegrationSummary, type PageIntegration,
+  type Settings, type ThreadStatus,
 } from "./api";
 import { deriveThread, mergeEvents } from "./lib/derive";
+import { defaultIntegration, pageIntegrations, pickIntegration, specInfo, V1_INTEGRATION, type SpecInfo } from "./lib/integrations";
 
 export type Tab = "tracker" | "record" | "review" | "agent" | "integration" | "runs" | "bench";
 export const TABS: { id: Tab; label: string }[] = [
@@ -83,7 +85,19 @@ interface Ctx {
   threads: ThreadStatus[];
   incidents: IncidentSummary[];
   integrations: IntegrationSummary[];
+  /** the v1 integration the Review, Integration and Runs tabs follow */
   integrationName: string;
+  /** `GET /api/extension` (token, control URL and, from V15, the page integrations) */
+  extension: ExtensionInfo | null;
+  extensionError: string | null;
+  /** the page integrations to choose from (never empty; jobs_to_tracker on older backends) */
+  pageIntegrations: PageIntegration[];
+  /** the one the Tracker, Learned layouts and presenter mode show */
+  pageIntegration: string;
+  setPageIntegration: (name: string) => void;
+  isPageIntegration: (name: string) => boolean;
+  /** V13 credential names and whether they're set; null when the backend has no /api/credentials */
+  credentials: Credential[] | null;
   refresh: () => void;
   notice: { kind: "error" | "info"; text: string } | null;
   notify: (kind: "error" | "info", text: string) => void;
@@ -141,6 +155,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const threadsQ = usePoll(api.threads, 1500);
   const incidentsQ = usePoll(() => api.incidents("open"), 2000);
   const integrationsQ = usePoll(api.integrations, 2000);
+  const extensionQ = usePoll(api.extension, 10000);
+  const credentialsQ = usePoll(api.credentials, 5000);
 
   // A thread remembered from an earlier session may be gone (demo reset, new workspace). Check once,
   // on the first thread list: later checks could race a thread created a moment ago.
@@ -167,6 +183,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [act, settingsQ]);
 
   const integrations = integrationsQ.data ?? [];
+  const pageList = useMemo(() => pageIntegrations(extensionQ.data, integrationsQ.data), [extensionQ.data, integrationsQ.data]);
+  const pageNames = useMemo(() => new Set(pageList.map((i) => i.name)), [pageList]);
+  const isPageIntegration = useCallback((n: string) => pageNames.has(n), [pageNames]);
+  // ?integration=X (presenter links) wins over the remembered choice
+  const [storedPage, setStoredPage] = usePersisted("pw-page-integration");
+  const [urlPage, setUrlPage] = useState(() => (typeof location !== "undefined" ? new URLSearchParams(location.search).get("integration") : null));
+  const wanted = urlPage ?? storedPage;
+  // until the extension info has loaded, keep the wanted name so a reload doesn't flash the default integration
+  const loaded = extensionQ.data !== null || extensionQ.error !== null;
+  const pageIntegration = loaded ? pickIntegration(wanted, pageList, defaultIntegration(extensionQ.data, pageList)) : wanted ?? pageList[0].name;
+  const setPageIntegration = useCallback((n: string) => {
+    setUrlPage(null);
+    setStoredPage(n);
+  }, [setStoredPage]);
   const value: Ctx = {
     tab, go,
     settings: settingsQ.data,
@@ -178,8 +208,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     threads: threadsQ.data ?? [],
     incidents: incidentsQ.data ?? [],
     integrations,
-    // v1 tabs (Review, Integration, Runs) follow the v1 integration; the Tracker tab is jobs_to_tracker
-    integrationName: integrations.find((i) => i.name !== TRACKER)?.name ?? "po_to_stockroom",
+    // v1 tabs (Review, Integration, Runs) follow the v1 integration; the Tracker tab follows the chosen page integration
+    integrationName: integrations.find((i) => i.name === V1_INTEGRATION)?.name ?? integrations.find((i) => !pageNames.has(i.name))?.name ?? V1_INTEGRATION,
+    extension: extensionQ.data,
+    extensionError: extensionQ.error,
+    pageIntegrations: pageList,
+    pageIntegration,
+    setPageIntegration,
+    isPageIntegration,
+    credentials: credentialsQ.data ?? null,
     refresh, notice, notify, act,
   };
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
@@ -219,4 +256,34 @@ export function useAgentThread(threadId: string | null) {
 
 export function errText(e: unknown): string {
   return e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * What the page integration does and where it writes: the control plane's own `destination`/`intent` when it lists
+ * them, else read from the active version's spec (`GET /api/integrations/{name}/versions/{active}` -> `spec_yaml`).
+ * Refetched when the active version changes. Fields stay null when nothing says (older backends, no version yet).
+ */
+export function useIntegrationInfo(name: string): SpecInfo {
+  const { integrations, pageIntegrations: list } = useApp();
+  const active = integrations.find((i) => i.name === name)?.active_version ?? null;
+  const listed = list.find((i) => i.name === name);
+  const [spec, setSpec] = useState<{ key: string; info: SpecInfo } | null>(null);
+  const key = `${name}@${active}`;
+  useEffect(() => {
+    if (active == null) return;
+    let live = true;
+    api.version(name, active).then(
+      (v) => live && setSpec({ key, info: specInfo(v.spec_yaml) }),
+      () => live && setSpec({ key, info: specInfo(null) }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [name, active, key]);
+  const fromSpec = spec?.key === key ? spec.info : null;
+  return useMemo(() => ({
+    intent: listed?.intent ?? fromSpec?.intent ?? null,
+    destination: listed?.destination ?? listed?.sink ?? fromSpec?.destination ?? null,
+    sinkFields: fromSpec?.sinkFields ?? [],
+  }), [listed, fromSpec]);
 }

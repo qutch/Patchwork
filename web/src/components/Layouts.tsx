@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, TRACKER, type Layout, type LearnPolicy } from "../api";
+import { api, type Layout, type LearnPolicy } from "../api";
 import { clock, layoutRows, originText } from "../lib/tracker";
 import { useApp, usePoll } from "../state";
 import { Card, Empty } from "./ui";
@@ -13,6 +13,7 @@ export function readerText(x: unknown): string {
   if (f.css) parts.push(`css ${f.css}${f.attr ? ` @${f.attr}` : ""}`);
   if (f.regex) parts.push(`regex ${f.regex}`);
   if (f.from) parts.push(`from ${f.from}`);
+  if ("const" in f) parts.push(`always ${JSON.stringify(f.const)}`);
   return parts.join(" → ") || JSON.stringify(f);
 }
 
@@ -40,7 +41,7 @@ function PolicySwitch() {
   );
 }
 
-function RevertButton({ l, last }: { l: Layout; last: boolean }) {
+function RevertButton({ l, last, integration }: { l: Layout; last: boolean; integration: string }) {
   const { act, notify, refresh } = useApp();
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -49,7 +50,7 @@ function RevertButton({ l, last }: { l: Layout; last: boolean }) {
   if (!confirm) return <button className="btn btn-danger" onClick={() => setConfirm(true)}>Revert…</button>;
   const go = async () => {
     setBusy(true);
-    const r = await act(() => api.revertLayout(l.parser_id, TRACKER));
+    const r = await act(() => api.revertLayout(l.parser_id, integration));
     setBusy(false);
     setConfirm(false);
     if (r) {
@@ -67,13 +68,15 @@ function RevertButton({ l, last }: { l: Layout; last: boolean }) {
 }
 
 /** Every reader the integration has used: where it came from, who approved it, one-click revert. */
-export function LayoutsPanel() {
-  const q = usePoll(() => api.layouts(TRACKER), 2000);
-  const rows = layoutRows(q.data ?? []);
+export function LayoutsPanel({ integration }: { integration: string }) {
+  const q = usePoll(async () => ({ integration, layouts: await api.layouts(integration) }), 2000, [integration]);
+  // null until the chosen integration's layouts arrive (never the previous integration's)
+  const data = q.data && q.data.integration === integration ? q.data.layouts : null;
+  const rows = layoutRows(data ?? []);
   const nActive = rows.filter((l) => l.active).length;
   return (
     <Card eyebrow="Approvals history" title="Learned layouts" right={<PolicySwitch />} bodyClass="">
-      {!q.data ? (
+      {!data ? (
         <div className="card-b text-muted">{q.error ? `Couldn't load layouts: ${q.error}` : "Loading…"}</div>
       ) : !rows.length ? (
         <div className="card-b"><Empty>No readers yet. Teach the integration from one recording first.</Empty></div>
@@ -110,7 +113,7 @@ export function LayoutsPanel() {
                       <div className="text-[12px] text-muted mt-1">{o.approval}</div>
                     </td>
                     <td className="text-right font-mono text-[12.5px] num">v{l.introduced_in}</td>
-                    <td className="text-right"><RevertButton l={l} last={l.active && nActive === 1} /></td>
+                    <td className="text-right"><RevertButton l={l} last={l.active && nActive === 1} integration={integration} /></td>
                   </tr>
                 );
               })}

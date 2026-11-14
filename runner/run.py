@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 
 from runner.contract import openapi_hash, validate_body
+from runner.credentials import redact
 from runner.http import ConfigError, Http
 from runner.lib import AI_MODULES
 from runner.loader import load_integration
@@ -86,7 +87,13 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
     raw records whose latest live outcome is quarantined. Idempotency keys keep that safe, and a
     replay never moves the cursor or opens a NEW_SOURCE_FORMAT incident.
 
-    The first line logged is {"event": "started", "run_id": N}; the last is the run summary."""
+    The first line logged is {"event": "started", "run_id": N}; the last is the run summary.
+    Every line logged or written to the run log passes through `redact` (contracts V13)."""
+    raw_log = log
+
+    def log(line: str) -> None:
+        raw_log(redact(line))
+
     ws = workspace_dir()
     store = store or Store()
     if version == "active":
@@ -140,10 +147,15 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
         try:
             ok, info = preflight(http, vdir, manifest, integ)
         except Exception as e:  # noqa: BLE001
-            status, message = "failed", f"preflight could not reach sink: {e}"
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            if code in (401, 403) and http.sink_credential:  # V13: name the credential, never show it
+                message = f"preflight: {http.sink_label} rejected the credential {http.sink_credential} (HTTP {code})"
+            else:
+                message = f"preflight could not reach sink: {e}"
+            status = "failed"
             return finish()
-        jl.write(json.dumps({"event": "preflight", "ok": ok,
-                             **{k: v_ for k, v_ in info.items() if k != "current_openapi"}}) + "\n")
+        jl.write(redact(json.dumps({"event": "preflight", "ok": ok,
+                                    **{k: v_ for k, v_ in info.items() if k != "current_openapi"}})) + "\n")
         jl.flush()
         if not ok:
             snapshot = vdir / "contract" / "openapi.json"
@@ -170,7 +182,7 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
         for rec in records:
             out = process_record(integ, rec, http, _ScopedStore(store, name, scope, run_id))
             store.add_record(run_id, out, rec)
-            jl.write(json.dumps({"event": "record", **out.to_dict()}) + "\n")
+            jl.write(redact(json.dumps({"event": "record", **out.to_dict()})) + "\n")
             jl.flush()
             counts[out.status] += 1
             if out.reason:
