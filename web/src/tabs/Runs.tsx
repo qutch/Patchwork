@@ -386,7 +386,7 @@ export default function RunsTab() {
         </div>
 
         <Card
-          eyebrow={live.detail ? `Run #${live.detail.run.id} · v${live.detail.run.version} · ${live.detail.run.dry_run ? "dry run" : "live"}` : "Live counters"}
+          eyebrow={live.detail ? `Run #${live.detail.run.id} · v${live.detail.run.version} · ${live.detail.run.kind === "replay" ? "replay" : live.detail.run.dry_run ? "dry run" : "live"}` : "Live counters"}
           title={
             live.status === "blocked" ? "Blocked by preflight: 0 records written" :
             live.running ? "Running…" : live.status ? `Run ${live.status}` : "No run selected"
@@ -465,7 +465,7 @@ export default function RunsTab() {
                     <tr key={r.id} onClick={() => setRunId(r.id)} className="cursor-pointer" style={{ background: r.id === runId ? "var(--accent-soft)" : undefined }}>
                       <td className="font-mono">#{r.id}</td>
                       <td className="font-mono">v{r.version}</td>
-                      <td>{r.dry_run ? "dry" : "live"}</td>
+                      <td>{r.kind === "replay" ? "replay" : r.dry_run ? "dry" : "live"}</td>
                       <td><Pill k={r.status === "completed" ? "success" : r.status === "running" ? "duplicate" : "quarantined"}>{r.status}</Pill></td>
                       <td className="font-mono num">{k.success} / {k.duplicate} / {k.quarantined}</td>
                       <td className="font-mono num">{fmtDuration(r.duration_s)}</td>

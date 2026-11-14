@@ -95,3 +95,13 @@ versions/diffs, background runs with live progress, incidents, demo controls, ac
 never runs. `PATCHWORK_RUN_PACE_MS` slows the runner per record so the counters are watchable (`make up` sets 30).
 Demo app URLs: `PATCHWORK_INBOX_URL`, `PATCHWORK_STOCKROOM_URL`, `PATCHWORK_STAGING_URL`.
 Tests: `tests/control/` (the whole demo through HTTP only in `test_api_flow.py`).
+
+## Web UI
+
+```bash
+make up            # terminal 1: demo apps + control plane on :8000
+make web           # terminal 2: UI on http://localhost:5180 (PATCHWORK_API=http://127.0.0.1:38080 make web for `make api`)
+make web-mock      # UI against an in-memory mock control plane, no Python needed
+```
+
+Five tabs (Record, Review, Agent Activity, Integration, Runs). See [web/README.md](web/README.md) for the demo click path.

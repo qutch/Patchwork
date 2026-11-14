@@ -27,3 +27,14 @@ up:
 
 api:
 	$(PY) -m control.api --port 38080
+
+# UI (web/): dev server on :5180. `web` proxies to the control plane (PATCHWORK_API, default :8000 = `make up`).
+PATCHWORK_API ?= http://127.0.0.1:8000
+.PHONY: web web-mock
+web:
+	test -d web/node_modules || (cd web && npm ci)
+	cd web && PATCHWORK_API=$(PATCHWORK_API) npm run dev
+
+web-mock:
+	test -d web/node_modules || (cd web && npm ci)
+	cd web && npm run dev:mock

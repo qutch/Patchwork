@@ -32,12 +32,13 @@ const later = (ms, fn) => setTimeout(fn, Math.round(ms * PACE));
 // ------------------------------------------------------------------------------ state
 let S;
 function freshState(keepSettings) {
-  const settings = keepSettings ? S.settings : { ai_enabled: true, agent: "scripted", model: "none (scripted agent)" };
+  const recordings = keepSettings ? S.recordings : new Map();
+  const settings = keepSettings ? S.settings : { ai_enabled: true, agent: "scripted", model: "scripted" };
   for (const t of S?.timers ?? []) clearTimeout(t);
   S = {
     settings,
     timers: [],
-    recordings: new Map(),
+    recordings,
     threads: new Map(),
     versions: [], // {version, created_at, deployed_at, tests_passed, tests_summary, detail, contract, warehouse}
     active: null,
@@ -97,7 +98,7 @@ function sse(req, res, url, src) {
   const ping = setInterval(() => res.write(": ping\n\n"), 15000);
   src.listeners.add(write);
   req.on("close", end);
-  for (const m of src.items()) if (m.id > after && !ended) write(m);
+  for (const m of src.items()) if ((src.snapshots || m.id > after) && !ended) write(m);
   if (!ended && src.isOver?.()) end();
 }
 const broadcast = (listeners, m) => {
@@ -184,14 +185,22 @@ function addVersion(kind, warehouse) {
   return v;
 }
 const getVersion = (n) => S.versions.find((v) => v.version === Number(n));
-function deploy(n) {
+/** Deploy resolves open incidents raised on older versions; rollback only to an older version, never resolves. */
+function deploy(n, { rollback = false } = {}) {
   const v = getVersion(n);
   if (!v) return [404, `${NAME} v${n} does not exist`];
   if (!v.tests_passed) return [409, `${NAME} v${n}: tests have not passed on this version`];
+  if (rollback && !(S.active != null && v.version < S.active)) return [409, `rollback must target a version older than the active v${S.active}`];
   const previous = S.active;
   S.active = v.version;
   v.deployed_at = nowIso();
-  return [200, { name: NAME, active_version: v.version, previous_version: previous }];
+  if (rollback) return [200, { name: NAME, active_version: v.version, previous_version: previous, resolved_incidents: [], rolled_back: true }];
+  const resolved = [];
+  for (const inc of S.incidents) if (inc.status === "open" && inc.version < v.version) {
+    inc.status = "resolved";
+    resolved.push(inc.id);
+  }
+  return [200, { name: NAME, active_version: v.version, previous_version: previous, resolved_incidents: resolved }];
 }
 
 // ------------------------------------------------------------------------------ runs
@@ -251,30 +260,36 @@ function openIncident(fields) {
 }
 
 /** Start a run. `pick` optionally selects records (replay); otherwise new inbox records after the cursor. */
-function startRun({ dry_run = false, limit = null, replay = null }) {
-  if (S.active == null) return [409, `${NAME}: no active version; deploy one first`];
-  const v = getVersion(S.active);
+function startRun({ dry_run = false, limit = null, replay = null, version = null }) {
+  if (S.active == null && version == null) return [409, `${NAME}: no active version; deploy one first`];
+  if (S.runs.some((r) => !r.done && !r.row.dry_run && !dry_run)) return [409, `a run of ${NAME} is already in progress`];
+  const v = getVersion(version ?? S.active);
+  if (!v) return [404, `${NAME} v${version} does not exist`];
   const scope = dry_run ? "staging" : "live";
   const row = {
-    id: S.runs.length + 1, integration: NAME, version: v.version, dry_run: dry_run ? 1 : 0, status: "running",
+    id: S.runs.length + 1, integration: NAME, version: v.version, kind: replay ? "replay" : "run", dry_run: !!dry_run, total: null, status: "running",
     started_at: nowIso(), finished_at: null, duration_s: null, counts: {}, llm_calls: 0, incident_id: null, message: null,
   };
   const run = { row, records: [], events: [], listeners: new Set(), done: false, t0: Date.now() };
   S.runs.push(run);
+  // snapshots, like the real API: progress id = processed count, finished id = processed + 1
   const emit = (event, data) => {
-    const m = { id: run.events.length + 1, event, data };
+    const processed = run.records.length;
+    const m = { id: event === "finished" ? processed + 1 : processed, event, data };
     run.events.push(m);
     broadcast(run.listeners, m);
   };
+  const progress = () => emit("progress", { run_id: row.id, status: row.status, counts: { ...row.counts }, processed: run.records.length, total: row.total });
   const finish = (status, message = null) => {
     row.status = status;
     row.message = message;
     row.finished_at = nowIso();
     row.duration_s = Math.round((Date.now() - run.t0) / 10) / 100;
     run.done = true;
-    const summary = { run_id: row.id, integration: NAME, version: row.version, dry_run: !!dry_run, status, counts: row.counts,
-      duration_s: row.duration_s, llm_calls: 0, incident_id: row.incident_id, message, log: `workspace/runs/${row.id}.jsonl` };
-    emit("finished", { summary });
+    const summary = { run_id: row.id, integration: NAME, version: row.version, dry_run: !!dry_run, kind: row.kind, status, counts: row.counts,
+      duration_s: row.duration_s, llm_calls: 0, incident_id: row.incident_id, message };
+    progress();
+    emit("finished", summary);
     return summary;
   };
 
@@ -300,7 +315,8 @@ function startRun({ dry_run = false, limit = null, replay = null }) {
       finish("blocked", "preflight: destination contract changed");
       return;
     }
-    emit("progress", { counts: { ...row.counts }, processed: 0, total: todo.length });
+    row.total = todo.length;
+    progress();
     let i = 0;
     const step = () => {
       if (i >= todo.length) {
@@ -324,7 +340,7 @@ function startRun({ dry_run = false, limit = null, replay = null }) {
       row.counts[out.status] = (row.counts[out.status] ?? 0) + 1;
       if (out.reason) row.counts[`quarantined:${out.reason}`] = (row.counts[`quarantined:${out.reason}`] ?? 0) + 1;
       if (!replay) S.cursor[scope] = Math.max(S.cursor[scope], S.inbox.indexOf(msg) + 1);
-      emit("progress", { counts: { ...row.counts }, processed: i, total: todo.length });
+      progress();
       timer(RECORD_MS, step);
     };
     step();
@@ -511,11 +527,8 @@ function sideEffects(t, ev) {
     }
   }
   if (ev.type === "tool_result" && ev.tool === "dry_run") {
-    const prev = S.active;
-    // run the dry run on the candidate version, against staging
-    S.active = t.version;
-    startRun({ dry_run: true, limit: 10 });
-    S.active = prev;
+    // the dry run uses the candidate version, against staging
+    startRun({ dry_run: true, limit: 10, version: t.version });
   }
   if (ev.type === "tool_result" && ev.tool === "get_incident") {
     const inc = S.incidents.find((i) => String(i.id) === t.subject);
@@ -544,8 +557,10 @@ function sideEffects(t, ev) {
 }
 
 function resume(t, body) {
-  if (!t.pending || t.pending.interrupt_id !== body.interrupt_id) return [404, `no pending interrupt ${body.interrupt_id} on ${t.id}`];
+  if (!t.pending || t.pending.interrupt_id !== body.interrupt_id) return [409, `no pending interrupt ${body.interrupt_id} on ${t.id}`];
   const pending = t.pending;
+  if (pending.type === "request_deploy" && !body.decision) return [422, "request_deploy needs a decision: approve or reject"];
+  if (pending.type === "ask_user" && (body.answer == null || String(body.answer).trim() === "")) return [422, "ask_user needs an answer"];
   const payload = pending.type === "ask_user" ? { answer: String(body.answer ?? "") } : { decision: body.decision, comment: body.comment ?? "" };
   if (pending.type === "request_deploy" && !["approve", "reject"].includes(payload.decision)) return [422, "decision must be approve or reject"];
   t.pending = null;
@@ -564,7 +579,7 @@ function resume(t, body) {
       if (next) next.text = `Recorded assumption a2: ${payload.answer}.`;
     }
     timer(400, () => advance(t));
-    return [200, { ok: true }];
+    return [200, threadStatus(t)];
   }
 
   // request_deploy
@@ -577,7 +592,7 @@ function resume(t, body) {
       emitAgent(t, { type: "message", agent: "supervisor", text: `Deploy of v${pending.version} rejected: ${payload.comment}` });
       finishThread({ deployed: false, version: pending.version });
     });
-    return [200, { ok: true }];
+    return [200, threadStatus(t)];
   }
   timer(400, () => {
     const [code, res] = deploy(pending.version);
@@ -588,8 +603,6 @@ function resume(t, body) {
     }
     emitAgent(t, { type: "deployed", name: NAME, version: pending.version, previous_version: res.previous_version });
     if (t.mode === "repair") {
-      const inc = S.incidents.find((i) => String(i.id) === t.subject);
-      if (inc) inc.status = "resolved";
       timer(300, () => {
         emitAgent(t, { type: "message", agent: "supervisor", text: "Replaying quarantined records on the new version." });
         replayQuarantined();
@@ -597,7 +610,7 @@ function resume(t, body) {
       });
     } else timer(200, () => finishThread({ deployed: true, version: pending.version }));
   });
-  return [200, { ok: true }];
+  return [200, threadStatus(t)];
 }
 
 function threadStatus(t) {
@@ -639,15 +652,22 @@ async function route(req, res) {
   let mm;
   const body = M === "POST" || M === "PUT" ? await readBody(req) : {};
 
-  if (M === "GET" && p === "/api/health") return send(res, 200, { ok: true, mock: true });
+  if (M === "GET" && p === "/api/health")
+    return send(res, 200, { status: "ok", workspace: "mock (in memory)", agent: S.settings.agent, ai_enabled: S.settings.ai_enabled, mock: true });
   if (p === "/api/settings") {
     if (M === "PUT") S.settings.ai_enabled = !!body.ai_enabled;
     return send(res, 200, S.settings);
   }
 
   // recordings
-  if (M === "POST" && p === "/api/recordings") return send(res, 200, startRecording(body));
-  if (M === "GET" && p === "/api/recordings") return send(res, 200, [...S.recordings.values()].map(recSummary).reverse());
+  if (M === "POST" && p === "/api/recordings") {
+    if (!Array.isArray(body.allowlist) || !body.allowlist.length) return fail(res, 422, "allowlist must list at least one host:port");
+    return send(res, 200, startRecording(body));
+  }
+  if (M === "GET" && p === "/api/recordings") {
+    const { events, candidates, ...fx } = fixtureRecording(); // eslint-disable-line no-unused-vars
+    return send(res, 200, [{ ...fx, fixture: true }, ...[...S.recordings.values()].map(recSummary).reverse()]);
+  }
   if ((mm = m(/^\/api\/recordings\/([^/]+)(\/[a-z]+)?$/))) {
     const id = decodeURIComponent(mm[1]);
     const sub = mm[2];
@@ -672,6 +692,7 @@ async function route(req, res) {
     if (!S.settings.ai_enabled) return fail(res, 409, "AI is off. Turn AI on to build an integration.");
     const rid = body.recording_id;
     if (rid !== "fixture" && !S.recordings.has(rid)) return fail(res, 404, `recording ${rid} not found`);
+    if (S.recordings.get(rid)?.status === "recording") return fail(res, 409, `recording ${rid} is still running; stop it first`);
     return send(res, 200, { thread_id: startThread("build", rid) });
   }
   if (M === "POST" && (mm = m(/^\/api\/incidents\/(\d+)\/repair$/))) {
@@ -685,7 +706,12 @@ async function route(req, res) {
     if (!t) return fail(res, 404, `thread ${mm[1]} not found`);
     if (M === "GET" && !mm[2]) return send(res, 200, threadStatus(t));
     if (M === "GET" && mm[2] === "/stream")
-      return sse(req, res, url, { listeners: t.listeners, items: () => t.events.map((e) => ({ id: e.seq, event: e.type, data: e })) });
+      return sse(req, res, url, {
+        listeners: t.listeners,
+        items: () => t.events.map((e) => ({ id: e.seq, event: e.type, data: e })),
+        terminal: (x) => x.event === "status" && (x.data.state === "done" || x.data.state === "failed"),
+        isOver: () => t.state === "done" || t.state === "failed",
+      });
     if (M === "POST" && mm[2] === "/resume") {
       const [code, out] = resume(t, body);
       return code === 200 ? send(res, 200, out) : fail(res, code, out);
@@ -706,10 +732,14 @@ async function route(req, res) {
     if (M === "GET" && (vm = sub.match(/^\/versions\/(\d+)$/))) {
       const v = getVersion(vm[1]);
       if (!v) return fail(res, 404, `${name} v${vm[1]} does not exist`);
-      return send(res, 200, { ...v.detail, tests_passed: v.tests_passed, tests_summary: v.tests_summary });
+      const { tests, ...detail } = v.detail; // eslint-disable-line no-unused-vars -- the real API has no per-test list
+      return send(res, 200, { ...detail, name, active: v.version === S.active, created_at: v.created_at, deployed_at: v.deployed_at,
+        tests_passed: v.tests_passed, tests_summary: v.tests_summary });
     }
     if (M === "GET" && sub === "/diff") {
-      const a = getVersion(url.searchParams.get("from")), b = getVersion(url.searchParams.get("to"));
+      const toN = Number(url.searchParams.get("to") || S.versions.at(-1).version);
+      const fromN = Number(url.searchParams.get("from") || toN - 1);
+      const a = getVersion(fromN), b = getVersion(toN);
       if (!a || !b) return fail(res, 404, "unknown version");
       const files = [...new Set([...Object.keys(a.detail.files), ...Object.keys(b.detail.files)])].filter((f) => !f.startsWith("tests/") && f !== "spec.yaml").sort();
       const code_diff = {};
@@ -722,10 +752,10 @@ async function route(req, res) {
       const canonical = a.contract === 1 && b.contract === 2 && b.warehouse ? DATA.repair[b.warehouse === "supplier" ? "by_supplier" : "always_bos"].diff.spec_patch : null;
       if (canonical) spec_patch = canonical;
       else if (yamlA !== yamlB) spec_patch = jsonPatch({ spec: yamlA.split("\n") }, { spec: yamlB.split("\n") });
-      return send(res, 200, { spec_patch, spec_diff: unifiedDiff(yamlA, yamlB, `v${a.version}/spec.yaml`, `v${b.version}/spec.yaml`), code_diff });
+      return send(res, 200, { name, from: a.version, to: b.version, spec_patch, spec_diff: unifiedDiff(yamlA, yamlB, `v${a.version}/spec.yaml`, `v${b.version}/spec.yaml`), code_diff });
     }
     if (M === "POST" && (sub === "/deploy" || sub === "/rollback")) {
-      const [code, out] = deploy(body.version);
+      const [code, out] = deploy(body.version, { rollback: sub === "/rollback" });
       return code === 200 ? send(res, 200, out) : fail(res, code, out);
     }
     if (M === "POST" && sub === "/replay") {
@@ -736,7 +766,7 @@ async function route(req, res) {
 
   // runs
   if (M === "POST" && p === "/api/runs") {
-    const [code, out] = startRun({ dry_run: !!body.dry_run, limit: body.limit ?? null });
+    const [code, out] = startRun({ dry_run: !!body.dry_run, limit: body.limit ?? null, version: body.version ?? null });
     return code === 200 ? send(res, 200, out) : fail(res, code, out);
   }
   if (M === "GET" && p === "/api/runs") {
@@ -746,7 +776,8 @@ async function route(req, res) {
   if ((mm = m(/^\/api\/runs\/(\d+)(\/stream)?$/))) {
     const run = S.runs.find((r) => r.row.id === Number(mm[1]));
     if (!run) return fail(res, 404, `run ${mm[1]} not found`);
-    if (mm[2]) return sse(req, res, url, { listeners: run.listeners, items: () => run.events, terminal: (x) => x.event === "finished", isOver: () => run.done });
+    // snapshots: a (re)connect gets the latest progress (and finished, if over), whatever Last-Event-ID says
+    if (mm[2]) return sse(req, res, url, { snapshots: true, listeners: run.listeners, items: () => run.events.slice(run.done ? -2 : -1), terminal: (x) => x.event === "finished", isOver: () => run.done });
     const inc = run.row.incident_id ? S.incidents.find((i) => i.id === run.row.incident_id) : null;
     return send(res, 200, { run: pickRun(run.row), records: run.records.slice().sort((a, b) => a.record_id.localeCompare(b.record_id)), incident: inc ?? null });
   }
@@ -772,7 +803,7 @@ async function route(req, res) {
   }
   if (M === "POST" && p === "/api/demo/inbox/deliver") return send(res, 200, deliver(Math.max(1, Number(body.count) || 10)));
   if (M === "POST" && p === "/api/demo/inbox/new_supplier") return send(res, 200, newSupplier(Math.max(1, Number(body.count) || 5)));
-  if (M === "GET" && p === "/api/bench/accuracy") return send(res, 200, accuracy());
+  if (M === "GET" && p === "/api/bench/accuracy") return send(res, 200, { ...accuracy(), integration: url.searchParams.get("integration"), truth_source: "inbox" });
 
   return fail(res, 404, `no route ${M} ${p}`);
 }

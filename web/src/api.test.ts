@@ -80,6 +80,21 @@ describe("openStream", () => {
     expect(states.at(-1)).toBe("closed");
   });
 
+  it("snapshot streams (runs) keep events whose id repeats", () => {
+    const got: unknown[] = [];
+    openStream<{ processed: number; total: number | null }>("/api/runs/1/stream", {
+      events: ["progress", "finished"],
+      snapshots: true,
+      onMessage: (m) => got.push(m.data.total),
+      EventSourceImpl: FakeES as unknown as typeof EventSource,
+    });
+    const es = FakeES.instances[0];
+    es.emit("progress", 0, { processed: 0, total: null }); // id = processed count
+    es.emit("progress", 0, { processed: 0, total: 100 }); // total became known
+    es.emit("finished", 1, { processed: 0, total: 100 });
+    expect(got).toEqual([null, 100, 100]);
+  });
+
   it("withAfter keeps an existing query", () => {
     expect(withAfter("/x?a=1", 5)).toBe("/x?a=1&after=5");
     expect(withAfter("/x", 0)).toBe("/x");

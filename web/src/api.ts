@@ -44,6 +44,8 @@ export interface RecordingSummary {
   started_at?: number | string | null;
   stopped_at?: number | string | null;
   n_events?: number;
+  /** true for the built-in `fixture` recording (fixtures/recording.json), listed first */
+  fixture?: boolean;
 }
 
 export interface TextMapping {
@@ -170,7 +172,10 @@ export interface RunRow {
   id: number;
   integration?: string;
   version: number;
-  dry_run: boolean | number;
+  kind?: "run" | "replay";
+  dry_run: boolean;
+  /** records fetched; null until known (or for runs not started by this API process) */
+  total?: number | null;
   status: "running" | "completed" | "blocked" | "tripped" | "failed" | string;
   started_at?: string;
   finished_at?: string | null;
@@ -194,16 +199,23 @@ export interface TestCase {
   status: "PASSED" | "FAILED" | "SKIPPED" | "ERROR" | string;
 }
 export interface VersionDetail {
+  name?: string;
+  active?: boolean;
+  created_at?: string;
+  deployed_at?: string | null;
   version: number;
   manifest: Record<string, unknown>;
   spec_yaml: string;
   files: Record<string, string>;
   tests_passed: boolean;
   tests_summary: string | null;
-  /** optional extra: per-test results (pytest -v); the contract only has tests_summary */
+  /** optional extra (mock only today): per-test results; the real API has tests_summary and tests/ files */
   tests?: TestCase[];
 }
 export interface VersionDiff {
+  name?: string;
+  from?: number;
+  to?: number;
   spec_patch: JsonPatchOp[];
   spec_diff: string;
   code_diff: Record<string, string>;
@@ -244,16 +256,20 @@ export interface RunDetail {
   records: RecordRow[];
   incident: Incident | null;
 }
+/** Run stream `progress` data: a snapshot, sent whenever it changes (SSE id = processed). */
 export interface RunProgress {
+  run_id?: number;
+  status?: string;
   counts: Counts;
   processed: number;
-  /** optional extra: records the run will process, when known */
-  total?: number;
+  total?: number | null;
 }
+/** Run stream `finished` data (flat; older drafts wrapped it as {summary}). */
 export interface RunSummary {
   run_id: number;
   integration: string;
   version: number;
+  kind?: "run" | "replay";
   dry_run: boolean;
   status: string;
   counts: Counts;
@@ -267,6 +283,16 @@ export interface Accuracy {
   correct: number;
   accuracy: number | null;
   mismatches: unknown[];
+  integration?: string | null;
+  truth_source?: "inbox" | "seed";
+}
+export interface DeployResult {
+  name: string;
+  active_version: number;
+  previous_version: number | null;
+  /** deploy resolves open incidents raised on older versions */
+  resolved_incidents?: number[];
+  rolled_back?: boolean;
 }
 
 // ---------------------------------------------------------------- HTTP
@@ -324,18 +350,18 @@ export const api = {
   repair: (incident_id: number) => request<{ thread_id: string }>("POST", `/api/incidents/${incident_id}/repair`),
   threads: () => request<ThreadStatus[]>("GET", "/api/agent/threads"),
   thread: (id: string) => request<ThreadStatus>("GET", `/api/agent/${enc(id)}`),
-  resume: (id: string, body: ResumeBody) => request<unknown>("POST", `/api/agent/${enc(id)}/resume`, body),
+  resume: (id: string, body: ResumeBody) => request<ThreadStatus>("POST", `/api/agent/${enc(id)}/resume`, body),
 
   integrations: () => request<IntegrationSummary[]>("GET", "/api/integrations"),
   integration: (name: string) => request<IntegrationStatus>("GET", `/api/integrations/${enc(name)}`),
   version: (name: string, v: number) => request<VersionDetail>("GET", `/api/integrations/${enc(name)}/versions/${v}`),
   diff: (name: string, from: number, to: number) =>
     request<VersionDiff>("GET", `/api/integrations/${enc(name)}/diff${qs({ from, to })}`),
-  deploy: (name: string, version: number) => request<unknown>("POST", `/api/integrations/${enc(name)}/deploy`, { version }),
-  rollback: (name: string, version: number) => request<unknown>("POST", `/api/integrations/${enc(name)}/rollback`, { version }),
+  deploy: (name: string, version: number) => request<DeployResult>("POST", `/api/integrations/${enc(name)}/deploy`, { version }),
+  rollback: (name: string, version: number) => request<DeployResult>("POST", `/api/integrations/${enc(name)}/rollback`, { version }),
   replay: (name: string) => request<{ run_id: number }>("POST", `/api/integrations/${enc(name)}/replay`),
 
-  startRun: (b: { integration: string; dry_run?: boolean; limit?: number }) => request<{ run_id: number }>("POST", "/api/runs", b),
+  startRun: (b: { integration: string; dry_run?: boolean; limit?: number; version?: number }) => request<{ run_id: number }>("POST", "/api/runs", b),
   runs: (p: { integration?: string; limit?: number } = {}) => request<RunRow[]>("GET", `/api/runs${qs(p)}`),
   run: (id: number) => request<RunDetail>("GET", `/api/runs/${id}`),
   incidents: (status?: "open") => request<IncidentSummary[]>("GET", `/api/incidents${qs({ status })}`),
@@ -365,6 +391,8 @@ export interface StreamOptions<T> {
   onStateChange?: (s: "open" | "reconnecting" | "closed") => void;
   /** For tests. */
   EventSourceImpl?: typeof EventSource;
+  /** Snapshot streams (runs) reuse ids, so don't drop events whose id was already seen. */
+  snapshots?: boolean;
   maxBackoffMs?: number;
 }
 export interface StreamHandle {
@@ -402,8 +430,8 @@ export function openStream<T = unknown>(url: string, opts: StreamOptions<T>): St
   const handler = (ev: MessageEvent) => {
     const id = ev.lastEventId ? Number(ev.lastEventId) : null;
     if (id !== null && !Number.isNaN(id)) {
-      if (id <= last) return;
-      last = id;
+      if (id <= last && !opts.snapshots) return;
+      last = Math.max(last, id);
     }
     let data: T;
     try {
@@ -442,7 +470,7 @@ export const streams = {
   agent: (threadId: string, o: Omit<StreamOptions<AgentEvent>, "events">) =>
     openStream(`${base}/api/agent/${enc(threadId)}/stream`, { events: AGENT_EVENT_TYPES, ...o }),
   run: (runId: number, o: Omit<StreamOptions<RunProgress | { summary: RunSummary } | RunSummary>, "events">) =>
-    openStream(`${base}/api/runs/${runId}/stream`, { events: ["progress", "finished"], ...o }),
+    openStream(`${base}/api/runs/${runId}/stream`, { events: ["progress", "finished"], snapshots: true, ...o }),
 };
 
 // ---------------------------------------------------------------- helpers shared by views
