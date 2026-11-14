@@ -3,6 +3,8 @@ duplicate names, and delete removes everything but credentials."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from fixtures.products.pages import NAME as PRODUCT, PAGES as PRODUCT_PAGES, html as product_html
@@ -137,3 +139,82 @@ def test_draft_endpoint_keeps_answering_once_live(client):
     ops.deploy(PRODUCT, 1)
     r = client.get(f"/api/integrations/{PRODUCT}/draft")
     assert r.status_code == 200 and r.json()["state"] == "live" and r.json()["name"] == PRODUCT
+
+
+def test_delete_rows_is_refused_and_deletes_nothing(client, built_products_integration):
+    name = built_products_integration
+    r = client.delete(f"/api/integrations/{name}?delete_rows=true")
+    assert r.status_code == 409
+    assert r.json()["detail"] == ("Deleting destination rows isn't supported yet: Patchwork doesn't store the "
+                                  "destination's record ids. Delete them in the destination.")
+    assert name in [i["name"] for i in client.get("/api/integrations").json()]
+    assert len(client.get(f"/api/pages?integration={name}").json()) == 1
+    assert (workspace_dir() / "integrations" / name).exists()
+    assert client.delete(f"/api/integrations/{name}?delete_rows=false").status_code == 200
+
+
+def _thread_file(tid, *events):
+    root = workspace_dir() / "agent_threads"
+    root.mkdir(exist_ok=True)
+    (root / f"{tid}.jsonl").write_text("".join(json.dumps({"seq": i, "thread_id": tid, **e}) + "\n"
+                                              for i, e in enumerate(events, 1)))
+    return root / f"{tid}.jsonl"
+
+
+def test_delete_removes_only_this_integrations_threads(client, built_products_integration):
+    from control.pages import PageInbox
+
+    name = built_products_integration
+    other = "track_prices_of_things"
+    make_page_integration(name=other, spec={**product_spec(), "name": other})
+    inbox = PageInbox()
+    mine = _thread_file("learn-mine", {"type": "status", "state": "done"})
+    deployed = _thread_file("build-mine", {"type": "deployed", "name": name, "version": 1})
+    inbox.add_learn("pg-000001", "learn-mine", "shop-a.example.com", name)
+    # the other integration's threads mention this one's name as data (a field called like it), not as identity
+    theirs = _thread_file("learn-theirs", {"type": "message", "text": f'field {{"name": "{name}"}}',
+                                           "name": name + "x", "integration": other})
+    inbox.add_learn("pg-000009", "learn-theirs", "shop-b.example.com", other)
+    unlinked = _thread_file("build-unlinked", {"type": "tool_call", "args": {"name": name, "integration": name}})
+    assert client.delete(f"/api/integrations/{name}").status_code == 200
+    assert not mine.exists() and not deployed.exists()
+    assert theirs.exists() and unlinked.exists()
+    assert other in [i["name"] for i in client.get("/api/integrations").json()]
+
+
+def test_delete_is_refused_while_a_run_is_in_flight(client, built_products_integration, monkeypatch):
+    name = built_products_integration
+    monkeypatch.setattr(client.app.state.auto, "state", lambda n: {"busy": True, "pending": [], "current": 1})
+    r = client.delete(f"/api/integrations/{name}")
+    assert r.status_code == 409 and "is busy" in r.json()["detail"]
+    assert name in [i["name"] for i in client.get("/api/integrations").json()]
+
+
+def test_delete_is_refused_while_an_agent_thread_is_active(client, built_products_integration):
+    import threading
+    import time
+
+    name = built_products_integration
+    gate = threading.Event()
+    svc = client.agent
+    tid = svc._start("learn", "pg-000001", lambda t: gate.wait(15), integration=name)
+    try:
+        r = client.delete(f"/api/integrations/{name}")
+        assert r.status_code == 409 and "is busy" in r.json()["detail"]
+    finally:
+        gate.set()
+    deadline = time.time() + 10
+    while time.time() < deadline and svc.status(tid)["state"] == "running":
+        time.sleep(0.02)
+    assert client.delete(f"/api/integrations/{name}").status_code == 200
+
+
+def test_name_with_a_trailing_newline_is_refused(client):
+    from control import drafts
+
+    with pytest.raises(drafts.DraftError):
+        drafts.create("abc\n", "x y")
+    assert client.post("/api/integrations/new", json={"name": "ab\nc", "intent": "x y"}).status_code == 422
+    r = client.post("/api/integrations/new", json={"name": "abc\n", "intent": "x y"})  # the API trims it
+    assert r.status_code == 201 and r.json()["name"] == "abc"
+    assert client.get("/api/integrations/abc%0A/draft").status_code == 404

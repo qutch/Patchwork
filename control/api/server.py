@@ -382,6 +382,8 @@ def agent_resume(thread_id: str, body: ResumeRequest, request: Request) -> dict[
         svc.resume(thread_id, body.interrupt_id, payload)
     except KeyError as e:
         raise HTTPException(409, str(e).strip("'\"")) from None
+    if pending.get("type") == "request_deploy" and body.decision == "reject":
+        drafts.release_rejected(thread_id)  # a wizard draft goes back to `draft`: it can be taught again
     return _thread_status(svc, thread_id)
 
 

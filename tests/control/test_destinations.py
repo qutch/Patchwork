@@ -209,3 +209,30 @@ def test_destination_unit_errors_never_carry_the_value(monkeypatch):
         destinations.check({"kind": "api", "base_url": "http://127.0.0.1:9", "credential": "SHOP_TOKEN",
                             "operation": {"method": "POST", "path": "/x"}})
     assert "sentinel-cred-123456" not in str(e.value)
+
+
+def test_a_credential_is_only_sent_when_the_request_names_it(client, draft, monkeypatch):
+    monkeypatch.setenv("AIRTABLE_TOKEN", "sentinel-airtable-123456")
+    seen: list[str | None] = []
+    app = papers_app()
+
+    @app.middleware("http")
+    async def spy(request, call_next):
+        seen.append(request.headers.get("authorization"))
+        return await call_next(request)
+
+    with _Server(app) as srv:
+        assert client.get(f"/api/destinations/api/operations?base_url={srv.url}").status_code == 200
+        assert seen[-1] is None
+        r = put_destination(client, draft, {"kind": "api", "base_url": srv.url,
+                                            "operation": {"method": "POST", "path": "/papers"}})
+        assert r.status_code == 200 and seen[-1] is None  # nothing named, nothing sent
+        assert client.get(f"/api/destinations/api/operations?base_url={srv.url}&credential=AIRTABLE_TOKEN"
+                          ).status_code == 200
+        assert seen[-1] == "Bearer sentinel-airtable-123456"
+
+
+def test_airtable_needs_an_explicit_credential(client, draft, fake_airtable):
+    r = put_destination(client, draft, {"kind": "airtable", "base_id": BASE_ID, "table": TABLE})
+    assert r.status_code == 422 and "credential" in r.json()["detail"]
+    assert client.get(f"/api/destinations/airtable/tables?base_id={BASE_ID}").status_code == 422

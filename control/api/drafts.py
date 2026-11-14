@@ -42,8 +42,9 @@ def new_integration(body: NewIntegration) -> dict[str, Any]:
 
 
 @router.get("/integrations/{name}/draft")
-def get_draft(name: str) -> dict[str, Any]:
-    return require_draft(name).model_dump()
+def get_draft(name: str, request: Request) -> dict[str, Any]:
+    require_draft(name)
+    return (drafts.reconcile(name, request.app.state.agent) or require_draft(name)).model_dump()
 
 
 @router.put("/integrations/{name}/destination")
@@ -63,7 +64,7 @@ def put_destination(name: str, body: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/destinations/airtable/tables")
-def airtable_tables(base_id: str, credential: str = "AIRTABLE_TOKEN") -> list[dict[str, str]]:
+def airtable_tables(base_id: str, credential: str) -> list[dict[str, str]]:
     """The tables of an Airtable base (the base URL or id), read with the named credential."""
     try:
         return destinations.airtable_tables(base_id, credential)
@@ -90,7 +91,8 @@ def teach(name: str, body: TeachBody, request: Request) -> dict[str, str]:
     `POST /api/integrations/build`, mark the draft `teaching`."""
     from control.api import server
 
-    draft = require_draft(name)
+    require_draft(name)
+    draft = drafts.reconcile(name, request.app.state.agent) or require_draft(name)
     if draft.state != "draft":
         raise HTTPException(409, f"{name} is already {draft.state}: it can be taught once")
     if not draft.destination:
@@ -112,16 +114,26 @@ def teach(name: str, body: TeachBody, request: Request) -> dict[str, str]:
 
 @router.delete("/integrations/{name}")
 def delete_integration(name: str, request: Request, delete_rows: bool = False) -> dict[str, Any]:
+    if delete_rows:  # checked first: nothing is deleted, not even the integration
+        raise HTTPException(409, drafts.DELETE_ROWS_MESSAGE)
     store = Store()
     try:
         known = any(i["name"] == name for i in store.integrations())
     finally:
         store.close()
-    if not known and drafts.get(name) is None:
+    draft = drafts.get(name) if drafts.NAME.match(name) else None
+    if not known and draft is None:
         raise HTTPException(404, f"integration {name} not found")
+    state = request.app.state
+    svc = state.agent
+    threads = svc.list_threads() if svc is not None else []
+    active = [t for t in threads if t.get("integration") == name and t.get("state") in drafts.ACTIVE_STATES]
+    if state.auto.state(name)["busy"] or active or (draft and drafts.thread_active(svc, draft.thread_id)):
+        raise HTTPException(409, f"{name} is busy: a run or agent thread is still active; "
+                                 f"try again when it finishes")
     try:
-        out = drafts.delete_integration(name, delete_rows=delete_rows)
+        out = drafts.delete_integration(name, delete_rows=False, live_threads=threads)
     except Exception as e:  # noqa: BLE001 - say which kind of failure, never a value
         raise HTTPException(502, f"could not delete {name} completely ({type(e).__name__}); try again") from None
-    request.app.state.auto.forget(name)
+    state.auto.forget(name)
     return out

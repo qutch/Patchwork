@@ -18,14 +18,13 @@ import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, Field
 
 from runner.store import Store, workspace_dir
 
-NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-RECORD_ID = re.compile(r"\brec[A-Za-z0-9]{14}\b")
+NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}\Z")  # \Z: a trailing newline is not a name
 
 
 class DraftError(ValueError):
@@ -144,79 +143,52 @@ def annotate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 # ---- delete --------------------------------------------------------------------------------------
 
-def _thread_files(name: str, thread_id: str | None) -> list[Path]:
-    root = workspace_dir() / "agent_threads"
-    if not root.is_dir():
-        return []
-    needles = (f'"integration": "{name}"', f'"name": "{name}"')
-    out = []
-    for p in root.glob("*.jsonl"):
-        if p.stem == thread_id:
-            out.append(p)
-            continue
-        try:
-            text = p.read_text()
-        except OSError:
-            continue
-        if any(n in text for n in needles):
-            out.append(p)
-    return out
+class DeleteRowsUnsupported(DraftError):
+    """`delete_rows` was asked for: Patchwork doesn't store the destination's record ids, so it can't."""
 
 
-def _stored_destination_rows(store: Store, name: str) -> list[str]:
-    """Destination record ids Patchwork stored for `name` (in its run records), newest first, unique."""
-    seen: dict[str, None] = {}
-    for r in store.db.execute("SELECT r.detail, r.sink_body FROM records r JOIN runs u ON u.id = r.run_id "
-                              "WHERE u.integration = ? AND u.dry_run = 0 ORDER BY r.run_id DESC", (name,)):
-        for text in (r["detail"] or "", r["sink_body"] or ""):
-            for rid in RECORD_ID.findall(text):
-                seen.setdefault(rid)
-    return list(seen)
+DELETE_ROWS_MESSAGE = ("Deleting destination rows isn't supported yet: Patchwork doesn't store the destination's "
+                       "record ids. Delete them in the destination.")
 
 
-def _delete_airtable_rows(dest: dict[str, Any], ids: list[str]) -> int:
-    import httpx
-
-    from runner import airtable, credentials as cred
-
-    headers = cred.headers({"scheme": "bearer", "credential": dest.get("credential") or "AIRTABLE_TOKEN"})
-    deleted = 0
-    with httpx.Client(timeout=15) as client:
-        for rid in ids:
-            url = f"{airtable.api_url()}/{dest['base_id']}/{airtable._table_path(dest['table'])}/{rid}"
-            resp = client.delete(url, headers=headers)
-            if resp.status_code < 300:
-                deleted += 1
-    return deleted
-
-
-def _spec_destination(name: str, store: Store) -> dict[str, Any] | None:
-    from control import autorun
-
-    v = store.active_version(name)
-    spec = autorun.version_spec(name, v) if v is not None else None
-    sink = (spec or {}).get("sink") or {}
-    if sink.get("kind") == "airtable":
-        return {"kind": "airtable", "base_id": sink.get("base_id"), "table": sink.get("table"),
-                "credential": (sink.get("auth") or {}).get("credential")}
-    return None
-
-
-def delete_integration(name: str, *, delete_rows: bool) -> dict[str, Any]:
-    """Remove `name` completely. With `delete_rows`, also delete the destination rows whose record ids
-    Patchwork stored (never any other row). Credentials are kept."""
+def _thread_ids(name: str, draft: Draft | None, live_threads: Iterable[dict[str, Any]]) -> set[str]:
+    """Agent threads that belong to `name` by exact identity: the draft's own thread, learn threads the page
+    inbox links to it, threads the agent service reports for it, and thread files whose `deployed` event
+    names it exactly. Never a substring match on a thread's contents."""
     from control.pages import PageInbox
 
+    ids: set[str] = set()
+    if draft is not None and draft.thread_id:
+        ids.add(draft.thread_id)
+    ids.update(l["thread_id"] for l in PageInbox().learns(name).values())
+    ids.update(t["thread_id"] for t in live_threads if t.get("integration") == name and t.get("thread_id"))
+    root = workspace_dir() / "agent_threads"
+    for p in root.glob("*.jsonl") if root.is_dir() else []:
+        try:
+            for line in p.read_text().splitlines():
+                ev = json.loads(line)
+                if ev.get("type") == "deployed" and ev.get("name") == name:
+                    ids.add(p.stem)
+                    break
+        except (OSError, ValueError):
+            continue
+    return ids
+
+
+def delete_integration(name: str, *, delete_rows: bool = False,
+                       live_threads: Iterable[dict[str, Any]] = ()) -> dict[str, Any]:
+    """Remove `name` completely: draft, versions, runs, records, pages, learn links, its agent threads and its
+    synthetic recording. Credentials are kept. Destination rows are never deleted: `delete_rows=True` raises
+    DeleteRowsUnsupported before anything is removed. `live_threads`: the agent service's `list_threads()`."""
+    from control.pages import PageInbox
+
+    if delete_rows:
+        raise DeleteRowsUnsupported(DELETE_ROWS_MESSAGE)
     draft = get(name)
+    thread_ids = _thread_ids(name, draft, live_threads)
     store = Store()
     removed: list[str] = []
-    rows_deleted = 0
     try:
-        if delete_rows:
-            dest = (draft.destination if draft else None) or _spec_destination(name, store)
-            ids = _stored_destination_rows(store, name)
-            if ids and dest and dest.get("kind") == "airtable":
-                rows_deleted = _delete_airtable_rows(dest, ids)
         run_ids = [r["id"] for r in store.db.execute("SELECT id FROM runs WHERE integration = ?", (name,))]
         for chunk in range(0, len(run_ids), 500):
             part = run_ids[chunk:chunk + 500]
@@ -230,9 +202,11 @@ def delete_integration(name: str, *, delete_rows: bool) -> dict[str, Any]:
         store.close()
     if PageInbox().clear(name, include_untagged=False):
         removed.append("pages")
-    for p in _thread_files(name, draft.thread_id if draft else None):
-        p.unlink(missing_ok=True)
-        removed.append(f"thread {p.stem}")
+    for tid in sorted(thread_ids):
+        f = workspace_dir() / "agent_threads" / f"{tid}.jsonl"
+        if f.is_file():
+            f.unlink(missing_ok=True)
+            removed.append(f"thread {tid}")
     ws = workspace_dir()
     for path, label in ((ws / "integrations" / name, "versions on disk"),
                         (ws / "recordings" / f"draft-{name}", "recording")):
@@ -242,7 +216,46 @@ def delete_integration(name: str, *, delete_rows: bool) -> dict[str, Any]:
     if draft is not None:
         _path(name).unlink(missing_ok=True)
         removed.append("draft")
-    return {"name": name, "removed": removed, "rows_deleted": rows_deleted}
+    return {"name": name, "removed": removed, "rows_deleted": 0}
+
+
+# ---- a teaching draft that did not end in a deploy ------------------------------------------------
+
+ACTIVE_STATES = ("running", "waiting")
+
+
+def thread_active(svc: Any | None, thread_id: str | None) -> bool:
+    """True while the agent thread is running or waiting. No service, or a thread it doesn't know, is ended."""
+    if svc is None or not thread_id:
+        return False
+    try:
+        return svc.status(thread_id).get("state") in ACTIVE_STATES
+    except KeyError:
+        return False
+
+
+def reconcile(name: str, svc: Any | None) -> Draft | None:
+    """A `teaching` draft whose build thread ended without a deployed version goes back to `draft`
+    (destination and examples kept), so it can be taught again."""
+    d = get(name)
+    if d is None or d.state != "teaching" or thread_active(svc, d.thread_id):
+        return d
+    store = Store()
+    try:
+        deployed = store.active_version(name) is not None
+    finally:
+        store.close()
+    if deployed:
+        mark_live(name)
+        return get(name)
+    return update(name, state="draft")
+
+
+def release_rejected(thread_id: str) -> None:
+    """A rejected request_deploy: the draft whose build thread it was returns to `draft`."""
+    for d in list_all():
+        if d.state == "teaching" and d.thread_id == thread_id:
+            update(d.name, state="draft")
 
 
 # ---- teach from example pages --------------------------------------------------------------------

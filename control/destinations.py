@@ -53,7 +53,7 @@ def normalize(dest: dict[str, Any]) -> dict[str, Any]:
         if not base:
             raise DestinationError("paste the Airtable base URL (it contains appXXXXXXXXXXXXXX) or the base id")
         out = {"kind": "airtable", "base_id": base, "table": need("table", "a table name or id"),
-               "credential": (dest.get("credential") or "AIRTABLE_TOKEN")}
+               "credential": need("credential", "the credential to use (its name, e.g. AIRTABLE_TOKEN)")}
     elif kind == "form":
         url = need("url", "the form's URL")
         if not re.match(r"^https?://", url):

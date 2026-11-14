@@ -37,7 +37,7 @@ def post_credential(body: CredentialBody) -> dict[str, Any]:
     try:
         store.set_credential(body.name, body.value)
     except ValueError as e:
-        raise HTTPException(422, str(e).replace(body.value, "***")) from None
+        raise HTTPException(422, str(e).replace(body.value, "***") if body.value else str(e)) from None
     return {"name": body.name, "set": True, "used_by": workspace_credentials().get(body.name, [])}
 
 

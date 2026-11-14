@@ -4,6 +4,8 @@ one teach per draft, and the first run once the taught integration deploys."""
 from __future__ import annotations
 
 import json
+import threading
+import time
 
 import pytest
 
@@ -22,20 +24,35 @@ QUESTIONS = [{"label": "Product", "required": True}, {"label": "Price"}, {"label
 
 
 class FakeBuildAgent(ScriptedAgentService):
-    """Records the builds it is asked for and does nothing else."""
+    """Records the builds it is asked for and runs a stand-in BUILD thread: it stays active until `gate` is
+    set (then it ends without deploying), or fails, or asks for a deploy approval, per `mode`."""
 
     def __init__(self):
         super().__init__(pace_s=0)
         self.builds: list[tuple[str, str | None]] = []
+        self.gate = threading.Event()
+        self.mode = "wait"
 
     def start_build(self, recording_id, name=None):
         self.builds.append((recording_id, name))
-        return "build-fake000001"
+
+        def body(t):
+            if self.mode == "deploy_request":
+                return self.interrupt(t, "request_deploy", name=name, version=1, summary="x", spec_diff="",
+                                      code_diff="", tests={"passed": True, "summary": "ok"})
+            self.gate.wait(15)
+            if self.mode == "fail":
+                raise RuntimeError("model unavailable")
+            return {"deployed": False}
+
+        return self._start("build", recording_id, body, integration=name)
 
 
 @pytest.fixture
 def v2agent(workspace):  # overrides the v2_fakes fixture that v2api uses
-    return FakeBuildAgent()
+    agent = FakeBuildAgent()
+    yield agent
+    agent.gate.set()
 
 
 @pytest.fixture
@@ -124,6 +141,7 @@ def test_unknown_draft_is_404(client):
 def test_deploying_the_taught_integration_makes_it_live_and_runs_once(client, products_draft_with_pages, fake_agent):
     name, pids = products_draft_with_pages
     tid = client.post(f"/api/integrations/{name}/teach", json={"page_ids": pids}).json()["thread_id"]
+    fake_agent.gate.set()
     assert records_by_page(name) == {}  # waiting: nothing ran for the example pages
     make_page_integration(name=name, spec=product_spec(), deploy=False)
     ops.deploy(name, 1)
@@ -132,3 +150,58 @@ def test_deploying_the_taught_integration_makes_it_live_and_runs_once(client, pr
     wait_idle(client, name)
     assert set(records_by_page(name)) == set(pids)
     assert [i["state"] for i in client.get("/api/integrations").json() if i["name"] == name] == ["live"]
+
+
+def teach(client, name, pids):
+    r = client.post(f"/api/integrations/{name}/teach", json={"page_ids": pids})
+    assert r.status_code == 200, r.text
+    return r.json()["thread_id"]
+
+
+def wait_ended(agent, tid):
+    deadline = time.time() + 10
+    while time.time() < deadline and agent.status(tid)["state"] in ("running", "waiting"):
+        time.sleep(0.02)
+    assert agent.status(tid)["state"] not in ("running", "waiting")
+
+
+@pytest.mark.parametrize("mode", ["wait", "fail"])
+def test_ended_build_returns_the_draft_to_draft_and_can_be_taught_again(client, products_draft_with_pages,
+                                                                         fake_agent, mode):
+    name, pids = products_draft_with_pages
+    fake_agent.mode = mode
+    tid = teach(client, name, pids)
+    d = client.get(f"/api/integrations/{name}/draft").json()
+    assert d["state"] == "teaching"  # still active: stays teaching, and a second teach is refused
+    assert client.post(f"/api/integrations/{name}/teach", json={"page_ids": pids}).status_code == 409
+    fake_agent.gate.set()
+    wait_ended(fake_agent, tid)
+    d = client.get(f"/api/integrations/{name}/draft").json()
+    assert d["state"] == "draft" and d["destination"]["kind"] == "form" and d["example_page_ids"] == pids
+    fake_agent.gate.clear()
+    teach(client, name, pids)  # /teach works again
+    assert len(fake_agent.builds) == 2
+
+
+def test_teach_itself_recovers_a_stale_teaching_draft(client, products_draft_with_pages, fake_agent):
+    name, pids = products_draft_with_pages
+    tid = teach(client, name, pids)
+    fake_agent.gate.set()
+    wait_ended(fake_agent, tid)
+    fake_agent.gate.clear()
+    teach(client, name, pids)  # no GET in between
+
+
+def test_rejected_deploy_request_returns_the_draft_to_draft(client, products_draft_with_pages, fake_agent):
+    name, pids = products_draft_with_pages
+    fake_agent.mode = "deploy_request"
+    tid = teach(client, name, pids)
+    deadline = time.time() + 10
+    while time.time() < deadline and fake_agent.status(tid)["state"] != "waiting":
+        time.sleep(0.02)
+    pending = fake_agent.status(tid)["pending"]
+    assert drafts.get(name).state == "teaching"
+    r = client.post(f"/api/agent/{tid}/resume", json={"interrupt_id": pending["interrupt_id"],
+                                                       "decision": "reject", "comment": "no"})
+    assert r.status_code == 200, r.text
+    assert drafts.get(name).state == "draft"

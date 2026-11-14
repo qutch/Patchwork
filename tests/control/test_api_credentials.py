@@ -126,3 +126,10 @@ def test_replacing_a_credential_rewrites_its_line(client, tmp_path):
     env = tmp_path / ".env"; env.write_text("SHOP_TOKEN=old-value-0001\n")
     client.post("/api/credentials", json={"name": "SHOP_TOKEN", "value": "new-value-0002"})
     assert env.read_text().count("SHOP_TOKEN=") == 1 and "old-value-0001" not in env.read_text()
+
+
+def test_empty_value_is_refused_without_mangling_the_message(client):
+    r = client.post("/api/credentials", json={"name": "lower", "value": ""})
+    assert r.status_code == 422 and "***" not in r.json()["detail"]
+    r = client.post("/api/credentials", json={"name": "SHOP_TOKEN", "value": ""})
+    assert r.status_code == 422
