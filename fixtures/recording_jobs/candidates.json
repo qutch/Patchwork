@@ -1,0 +1,101 @@
+{
+  "recording_id": "fixture-jobs",
+  "intent": "Add the job posting I'm looking at to my application tracker",
+  "source": {
+    "kind": "page",
+    "site": "jobs.lever.co",
+    "url": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
+    "canonical_url": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
+    "snapshot": "snapshots/1.html",
+    "title": "Palantir Technologies - American Tech Fellowship"
+  },
+  "sink": {
+    "kind": "form",
+    "url": "http://127.0.0.1:18010/",
+    "labels": [
+      "Email",
+      "Job Title",
+      "Company",
+      "Link",
+      "Date Applied"
+    ],
+    "submit": "Submit",
+    "confirmation_text": "Your response has been recorded",
+    "title": "Patchwork Test Form",
+    "questions": [
+      {
+        "label": "Email",
+        "required": true,
+        "input": "text"
+      },
+      {
+        "label": "Job Title",
+        "required": false,
+        "input": "text"
+      },
+      {
+        "label": "Company",
+        "required": false,
+        "input": "text"
+      },
+      {
+        "label": "Link",
+        "required": false,
+        "input": "text"
+      },
+      {
+        "label": "Date Applied",
+        "required": false,
+        "input": "text"
+      }
+    ]
+  },
+  "mappings": [
+    {
+      "dest_field": "Email",
+      "value": "demo@example.com",
+      "kind": "const"
+    },
+    {
+      "dest_field": "Job Title",
+      "value": "American Tech Fellowship",
+      "kind": "css",
+      "css": ".posting-headline h2",
+      "attr": null,
+      "regex": null,
+      "copied": true,
+      "alternatives": [
+        {
+          "jsonld": "title"
+        }
+      ]
+    },
+    {
+      "dest_field": "Company",
+      "value": "Palantir Technologies",
+      "kind": "css",
+      "css": "div.main-footer-text > p > a",
+      "attr": null,
+      "regex": "^(.+?) Home Page$",
+      "copied": true,
+      "alternatives": [
+        {
+          "jsonld": "hiringOrganization.name"
+        }
+      ]
+    },
+    {
+      "dest_field": "Link",
+      "value": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
+      "kind": "record",
+      "from": "record.canonical_url"
+    },
+    {
+      "dest_field": "Date Applied",
+      "value": "2026-11-14",
+      "kind": "record",
+      "from": "record.captured_date"
+    }
+  ],
+  "unexplained": []
+}

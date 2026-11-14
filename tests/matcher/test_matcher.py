@@ -175,7 +175,9 @@ def test_cli_prints_candidates():
 def test_matcher_is_pure():
     """No network, no LLM: the matcher imports only the standard library."""
     allowed = {"__future__", "re", "itertools", "typing", "urllib.parse", "argparse", "json", "sys", "pathlib",
-               "matcher", "matcher.core"}
+               "matcher", "matcher.core",
+               # v2 page -> form candidates (matcher.pages): the shared deterministic page helpers, still no network
+               "matcher.pages", "datetime", "runner.html", "selectolax.lexbor"}
     for path in (REPO / "matcher").glob("*.py"):
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):

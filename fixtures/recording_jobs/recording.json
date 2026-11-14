@@ -1,0 +1,217 @@
+{
+  "id": "fixture-jobs",
+  "intent": "Add the job posting I'm looking at to my application tracker",
+  "allowlist": [
+    "jobs.lever.co",
+    "127.0.0.1:18010"
+  ],
+  "started_at": 1794676896786,
+  "stopped_at": 1794676899406,
+  "start_url": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
+  "events": [
+    {
+      "t": 1794676898260,
+      "type": "framenavigated",
+      "url": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
+      "title": "Palantir Technologies - American Tech Fellowship"
+    },
+    {
+      "t": 1794676898403,
+      "type": "copy",
+      "url": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
+      "text": "American Tech Fellowship",
+      "el": {
+        "tag": "h2",
+        "role": "heading",
+        "name": "American Tech Fellowship",
+        "label": null,
+        "testid": null,
+        "css": "h2",
+        "nearby": "🍪Privacy NoticeThis website uses cookies to improve your w…",
+        "id": null,
+        "accessible_name": "American Tech Fellowship",
+        "path": "h2"
+      },
+      "snapshot": "snapshots/1.html"
+    },
+    {
+      "t": 1794676898436,
+      "type": "copy",
+      "url": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
+      "text": "Palantir Technologies",
+      "el": {
+        "tag": "a",
+        "role": "link",
+        "name": "Palantir Technologies Home Page",
+        "label": null,
+        "testid": null,
+        "css": "p a",
+        "nearby": "American Tech FellowshipNorth AmericaBusiness Development /…",
+        "id": null,
+        "accessible_name": "Palantir Technologies Home Page",
+        "path": "div.main-footer-text > p > a"
+      },
+      "snapshot": "snapshots/1.html"
+    },
+    {
+      "t": 1794676898515,
+      "type": "framenavigated",
+      "url": "http://127.0.0.1:18010/",
+      "title": "Patchwork Test Form"
+    },
+    {
+      "t": 1794676898625,
+      "type": "input",
+      "url": "http://127.0.0.1:18010/",
+      "value": "demo@example.com",
+      "el": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "entry.0",
+        "label": "Your email",
+        "testid": null,
+        "css": "form#f input[name=entry.0]",
+        "nearby": "Your email",
+        "id": null,
+        "accessible_name": "Your email",
+        "question": "Email"
+      }
+    },
+    {
+      "t": 1794676898627,
+      "type": "paste",
+      "url": "http://127.0.0.1:18010/",
+      "value": "American Tech Fellowship",
+      "el": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "entry.1",
+        "label": "Job Title",
+        "testid": null,
+        "css": "form#f input[name=entry.1]",
+        "nearby": "Job Title",
+        "id": null,
+        "accessible_name": "Job Title",
+        "question": "Job Title"
+      }
+    },
+    {
+      "t": 1794676898634,
+      "type": "paste",
+      "url": "http://127.0.0.1:18010/",
+      "value": "Palantir Technologies",
+      "el": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "entry.2",
+        "label": "Company",
+        "testid": null,
+        "css": "form#f input[name=entry.2]",
+        "nearby": "Company",
+        "id": null,
+        "accessible_name": "Company",
+        "question": "Company"
+      }
+    },
+    {
+      "t": 1794676898642,
+      "type": "input",
+      "url": "http://127.0.0.1:18010/",
+      "value": "https://jobs.lever.co/palantir/0ccbe620-a3ef-41d1-a5c4-68e56b3c91d0",
+      "el": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "entry.3",
+        "label": "Link",
+        "testid": null,
+        "css": "form#f input[name=entry.3]",
+        "nearby": "Link",
+        "id": null,
+        "accessible_name": "Link",
+        "question": "Link"
+      }
+    },
+    {
+      "t": 1794676898684,
+      "type": "input",
+      "url": "http://127.0.0.1:18010/",
+      "value": "2026-11-14",
+      "el": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "entry.4",
+        "label": "Date Applied",
+        "testid": null,
+        "css": "form#f input[name=entry.4]",
+        "nearby": "Date Applied",
+        "id": null,
+        "accessible_name": "Date Applied",
+        "question": "Date Applied"
+      }
+    },
+    {
+      "t": 1794676898686,
+      "type": "click",
+      "url": "http://127.0.0.1:18010/",
+      "el": {
+        "tag": "div",
+        "role": "button",
+        "name": "Submit",
+        "label": null,
+        "testid": null,
+        "css": "div#submit",
+        "nearby": "Email *Job TitleCompanyLinkDate Applied",
+        "id": "submit",
+        "accessible_name": "Submit"
+      },
+      "form": {
+        "questions": [
+          {
+            "label": "Email",
+            "required": true,
+            "input": "text"
+          },
+          {
+            "label": "Job Title",
+            "required": false,
+            "input": "text"
+          },
+          {
+            "label": "Company",
+            "required": false,
+            "input": "text"
+          },
+          {
+            "label": "Link",
+            "required": false,
+            "input": "text"
+          },
+          {
+            "label": "Date Applied",
+            "required": false,
+            "input": "text"
+          }
+        ],
+        "title": "Patchwork Test Form"
+      }
+    },
+    {
+      "t": 1794676898703,
+      "type": "confirmation",
+      "url": "http://127.0.0.1:18010/submit",
+      "lines": [
+        "Patchwork Test Form",
+        "Your response has been recorded.",
+        "Submit another response"
+      ],
+      "title": "Patchwork Test Form",
+      "el": null
+    },
+    {
+      "t": 1794676898703,
+      "type": "framenavigated",
+      "url": "http://127.0.0.1:18010/submit",
+      "title": "Patchwork Test Form"
+    }
+  ]
+}

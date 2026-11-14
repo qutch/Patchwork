@@ -37,7 +37,7 @@ def finalize(dir: Path, meta: dict) -> dict:
     tmp.replace(dir / "recording.json")
     try:
         from matcher import match
-        (dir / "candidates.json").write_text(json.dumps(match(recording), indent=2, ensure_ascii=False))
+        (dir / "candidates.json").write_text(json.dumps(match(recording, base_dir=dir), indent=2, ensure_ascii=False))
     except Exception as e:  # noqa: BLE001 - the recording matters more than the candidates
         print(f"matcher failed: {e!r}", file=sys.stderr)
     meta["n_events"] = len(recording["events"])
