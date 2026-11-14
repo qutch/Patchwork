@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { AppProvider, TABS, useApp } from "./state";
+import { TRACKER } from "./api";
 import { AiToggle } from "./components/AiToggle";
+import TrackerTab from "./tabs/Tracker";
+import Presenter from "./components/Presenter";
 import RecordTab from "./tabs/Record";
 import ReviewTab from "./tabs/Review";
 import AgentTab from "./tabs/Agent";
@@ -60,7 +63,10 @@ function Header() {
                 {t.id === "agent" && waiting && (
                   <span className="ml-2 inline-block w-2.5 h-2.5 rounded-full align-middle pulse" style={{ background: "var(--gate)" }} title="An agent is waiting for you" />
                 )}
-                {t.id === "runs" && incidents.length > 0 && (
+                {t.id === "tracker" && incidents.some((i) => i.integration === TRACKER) && (
+                  <span className="ml-2 inline-block w-2.5 h-2.5 rounded-full align-middle" style={{ background: "var(--bad)" }} title="Open incident" />
+                )}
+                {t.id === "runs" && incidents.some((i) => i.integration !== TRACKER) && (
                   <span className="ml-2 inline-block w-2.5 h-2.5 rounded-full align-middle" style={{ background: "var(--bad)" }} title="Open incident" />
                 )}
               </a>
@@ -103,6 +109,7 @@ function Body() {
   const { tab } = useApp();
   return (
     <main className="max-w-[1320px] mx-auto px-4 py-6 grid gap-6">
+      {tab === "tracker" && <TrackerTab />}
       {tab === "record" && <RecordTab />}
       {tab === "review" && <ReviewTab />}
       {tab === "agent" && <AgentTab />}
@@ -113,11 +120,17 @@ function Body() {
   );
 }
 
+const PRESENT = typeof location !== "undefined" && new URLSearchParams(location.search).get("present") === "1";
+
 export default function App() {
   return (
     <AppProvider>
-      <Header />
-      <Body />
+      {PRESENT ? <Presenter /> : (
+        <>
+          <Header />
+          <Body />
+        </>
+      )}
       <Notice />
     </AppProvider>
   );

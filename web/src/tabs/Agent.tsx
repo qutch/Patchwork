@@ -12,6 +12,7 @@ const AGENT_COLOR: Record<string, string> = {
   builder: "var(--ok)",
   tester: "var(--val)",
   repairer: "var(--pnm)",
+  learner: "var(--accent)",
 };
 const agentColor = (a: string) => AGENT_COLOR[a] ?? "var(--muted)";
 
@@ -159,6 +160,28 @@ function FeedRow({ item, threadId }: { item: FeedItem; threadId: string }) {
       return (
         <li className="px-4 py-3 border-b border-line font-mono text-[13px]" style={{ color: "var(--bad)", background: "var(--bad-soft)" }}>
           error: {ev.message}
+        </li>
+      );
+    case "evidence":
+      return (
+        <li className="grid grid-cols-[96px_minmax(0,1fr)] gap-3 px-4 py-2.5 border-b border-line">
+          <span className="font-mono text-xs uppercase font-semibold" style={{ color: ev.ok ? "var(--ok)" : "var(--bad)" }}>evidence</span>
+          <div className="grid gap-1 text-[13.5px]">
+            <div>Code checked every value for <span className="font-mono">{ev.parser_id}</span> against <span className="font-mono">{ev.page_id}</span>: <b style={{ color: ev.ok ? "var(--ok)" : "var(--bad)" }}>{ev.ok ? "all found" : "not all found"}</b></div>
+            {ev.fields.map((f) => (
+              <div key={f.name} className="font-mono text-[12.5px]">
+                <span style={{ color: f.ok ? "var(--ok)" : "var(--bad)" }}>{f.ok ? "✓" : "✗"}</span> {f.name} = {JSON.stringify(f.value)} <span className="text-muted">· {f.where ?? "not found"}</span>
+              </div>
+            ))}
+          </div>
+        </li>
+      );
+    case "learned":
+      return (
+        <li className="px-4 py-3 border-b border-line text-[14px]" style={ev.deployed ? { color: "var(--ok)", background: "var(--ok-soft)" } : undefined}>
+          <b>{ev.deployed ? "✓ Learned" : "Learned, not deployed yet:"}</b> reader <span className="font-mono">{ev.parser_id}</span> for {ev.site}
+          {ev.version != null && <> (v{ev.version})</>} · {ev.approval === "auto" ? "auto-approved" : ev.approval === "human" ? "approved by a person" : "waiting for a person"}
+          <div className="text-[13px] font-normal" style={{ color: "var(--ink)" }}>{ev.reason}</div>
         </li>
       );
     case "subagent_start":

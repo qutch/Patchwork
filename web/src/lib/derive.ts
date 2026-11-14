@@ -1,5 +1,5 @@
 // Pure helpers that turn API payloads into what the views draw. Unit-tested.
-import type { AgentEvent, CaptureEvent, InterruptEvent, ThreadState, Todo } from "../api";
+import type { AgentEvent, CaptureEvent, InterruptEvent, ThreadMode, ThreadState, Todo } from "../api";
 
 // ------------------------------------------------------------------ agent threads
 export interface SubagentSpan {
@@ -26,7 +26,7 @@ export type FeedItem =
   | { kind: "gate"; seq: number; ev: InterruptEvent; answer: Record<string, unknown> | null };
 
 export interface ThreadView {
-  mode: "build" | "repair" | null;
+  mode: ThreadMode | null;
   state: ThreadState | null;
   todos: Todo[];
   subagents: SubagentSpan[];

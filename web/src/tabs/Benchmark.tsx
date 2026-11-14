@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { api, ApiError, type BenchKind, type BenchResults, type BreakResult, type Metric } from "../api";
+import { api, ApiError, type BenchKind, type BenchResults, type BenchV2Results, type BreakResult, type Metric } from "../api";
+import { AiCallsChart, AiCallsTable, AiLegend } from "../components/AiCallsChart";
 import {
-  breakEven, breakRows, caughtTally, costAt, costModels, fmtMetric, fmtMinutes, kindLabel, niceTicks, readout,
+  aiCallSeries, aiSummary, breakEven, breakRows, caughtTally, costAt, costModels, fmtMetric, fmtMinutes, kindLabel, niceTicks, readout,
   repairRows, segments, tableRows, val, type CostModel, type LineStyle, type SeriesId,
 } from "../lib/bench";
 import { Card, Empty, PageHead } from "../components/ui";
@@ -329,22 +330,97 @@ function useBench() {
   return { data, error, loading, reload: load };
 }
 
+/** bench/v2/results.json via GET /api/bench/v2 (404 until W5's bench has run). */
+export function useBenchV2() {
+  const [data, setData] = useState<BenchV2Results | null>(null);
+  const [error, setError] = useState<{ status: number; detail: string } | null>(null);
+  const load = () => {
+    api.benchV2().then(
+      (d) => { setData(d); setError(null); },
+      (e) => setError({ status: e instanceof ApiError ? e.status : 0, detail: e instanceof Error ? e.message : String(e) }),
+    );
+  };
+  useEffect(load, []);
+  return { data, error, reload: load };
+}
+
+function MockBadge() {
+  return <span className="pill" style={{ color: "var(--bad)", background: "var(--bad-soft)" }} title="Served by web/mock: illustrative numbers, not a measurement">mock data</span>;
+}
+
+export function BenchV2Card({ r }: { r: BenchV2Results }) {
+  const series = useMemo(() => aiCallSeries(r), [r]);
+  const sum = aiSummary(r);
+  const acc = r.numbers.find((n) => /accuracy/i.test(n.name));
+  return (
+    <Card
+      eyebrow="Proof · real job postings"
+      title={`AI calls per posting over ${sum.postings} postings`}
+      right={<>{r.mock && <MockBadge />}{r.generated_at && <span className="font-mono text-xs text-muted">generated {new Date(r.generated_at).toLocaleString()}</span>}</>}
+    >
+      <div className="grid gap-4">
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
+          <Stat label="Patchwork, all postings" sub={`${sum.learns} new layout${sum.learns === 1 ? "" : "s"} learned; every other posting was read by code`}>
+            <span className="text-[22px] font-semibold leading-none">{sum.patchwork} AI calls</span>
+          </Stat>
+          <Stat label="Browser agent, all postings" sub="AI on every page, forever (an estimate, not a run)">
+            <span className="text-[22px] font-semibold leading-none" style={{ color: "var(--muted)" }}>{sum.browser == null ? "—" : `≈ ${sum.browser} AI calls`}</span>
+          </Stat>
+          <Stat label="After the last new layout" sub={acc ? <>accuracy vs answer key {fmtMetric(acc)} <KindBadge kind={acc.kind} /></> : undefined}>
+            <span className="text-[22px] font-semibold leading-none">{sum.zeroAfter} postings · 0 AI calls</span>
+          </Stat>
+        </div>
+        <AiLegend series={series} />
+        <AiCallsChart series={series} label="Cumulative AI calls as postings arrive" />
+        <p className="m-0 text-[13px] text-muted max-w-[110ch]">
+          Solid = measured: Patchwork replayed these postings from an empty layout library and counted its model calls. Dotted = an
+          estimate: a browser agent that reads and fills every page with AI (assumption in the table). Dots mark the postings where
+          Patchwork met a new layout and learned it once; each learned reader was checked by code before use.
+        </p>
+        <AiCallsTable series={series} postings={r.postings} />
+        <table className="tbl">
+          <thead><tr><th>Number</th><th>Value</th><th>Kind</th><th className="hidden md:table-cell">Source</th></tr></thead>
+          <tbody>
+            {r.numbers.map((n) => (
+              <tr key={n.name}>
+                <td>{n.name}</td>
+                <td className="num whitespace-nowrap"><Value m={n} /></td>
+                <td><KindBadge kind={n.kind} /></td>
+                <td className="hidden md:table-cell text-muted text-[12.5px] max-w-[52ch]">{n.source}{n.note ? ` (${n.note})` : ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 export default function BenchmarkTab() {
   const { data, error, loading, reload } = useBench();
+  const v2 = useBenchV2();
   const head = (
     <PageHead
       eyebrow="Benchmark"
-      title="Why not a one-shot script?"
-      right={<button className="btn" onClick={reload} disabled={loading}>Reload</button>}
+      title="Why not a browser agent, or a one-shot script?"
+      right={<button className="btn" onClick={() => { reload(); v2.reload(); }} disabled={loading}>Reload</button>}
     >
-      Setup cost, run cost and what happens when things break: Patchwork against doing it by hand, a computer-use agent,
-      and a script written by asking Claude once. Every number says whether it was measured, extrapolated or estimated.
+      AI calls over real job postings (v2), then setup cost, run cost and what happens when things break (v1): Patchwork
+      against doing it by hand, a computer-use agent, and a script written by asking Claude once. Every number says whether
+      it was measured, extrapolated or estimated.
     </PageHead>
+  );
+  const v2Part = v2.data ? <BenchV2Card r={v2.data} /> : (
+    <Empty>
+      {v2.error?.status === 404 ? <>No v2 results yet: the postings benchmark writes <code className="font-mono">bench/v2/results.json</code>.</>
+        : v2.error ? `Couldn't load bench v2 results: ${v2.error.detail}` : "Loading AI calls per posting…"}
+    </Empty>
   );
   if (!data) {
     return (
       <>
         {head}
+        {v2Part}
         <Empty action={error && error.status !== 404 ? <button className="btn" onClick={reload}>Try again</button> : undefined}>
           {loading ? "Loading benchmark results…"
             : error?.status === 404 ? <>No benchmark results yet. Run <code className="font-mono">make bench</code> (or <code className="font-mono">python -m bench.run</code>) to write <code className="font-mono">bench/results.json</code>, then reload.</>
@@ -353,7 +429,7 @@ export default function BenchmarkTab() {
       </>
     );
   }
-  return <BenchBody r={data} head={head} />;
+  return <BenchBody r={data} head={<>{head}{v2Part}</>} />;
 }
 
 export function BenchBody({ r, head }: { r: BenchResults; head?: ReactNode }) {

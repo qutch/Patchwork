@@ -1,6 +1,8 @@
 // Mock control plane for UI development (docs/contracts.md section 4).
 //
-//   node mock/server.mjs [--port 5181] [--pace 1]
+//   node mock/server.mjs [--port 5182] [--pace 1] [--agent scripted|deep]
+//
+// v2 (jobs -> tracker form: pages, tracker, layouts, LEARN, bench v2) lives in mock/v2.mjs.
 //
 // No dependencies beyond Node's stdlib. Canned data in mock/data.json comes from a real run
 // of the compiler, runner and ScriptedAgentService (see mock/collect.py). The server keeps
@@ -13,6 +15,7 @@ import http from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { createV2 } from "./v2.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DATA = JSON.parse(readFileSync(join(HERE, "data.json"), "utf8"));
@@ -20,7 +23,9 @@ const arg = (name, dflt) => {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? process.argv[i + 1] : dflt;
 };
-const PORT = Number(arg("port", process.env.MOCK_PORT || 5181));
+// Never 8000-8003 or 5180 (the owner's live demo). `npm run dev:mock` serves the UI on 5181 and this on 5182.
+const PORT = Number(arg("port", process.env.MOCK_PORT || 5182));
+const AGENT = arg("agent", process.env.MOCK_AGENT || "scripted") === "deep" ? "deep" : "scripted";
 const PACE = Number(arg("pace", process.env.MOCK_PACE ?? 1));
 const NAME = "po_to_stockroom";
 const RECORD_MS = 45; // per record in a run, so 100 records take ~4.5 s on stage
@@ -33,7 +38,8 @@ const later = (ms, fn) => setTimeout(fn, Math.round(ms * PACE));
 let S;
 function freshState(keepSettings) {
   const recordings = keepSettings ? S.recordings : new Map();
-  const settings = keepSettings ? S.settings : { ai_enabled: true, agent: "scripted", model: "scripted" };
+  const settings = keepSettings ? S.settings
+    : { ai_enabled: true, agent: AGENT, model: AGENT === "deep" ? "particle-ai/particle-1:free (mock: no model is called)" : "scripted", learn_policy: "auto" };
   for (const t of S?.timers ?? []) clearTimeout(t);
   S = {
     settings,
@@ -655,9 +661,16 @@ async function route(req, res) {
   if (M === "GET" && p === "/api/health")
     return send(res, 200, { status: "ok", workspace: "mock (in memory)", agent: S.settings.agent, ai_enabled: S.settings.ai_enabled, mock: true });
   if (p === "/api/settings") {
-    if (M === "PUT") S.settings.ai_enabled = !!body.ai_enabled;
+    if (M === "PUT") {
+      if ("ai_enabled" in body) S.settings.ai_enabled = !!body.ai_enabled;
+      if ("learn_policy" in body) {
+        if (!["auto", "approve"].includes(body.learn_policy)) return fail(res, 422, "learn_policy must be auto or approve");
+        S.settings.learn_policy = body.learn_policy;
+      }
+    }
     return send(res, 200, S.settings);
   }
+  if (V2.handle(req, res, url, M, p, body)) return;
 
   // recordings
   if (M === "POST" && p === "/api/recordings") {
@@ -700,7 +713,8 @@ async function route(req, res) {
     const [code, out] = startRepair(mm[1]);
     return code === 200 ? send(res, 200, out) : fail(res, code, out);
   }
-  if (M === "GET" && p === "/api/agent/threads") return send(res, 200, [...S.threads.values()].map(threadStatus));
+  if (M === "GET" && p === "/api/agent/threads")
+    return send(res, 200, [...[...S.threads.values()].map(threadStatus), ...V2.threads()].sort((a, b) => a.created_at.localeCompare(b.created_at)));
   if ((mm = m(/^\/api\/agent\/([^/]+)(\/[a-z]+)?$/))) {
     const t = S.threads.get(decodeURIComponent(mm[1]));
     if (!t) return fail(res, 404, `thread ${mm[1]} not found`);
@@ -720,7 +734,10 @@ async function route(req, res) {
 
   // integrations
   if (M === "GET" && p === "/api/integrations")
-    return send(res, 200, S.versions.length ? [{ name: NAME, active_version: S.active, latest_version: S.versions.at(-1).version, open_incidents: openIncidents().length }] : []);
+    return send(res, 200, [
+      ...(S.versions.length ? [{ name: NAME, active_version: S.active, latest_version: S.versions.at(-1).version, open_incidents: openIncidents().length }] : []),
+      V2.integration(),
+    ]);
   if ((mm = m(/^\/api\/integrations\/([^/]+)(\/.*)?$/))) {
     const name = decodeURIComponent(mm[1]);
     const sub = mm[2] ?? "";
@@ -783,7 +800,9 @@ async function route(req, res) {
   }
   if (M === "GET" && p === "/api/incidents") {
     const st = url.searchParams.get("status");
-    return send(res, 200, S.incidents.filter((i) => !st || i.status === st).map(incidentSummary).reverse());
+    const integ = url.searchParams.get("integration");
+    const all = [...S.incidents, ...V2.incidents()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id - b.id);
+    return send(res, 200, all.filter((i) => (!st || i.status === st) && (!integ || i.integration === integ)).map(incidentSummary).reverse());
   }
   if (M === "GET" && (mm = m(/^\/api\/incidents\/(\d+)$/))) {
     const inc = S.incidents.find((i) => i.id === Number(mm[1]));
@@ -815,10 +834,21 @@ async function route(req, res) {
 }
 const pickRun = (row) => ({ ...row, counts: { ...row.counts } });
 
+const readRepoJson = (rel) => {
+  const file = join(HERE, "..", "..", rel);
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+};
+const V2 = createV2({
+  send, fail, sse, broadcast, nowIso, clone, readRepoJson,
+  timer: later,
+  settings: () => S.settings,
+  base: () => `http://127.0.0.1:${server.address()?.port ?? PORT}`,
+});
+
 const server = http.createServer((req, res) => {
   route(req, res).catch((e) => {
     console.error(e);
     if (!res.headersSent) fail(res, 500, String(e?.message ?? e));
   });
 });
-server.listen(PORT, "127.0.0.1", () => console.log(`mock control plane on http://127.0.0.1:${PORT} (pace ${PACE})`));
+server.listen(PORT, "127.0.0.1", () => console.log(`mock control plane on http://127.0.0.1:${server.address().port} (pace ${PACE}, agent ${AGENT})`));

@@ -4,7 +4,7 @@
 // lines are "measured" (solid), "extrapolated" (measured rate carried past what was measured) or
 // "estimate" (a stated assumption); both of the latter are drawn dashed and labelled.
 
-import type { BenchKind, BenchResults, BreakResult, Metric } from "../api";
+import type { BenchKind, BenchResults, BenchV2Results, BreakResult, Metric } from "../api";
 
 export type LineStyle = "measured" | "extrapolated" | "estimate";
 export type SeriesId = "manual" | "computer_use" | "patchwork";
@@ -335,6 +335,62 @@ export function tableRows(r: BenchResults): TableRow[] {
   add("Computer-use agent", "Setup", r.computer_use.setup_min);
   add("Computer-use agent", "Model calls per record", r.computer_use.llm_calls_per_record);
   return rows;
+}
+
+// ------------------------------------------------------------------------------- v2: AI calls over postings
+export type AiSeriesId = "patchwork" | "browser_agent";
+export interface AiSeries {
+  id: AiSeriesId;
+  label: string;
+  kind: BenchKind;
+  style: LineStyle;
+  /** cumulative AI calls after posting x, starting at (0, 0) */
+  points: { x: number; y: number }[];
+  /** postings that cost AI calls (a new layout was learned) */
+  learns: { x: number; y: number; site: string; calls: number }[];
+}
+
+const kindOf = (r: BenchV2Results, re: RegExp, dflt: BenchKind): BenchKind => r.numbers?.find((n) => re.test(n.name))?.kind ?? dflt;
+const cumulative = (xs: number[]) => {
+  let a = 0;
+  return xs.map((x) => (a += x || 0));
+};
+
+/** Both cumulative lines. Patchwork defaults to measured, the browser agent to an estimate, unless a number says otherwise. */
+export function aiCallSeries(r: BenchV2Results): AiSeries[] {
+  const out: AiSeries[] = [];
+  const posts = r.postings ?? [];
+  const pwY = r.series?.patchwork_cumulative_ai_calls ?? cumulative(posts.map((p) => p.ai_calls));
+  if (pwY.length) {
+    const kind = kindOf(r, /patchwork.*ai calls/i, "measured");
+    out.push({
+      id: "patchwork", label: "Patchwork", kind, style: styleForKind(kind),
+      points: [{ x: 0, y: 0 }, ...pwY.map((y, i) => ({ x: i + 1, y }))],
+      learns: posts.filter((p) => p.ai_calls > 0).map((p) => ({ x: p.n, y: pwY[p.n - 1] ?? 0, site: p.site, calls: p.ai_calls })),
+    });
+  }
+  const baY = r.series?.browser_agent_cumulative_ai_calls;
+  if (baY?.length) {
+    const kind = kindOf(r, /browser agent/i, "estimate");
+    out.push({ id: "browser_agent", label: "Browser agent", kind, style: styleForKind(kind), points: [{ x: 0, y: 0 }, ...baY.map((y, i) => ({ x: i + 1, y }))], learns: [] });
+  }
+  return out;
+}
+
+export function aiSummary(r: BenchV2Results) {
+  const s = aiCallSeries(r);
+  const pw = s.find((x) => x.id === "patchwork");
+  const ba = s.find((x) => x.id === "browser_agent");
+  const postings = r.postings?.length ?? Math.max(0, (pw?.points.length ?? 1) - 1);
+  const lastLearn = pw?.learns.at(-1)?.x ?? 0;
+  return {
+    postings,
+    patchwork: pw?.points.at(-1)?.y ?? 0,
+    browser: ba?.points.at(-1)?.y ?? null,
+    learns: pw?.learns.length ?? 0,
+    lastLearn,
+    zeroAfter: postings - lastLearn,
+  };
 }
 
 /** Short badge text for a kind. */

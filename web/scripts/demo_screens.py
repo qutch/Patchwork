@@ -20,7 +20,8 @@ from pathlib import Path
 
 from playwright.sync_api import Page, expect, sync_playwright
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:5180"
+# Default is the mock UI (5181), never the live demo on 5180: this script resets whatever it points at.
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5181"
 OUT = Path(os.environ.get("SCREENS_OUT") or Path(__file__).resolve().parent.parent / "screenshots")
 OUT.mkdir(parents=True, exist_ok=True)
 REAL = os.environ.get("REAL") == "1"
