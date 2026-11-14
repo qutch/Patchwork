@@ -243,3 +243,77 @@ def delete_integration(name: str, *, delete_rows: bool) -> dict[str, Any]:
         _path(name).unlink(missing_ok=True)
         removed.append("draft")
     return {"name": name, "removed": removed, "rows_deleted": rows_deleted}
+
+
+# ---- teach from example pages --------------------------------------------------------------------
+
+def _input_kind(field: dict[str, Any]) -> str:
+    if field.get("options"):
+        return "select"
+    fmt, typ = field.get("format"), field.get("type")
+    if fmt == "email":
+        return "email"
+    if fmt in ("date", "date-time"):
+        return "date"
+    if typ in ("number", "integer"):
+        return "number"
+    if typ == "boolean":
+        return "checkbox"
+    return "text"
+
+
+def write_teach_inputs(name: str, page_ids: list[str]) -> str:
+    """Write the synthetic recording TEACH builds from: `recordings/draft-<name>/{recording.json,
+    snapshots/<n>.html, candidates.json}`. Returns the recording id `draft-<name>`.
+
+    candidates.json: `teach_mode: "examples"`, `source` = the first example page, `examples` = every page, `sink`
+    = the draft's destination plus its fields as `labels` and `questions`, `mappings: []` (the agent
+    proposes them) and `unexplained: []`. Raises KeyError (no such draft), DraftError (no destination, no
+    example page, or a page that was not sent to this draft) and DestinationError (the destination no longer
+    checks out)."""
+    from control import destinations
+    from control.api.recordings import recording_dir
+    from control.pages import PageInbox
+
+    draft = get(name)
+    if draft is None:
+        raise KeyError(name)
+    if not draft.destination:
+        raise DraftError("choose a destination first")
+    if not page_ids:
+        raise DraftError("send at least one example page first")
+    inbox = PageInbox()
+    pages = []
+    for pid in dict.fromkeys(page_ids):
+        page = inbox.get(pid)
+        if page is None:
+            raise DraftError(f"example page {pid} was not found")
+        if page.get("integration") != name:
+            raise DraftError(f"example page {pid} was not sent to {name}")
+        pages.append(page)
+    checked = destinations.check(draft.destination)
+
+    rid = f"draft-{name}"
+    root = recording_dir(rid)
+    (root / "snapshots").mkdir(parents=True, exist_ok=True)
+    examples = []
+    for n, page in enumerate(pages, 1):
+        (root / "snapshots" / f"{n}.html").write_text(page["html"] or "")
+        examples.append({"page_id": page["id"], "site": page["site"], "url": page["url"],
+                         "canonical_url": page["canonical_url"], "title": page["title"],
+                         "snapshot": f"snapshots/{n}.html"})
+    first = examples[0]
+    questions = [{"label": f["name"], "required": bool(f.get("required")), "input": _input_kind(f),
+                  **({"options": f["options"]} if f.get("options") else {})} for f in checked["fields"]]
+    sink = {**draft.destination, "title": checked["title"], "labels": [q["label"] for q in questions],
+            "questions": questions}
+    if draft.destination["kind"] == "form":
+        sink.setdefault("submit", "Submit")
+    candidates = {"recording_id": rid, "intent": draft.intent, "teach_mode": "examples",
+                  "source": {"kind": "page", **{k: first[k] for k in ("site", "url", "canonical_url", "snapshot", "title")}},
+                  "examples": examples, "sink": sink, "mappings": [], "unexplained": []}
+    recording = {"id": rid, "intent": draft.intent, "events": [], "start_url": first["url"]}
+    (root / "recording.json").write_text(json.dumps(recording, indent=2))
+    (root / "candidates.json").write_text(json.dumps(candidates, indent=2))
+    update(name, example_page_ids=[p["id"] for p in pages])
+    return rid

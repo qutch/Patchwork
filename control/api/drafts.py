@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from control import destinations, drafts
 from runner.store import Store
@@ -78,6 +78,36 @@ def api_operations(base_url: str, credential: str | None = None) -> list[dict[st
         return destinations.api_operations(base_url, credential or None)
     except destinations.DestinationError as e:
         raise HTTPException(422, str(e)) from None
+
+
+class TeachBody(BaseModel):
+    page_ids: list[str]
+
+
+@router.post("/integrations/{name}/teach")
+def teach(name: str, body: TeachBody, request: Request) -> dict[str, str]:
+    """Teach a draft from its example pages: write the synthetic recording, start the same BUILD as
+    `POST /api/integrations/build`, mark the draft `teaching`."""
+    from control.api import server
+
+    draft = require_draft(name)
+    if draft.state != "draft":
+        raise HTTPException(409, f"{name} is already {draft.state}: it can be taught once")
+    if not draft.destination:
+        raise HTTPException(422, "choose a destination first")
+    if not body.page_ids:
+        raise HTTPException(422, "send at least one example page first")
+    server.require_ai(request)
+    try:
+        rid = drafts.write_teach_inputs(name, body.page_ids)
+    except drafts.DraftError as e:
+        raise HTTPException(422, str(e)) from None
+    except destinations.DestinationError as e:
+        raise HTTPException(422, f"the destination no longer checks out: {e}") from None
+    dest = TypeAdapter(server.Destination).validate_python(draft.destination)
+    out = server.build(server.BuildRequest(recording_id=rid, name=name, destination=dest), request)
+    drafts.update(name, state="teaching", thread_id=out["thread_id"])
+    return {"thread_id": out["thread_id"]}
 
 
 @router.delete("/integrations/{name}")
