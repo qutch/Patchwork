@@ -133,6 +133,9 @@ The agents' tasks G4, G8 and G9 build on these details.
 
 ## Task 5: table connectors, new rows from a sheet or table (~2 h). Plan task G13.
 
+**Lowest priority, cut first.** The owner decided (2026-11-14) that table sources matter least for the demo. Do this
+only after tasks 1-4, 6 and 7 are done, and only if time remains. Nothing else depends on it.
+
 - **Files:** `control/connectors/csv_url.py`, `airtable_list.py` and `sqlite_select.py`.
 - **What `poll()` yields:** each connector's `poll()` yields **one item per new row** as a one-row CSV
   (`text/csv`) plus `meta.row_key` and `site`:
@@ -171,6 +174,7 @@ The agents' tasks G4, G8 and G9 build on these details.
 ## Order and timing
 
 1. **Now:** task 1, then task 2. These unblock the most work: G4, G8, G9 and the demo.
-2. **Then:** task 5, or task 3 if live email matters for the demo (the owner decides).
+2. **Then:** task 3 if live email matters for the demo (the owner decides).
 3. **When the lead says G2–G4 have landed:** tasks 6 and 7.
-4. **After each task:** a PR to `main`; the lead merges, usually within 30 minutes.
+4. **Last, optional:** task 5. It is the first thing to cut.
+5. **After each task:** a PR to `main`; the lead merges, usually within 30 minutes.
