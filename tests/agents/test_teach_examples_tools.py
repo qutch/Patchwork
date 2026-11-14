@@ -313,3 +313,15 @@ def test_an_echoed_alternative_is_applied_but_a_tampered_one_is_refused(review, 
     assert rows["Link"]["source"]["label"] == "the page's address" and rows["Link"]["values"][a].startswith("https://shop-a")
     with pytest.raises(ValueError):  # display keys alone are no choice
         apply_review_edits(spec, review, [{"dest_field": "Store", "choice": {"label": "x", "values": {}}}])
+
+
+def test_a_constant_is_confirmed_only_when_a_person_gave_it(teach_ctx):
+    """The mapper's const for a field nothing on the page fills is unconfirmed (the review asks), unless the
+    person typed that exact value in answer to ask_user."""
+    m = {**FULL_MAPPING, "Store": {"const": "Acme Shop"}}
+    assert teach_ctx.call("propose_mapping", mapping=m).startswith("OK")
+    assert any(a["status"] == "unconfirmed" and "Acme Shop" in a["text"] for a in teach_ctx.spec()["assumptions"])
+    teach_ctx.ctx.answers.append("Acme Shop")
+    assert teach_ctx.call("propose_mapping", mapping=m).startswith("OK")
+    assert not any(a["status"] == "unconfirmed" for a in teach_ctx.spec()["assumptions"])
+    assert "Store" in teach_ctx.ctx.confirmed

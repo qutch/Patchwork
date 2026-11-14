@@ -155,6 +155,7 @@ class ToolContext:
         # (the scripted agent's questions); every other value in the review is labelled as proposed by AI.
         self.review: list[dict] | None = None
         self.confirmed: set[str] = set()
+        self.answers: list[str] = []  # every ask_user answer: a constant equal to one was typed by a person
         self._examples_c: dict | None = None
         self._contract: dict | None = None
 
@@ -1119,6 +1120,42 @@ TOOL_DOCS: dict[str, str] = {
 }
 
 
+def review_alternatives(label: str, info: dict, source: dict, records: list[dict], taken: set[str]) -> list[dict]:
+    """Choices a person may switch a review row to, each checked now on every example page. Page readers
+    come one per distinct value, never one that reads a value another field already gets (`taken`)."""
+    kind = info.get("type") or "text"
+    if kind == "array" or not records:
+        return []
+    rules_v = learn.type_rules("value", kind, info.get("values"))
+    fname = source.get("field") or _field_name(label)
+    out: list[dict] = []
+    seen_values: set[str] = set(taken)
+    words = set(learn._words(label))
+    cands = sorted(learn.reader_candidates(records[0]),
+                   key=lambda kr: 0 if learn._concepts(learn._words(kr[0])) & learn._concepts(list(words)) else 1)
+    for _, reader in cands:
+        if len(out) >= 4:
+            break
+        if reader == source.get("reader"):
+            continue
+        checked = [learn.check_reader(reader, r, rules_v) for r in records]
+        key = learn.normalize_ws(str(checked[0]["value"]))
+        if all(c["ok"] for c in checked) and key not in seen_values:
+            seen_values.add(key)
+            out.append({**with_label({"field": fname, "reader": reader}),
+                        "values": {r.get("id"): c["value"] for r, c in zip(records, checked)}})
+    if kind == "url" or words & _URLISH:
+        if all(not learn._check_rules("value", r.get("canonical_url"), rules_v) for r in records):
+            out.append({**with_label({"record": "canonical_url"}),
+                        "values": {r.get("id"): r.get("canonical_url") for r in records}})
+    if kind == "date" or words & _DATEISH:
+        out.append({**with_label({"today": True}), "values": {r.get("id"): r.get("captured_date") for r in records}})
+    if not info.get("required"):
+        out.append(with_label({"skip": True}))
+    cur = source_key(source)
+    return [a for a in out if source_key(a) != cur]
+
+
 def build_tools(ctx: ToolContext) -> dict[str, Any]:
     """Every tool by name as a langchain StructuredTool; agents.deep hands each agent its subset."""
     from langchain_core.tools import StructuredTool  # lazy: tool_functions() must not need langchain
@@ -1666,6 +1703,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         """Ask the human one short question (with 2-3 options) and wait for the answer. Use it to
         confirm inferred assumptions and for values that cannot be derived from the data."""
         answer = ctx.interrupt("ask_user", question=question, options=list(options or []))
+        ctx.answers.append(str(answer.get("answer", "")))
         return f"user answered: {answer.get('answer', '')}"
 
     def request_deploy(version: int, summary: str) -> str:
@@ -2141,6 +2179,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                 if problem:
                     refusals.append(f"{label}: the constant {value!r} does not fit ({problem})")
                     continue
+                if str(value).strip() in {a.strip() for a in ctx.answers}:
+                    ctx.confirmed.add(label)  # the person gave this value when asked
                 mappings.append({"dest_field": label, "kind": "const", "value": value,
                                  "confirmed": label in ctx.confirmed})
             else:
@@ -2223,40 +2263,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         return (f"OK: added parser {p['id']} for {p['match'].get('site', site)}{scope_note}: "
                 f"{json.dumps(values, ensure_ascii=False, default=str)}. Not compiled or deployed.")
 
-    def _alternatives(label: str, info: dict, source: dict, records: list[dict], taken: set[str]) -> list[dict]:
-        """Choices a person may switch a review row to, each checked now on every example page. Page readers
-        come one per distinct value, never one that reads a value another field already gets (`taken`)."""
-        kind = info.get("type") or "text"
-        if kind == "array" or not records:
-            return []
-        rules_v = learn.type_rules("value", kind, info.get("values"))
-        fname = source.get("field") or _field_name(label)
-        out: list[dict] = []
-        seen_values: set[str] = set(taken)
-        words = set(learn._words(label))
-        cands = sorted(learn.reader_candidates(records[0]),
-                       key=lambda kr: 0 if learn._concepts(learn._words(kr[0])) & learn._concepts(list(words)) else 1)
-        for _, reader in cands:
-            if len(out) >= 4:
-                break
-            if reader == source.get("reader"):
-                continue
-            checked = [learn.check_reader(reader, r, rules_v) for r in records]
-            key = learn.normalize_ws(str(checked[0]["value"]))
-            if all(c["ok"] for c in checked) and key not in seen_values:
-                seen_values.add(key)
-                out.append({**with_label({"field": fname, "reader": reader}),
-                            "values": {r.get("id"): c["value"] for r, c in zip(records, checked)}})
-        if kind == "url" or words & _URLISH:
-            if all(not learn._check_rules("value", r.get("canonical_url"), rules_v) for r in records):
-                out.append({**with_label({"record": "canonical_url"}),
-                            "values": {r.get("id"): r.get("canonical_url") for r in records}})
-        if kind == "date" or words & _DATEISH:
-            out.append({**with_label({"today": True}), "values": {r.get("id"): r.get("captured_date") for r in records}})
-        if not info.get("required"):
-            out.append(with_label({"skip": True}))
-        cur = source_key(source)
-        return [a for a in out if source_key(a) != cur]
+    _alternatives = review_alternatives
 
     def _review(version: int) -> list[dict]:
         """One row per destination field: where its value comes from, the value on each example page, whether

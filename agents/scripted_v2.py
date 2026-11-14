@@ -1,5 +1,5 @@
 """The v2 stage-fallback storylines for ScriptedAgentService: LEARN, TEACH (page -> form) and REPAIR of a
-renamed form question. No model. They emit the deep agent's event types and call the *same* tool functions
+renamed form question, and TEACH from example pages (mapper -> learner per other site -> builder). No model. They emit the deep agent's event types and call the *same* tool functions
 (agents.deep_tools.tool_functions), so every check is real: a parser this code proposes still goes through
 test_page_parser's evidence/corroboration/ambiguity checks and save_parser's D2 rule.
 
@@ -34,6 +34,7 @@ COMPANY_CANDIDATES = [
     {"css": "head title", "regex": r"@\s*([^|–-]+?)\s*$"},
 ]
 CANDIDATES = {"title": TITLE_CANDIDATES, "company": COMPANY_CANDIDATES}
+SKIP_FIELD = "Skip this field"
 
 
 def generic_candidates(name: str, spec: dict, rec: dict) -> list[dict]:
@@ -150,6 +151,8 @@ class ScriptedV2Mixin:
         from agents.scripted import load_recording, work_dir
         work_dir(name)
         ctx = ToolContext(self, t, name=name, recording_id=recording_id)
+        if ctx.examples_mode():  # TEACH from example pages (wizard approach A)
+            return self._build_from_examples(t, recording_id, name)
         fns = tool_functions(ctx)
         rec = load_recording(recording_id)
         todos = [{"content": "Interpret the recording into a draft spec", "status": "in_progress"},
@@ -189,6 +192,136 @@ class ScriptedV2Mixin:
         self._call(t, "supervisor", fns, "request_deploy", version=version,
                    summary="Initial version taught from the recording (page -> form).")
         return {"model_calls": 0, **(ctx.deploy_result or {"deployed": False, "version": version})}
+
+    # ---- TEACH from example pages (wizard approach A) -------------------------------------------
+    def _map_examples(self, t: _Thread, ctx: Any, fns: dict, dest: dict[str, dict], pages: list[dict]) -> dict[str, dict]:
+        """The mapping a model would propose: the page's address for a url field, today for a date field, else
+        `learn.guess_reader` on the first page. A field nothing fills becomes a question to the person, with the
+        checked alternatives and "Skip this field" (skip is not offered for a required field)."""
+        from agents.deep_tools import _DATEISH, _URLISH, _field_name, review_alternatives
+        first = pages[0]
+        mapping: dict[str, dict] = {}
+        taken: set[str] = set()
+        for label, info in dest.items():
+            kind = info.get("type") or "text"
+            words = set(learn._words(label))
+            if kind == "array":
+                mapping[label] = {"skip": True}
+            elif kind == "url" or words & _URLISH:
+                mapping[label] = {"record": "canonical_url"}
+            elif kind == "date" or words & _DATEISH:
+                mapping[label] = {"today": True}
+            else:
+                reader = learn.guess_reader(label, kind, first)
+                if reader is not None:
+                    mapping[label] = {"field": _field_name(label), "reader": reader}
+                    taken.add(learn.normalize_ws(str(learn.check_reader(reader, first)["value"])))
+        for label, info in dest.items():
+            if label in mapping:
+                continue
+            alts = [a for a in review_alternatives(label, info, {"skip": True}, pages, taken)
+                    if not a.get("skip")]
+            options = [a["label"] for a in alts] + ([] if info.get("required") else [SKIP_FIELD])
+            if not options:
+                raise RuntimeError(f"nothing on the example pages fills the required field {label!r}")
+            out = self._call(t, "mapper", fns, "ask_user",
+                             question=f"Nothing on the first example page clearly fills {label!r} "
+                                      f"({info.get('type') or 'text'}). Where should it come from?",
+                             options=options)
+            answer = out.removeprefix("user answered:").strip()
+            chosen = next((a for a in alts if a["label"] == answer), None)
+            if chosen is None and answer != SKIP_FIELD:
+                if info.get("required"):
+                    raise RuntimeError(f"no source chosen for the required field {label!r}")
+                answer = SKIP_FIELD
+            ctx.confirmed.add(label)  # a person chose this source: it is not AI-proposed
+            mapping[label] = ({"skip": True} if chosen is None else
+                              {k: v for k, v in chosen.items() if k not in ("label", "values")})
+            self.emit(t, "message", agent="mapper", text=f"Recorded for {label}: {answer}")
+        return mapping
+
+    def _site_parser(self, rec: dict, spec: dict, kinds: dict[str, tuple[str, str]]) -> dict | None:
+        """The readers a model would pick on another example site: the first parser's reader when it works
+        here, else `learn.guess_reader`, else the generic candidates. None if a field has no checked reader."""
+        parsers = (spec.get("extract") or {}).get("parsers") or []
+        fields: dict[str, dict] = {}
+        for fname, (label, kind) in kinds.items():
+            rules = learn.type_rules("value", kind)
+            tries = [dict(p["fields"][fname]) for p in parsers if isinstance((p.get("fields") or {}).get(fname), dict)]
+            guess = learn.guess_reader(label, kind, rec)
+            tries += ([guess] if guess else []) + generic_candidates(fname, spec, rec)
+            for cand in tries:
+                cand = {k: v for k, v in cand.items() if not (k == "cast" and v == "str") and v not in (None, {})}
+                if learn.check_reader(cand, rec, rules)["ok"]:
+                    fields[fname] = cand
+                    break
+            else:
+                return None
+        return {"fields": fields}
+
+    def _build_from_examples(self, t: _Thread, recording_id: str, name: str) -> Any:
+        from agents.deep_tools import ToolContext, examples_dest_fields, tool_functions
+        from agents.scripted import work_dir
+        t0 = time.monotonic()
+        work_dir(name)
+        ctx = ToolContext(self, t, name=name, recording_id=recording_id)
+        fns = tool_functions(ctx)
+        c = ctx.examples_candidates() or {}
+        pages = ctx.example_records()
+        if not pages:
+            raise RuntimeError("the draft has no example pages")
+        dest = examples_dest_fields(c, ctx.dest_contract())
+        todos = [{"content": "Map the destination fields", "status": "in_progress"},
+                 {"content": "Add a parser for each other example site", "status": "pending"},
+                 {"content": "Compile and test", "status": "pending"},
+                 {"content": "Request deploy", "status": "pending"}]
+        self.emit(t, "todos", todos=todos)
+        self.emit(t, "message", agent="supervisor",
+                  text=f"Intent: “{c.get('intent') or name}”. {len(pages)} example page(s). Delegating the mapping.")
+        first = pages[0]
+        self.emit(t, "subagent_start", name="mapper",
+                  task=f"Map the destination fields of {name} on page {first.get('id')} ({first.get('site')})")
+        self._call(t, "mapper", fns, "get_candidates", recording_id=recording_id)
+        self._call(t, "mapper", fns, "get_page", page_id=str(first.get("id")))
+        mapping = self._map_examples(t, ctx, fns, dest, pages)
+        mapped = self._call(t, "mapper", fns, "propose_mapping", mapping=mapping)
+        self.emit(t, "subagent_end", name="mapper", summary=_short(mapped))
+        if not mapped.startswith("OK"):
+            raise RuntimeError(f"propose_mapping refused: {_short(mapped, 300)}")
+        kinds = {m["field"]: (label, (dest.get(label) or {}).get("type") or "text")
+                 for label, m in mapping.items() if "reader" in m}
+        todos[0]["status"], todos[1]["status"] = "completed", "in_progress"
+        self.emit(t, "todos", todos=todos)
+        for rec in pages[1:]:
+            pid, site = str(rec.get("id")), rec.get("site")
+            self.emit(t, "subagent_start", name="learner", task=f"Add a parser for page {pid} ({site}) reading "
+                                                               + ", ".join(kinds))
+            self._call(t, "learner", fns, "get_page", page_id=pid)
+            parser = self._site_parser(rec, ctx.spec_dict(), kinds)
+            if parser is None:
+                self.emit(t, "subagent_end", name="learner", summary=f"No checked reader on {site}")
+                raise RuntimeError(f"scripted learner found no checked readers for {site}")
+            added = self._call(t, "learner", fns, "add_site_parser", page_id=pid, parser=parser)
+            self.emit(t, "subagent_end", name="learner", summary=_short(added))
+            if not added.startswith("OK"):
+                raise RuntimeError(f"add_site_parser refused: {_short(added, 300)}")
+        todos[1]["status"], todos[2]["status"] = "completed", "in_progress"
+        self.emit(t, "todos", todos=todos)
+        self.emit(t, "subagent_start", name="builder", task="Compile spec.yaml and run its tests")
+        compiled = self._call(t, "builder", fns, "compile_spec")
+        self.emit(t, "subagent_end", name="builder", summary=_short(compiled))
+        if not compiled.startswith("compiled"):
+            raise RuntimeError(_short(compiled, 300))
+        todos[2]["status"], todos[3]["status"] = "completed", "in_progress"
+        self.emit(t, "todos", todos=todos)
+        version = ctx.last_version["version"]
+        sites = ", ".join(str(r.get("site")) for r in pages)
+        self._call(t, "supervisor", fns, "request_deploy", version=version,
+                   summary=f"Taught from {len(pages)} example page(s) ({sites}).")
+        todos[3]["status"] = "completed"
+        self.emit(t, "todos", todos=todos)
+        return {"model_calls": 0, "seconds": round(time.monotonic() - t0, 1),
+                **(ctx.deploy_result or {"deployed": False, "version": version})}
 
     # ---- REPAIR (form question renamed) --------------------------------------------------------
     @staticmethod
