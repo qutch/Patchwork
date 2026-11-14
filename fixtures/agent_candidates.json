@@ -1,0 +1,34 @@
+{
+  "recording_id": "fixture",
+  "intent": "For every new purchase order message, record incoming stock",
+  "note": "Hand-made matcher output for fixtures/recording.json (contract section 2). Used by agents.deep when neither workspace candidates.json nor matcher.match is available.",
+  "sink": {
+    "base_url": "http://localhost:8002",
+    "method": "POST",
+    "path": "/api/incoming",
+    "body": {"product_id": "GAD-217", "quantity": 20, "reference": "PO-1022"}
+  },
+  "source": {
+    "base_url": "http://localhost:8001",
+    "list": {"method": "GET", "path": "/api/messages"},
+    "record_id": "id",
+    "text_field": "body",
+    "record": {
+      "id": "msg-0007",
+      "sender": "orders@acme.com",
+      "sender_domain": "acme.com",
+      "subject": "Purchase Order PO-1022",
+      "body": "Hi team,\n\nPlease find our order below.\n\nPO Number: PO-1022\nSKU: GAD-217\nQty: 20\n\nThanks,\nAcme Supply",
+      "received_at": "2026-11-02T10:32:33Z"
+    }
+  },
+  "mappings": [
+    {"dest_field": "product_id", "value": "GAD-217", "kind": "text", "source_field": "body",
+     "offset": [64, 71], "label": "SKU:", "candidate_regex": "SKU:\\s*([A-Z0-9-]+)", "cast": "str"},
+    {"dest_field": "quantity", "value": 20, "kind": "text", "source_field": "body",
+     "offset": [77, 79], "label": "Qty:", "candidate_regex": "Qty:\\s*(\\d+)", "cast": "int"},
+    {"dest_field": "reference", "value": "PO-1022", "kind": "text", "source_field": "body",
+     "offset": [51, 58], "label": "PO Number:", "candidate_regex": "PO Number:\\s*(PO-\\d+)", "cast": "str"}
+  ],
+  "unexplained": []
+}
