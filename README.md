@@ -77,3 +77,21 @@ Password, `cc-*` and `one-time-code` fields, `Authorization`/`Cookie` headers an
 are always redacted. `events.jsonl` grows live. The control plane uses `capture.session.start_recording / get_session /
 list_recordings` (see `docs/contracts.md` §2). Demo controls on the Inbox: `POST /admin/deliver {count}`,
 `POST /admin/new_supplier {count}` (Break 2), `POST /admin/reset`, `GET /admin/ground_truth`.
+
+## Control plane
+
+```bash
+make up            # Inbox :8001, Stockroom :8002, staging :8003 + control plane :8000 (Ctrl-C stops all)
+make api           # control plane alone on :38080 (what the web/ dev server proxies to)
+python -m control.api --port 38080 [--host 127.0.0.1]
+uvicorn control.api:app --port 38080
+curl localhost:8000/api/health        # interactive API docs at /docs
+```
+
+FastAPI app `control.api:app`, implementing `docs/contracts.md` §4 (recordings, agent threads over SSE, integrations,
+versions/diffs, background runs with live progress, incidents, demo controls, accuracy). It loads the repo `.env`
+(never overriding set variables; `PATCHWORK_NO_DOTENV=1` skips it). Model keys never reach the runner.
+`PATCHWORK_AGENT=scripted|deep` picks the agent; the AI on/off switch (`PUT /api/settings`) gates build and repair,
+never runs. `PATCHWORK_RUN_PACE_MS` slows the runner per record so the counters are watchable (`make up` sets 30).
+Demo app URLs: `PATCHWORK_INBOX_URL`, `PATCHWORK_STOCKROOM_URL`, `PATCHWORK_STAGING_URL`.
+Tests: `tests/control/` (the whole demo through HTTP only in `test_api_flow.py`).
