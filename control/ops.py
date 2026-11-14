@@ -38,6 +38,17 @@ def fetch_sink_openapi(base_url: str) -> dict[str, Any]:
     return resp.json()
 
 
+def fetch_contract(spec: Any) -> dict[str, Any]:
+    """The destination's current contract (contracts V6). API sinks: GET {base}/openapi.json (as
+    `fetch_sink_openapi`). Form sinks: a headless snapshot of the form as an OpenAPI-shaped doc.
+    PATCHWORK_SINK_BASE_URL never applies to form sinks."""
+    if getattr(spec.sink, "kind", "api") == "form":
+        from runner.forms import fetch_form_contract
+
+        return fetch_form_contract(spec.sink.url)
+    return fetch_sink_openapi(spec.sink.base_url)
+
+
 def compile_and_test(spec_path: str | Path, *, examples_path: str | Path | None = None,
                      transforms_path: str | Path | None = None, openapi_path: str | Path | None = None,
                      store: Store | None = None) -> dict[str, Any]:
@@ -48,7 +59,7 @@ def compile_and_test(spec_path: str | Path, *, examples_path: str | Path | None 
     transforms_path = Path(transforms_path) if transforms_path else spec_path.with_name("transforms.py")
     spec = load_spec(spec_path)
     sink_openapi = (json.loads(Path(openapi_path).read_text()) if openapi_path
-                    else fetch_sink_openapi(spec.sink.base_url))
+                    else fetch_contract(spec))
     version = store.latest_version(spec.name) + 1
     result: CompileResult = compile_spec(
         spec, version=version, out_root=workspace_dir() / "integrations",

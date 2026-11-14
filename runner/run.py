@@ -16,7 +16,7 @@ from typing import Any
 import yaml
 
 from runner.contract import openapi_hash, validate_body
-from runner.http import Http
+from runner.http import ConfigError, Http
 from runner.lib import AI_MODULES
 from runner.loader import load_integration
 from runner.pipeline import process_record
@@ -41,12 +41,21 @@ def version_dir(name: str, version: int, ws: Path | None = None) -> Path:
     return (ws or workspace_dir()) / "integrations" / name / f"v{version}"
 
 
-def preflight(http: Http, vdir: Path, manifest: dict) -> tuple[bool, dict[str, Any]]:
-    """Compare the sink's live OpenAPI with the snapshot this version was compiled against.
-    Returns (ok, info). Runs the contract check on the golden bodies only if the hash changed."""
+def _live_contract(http: Http, integ: Any) -> dict[str, Any]:
+    """Packages compiled by the v2 templates fetch their own contract (API: /openapi.json; form: a
+    snapshot in the run's browser). v1-compiled packages have no fetch_contract: GET /openapi.json."""
+    fetch = getattr(integ, "fetch_contract", None)
+    if fetch is not None:
+        return fetch(http)
     resp = http.request("sink", "GET", "/openapi.json")
     resp.raise_for_status()
-    current = resp.json()
+    return resp.json()
+
+
+def preflight(http: Http, vdir: Path, manifest: dict, integ: Any = None) -> tuple[bool, dict[str, Any]]:
+    """Compare the sink's live contract with the snapshot this version was compiled against.
+    Returns (ok, info). Runs the contract check on the golden bodies only if the hash changed."""
+    current = _live_contract(http, integ)
     cur_hash = openapi_hash(current)
     info: dict[str, Any] = {"openapi_hash": cur_hash, "expected_hash": manifest.get("openapi_hash"),
                             "changed": cur_hash != manifest.get("openapi_hash")}
@@ -95,8 +104,18 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
         raise SystemExit(f"refusing to run: AI modules imported in runner process: {leaked}")
 
     scope = "staging" if dry_run else "live"
-    http = Http(config, staging=dry_run)
     kind = "replay" if replay else "run"
+    try:
+        http = Http(config, staging=dry_run)
+    except ConfigError as e:  # e.g. patchwork://control without PATCHWORK_CONTROL_URL: a failed run, said clearly
+        run_id = store.start_run(name, v, dry_run, kind=kind, pid=os.getpid())
+        log(json.dumps({"event": "started", "run_id": run_id}))
+        store.finish_run(run_id, "failed", {}, 0.0, None, str(e))
+        summary = {"run_id": run_id, "integration": name, "version": v, "dry_run": dry_run, "kind": kind,
+                   "status": "failed", "counts": {}, "duration_s": 0.0, "llm_calls": 0, "incident_id": None,
+                   "message": str(e), "log": None}
+        log(json.dumps(summary))
+        return summary
     run_id = store.start_run(name, v, dry_run, kind=kind, pid=os.getpid())
     log(json.dumps({"event": "started", "run_id": run_id}))
     pace = _pace_s()
@@ -119,7 +138,7 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
 
     with log_path.open("w") as jl:
         try:
-            ok, info = preflight(http, vdir, manifest)
+            ok, info = preflight(http, vdir, manifest, integ)
         except Exception as e:  # noqa: BLE001
             status, message = "failed", f"preflight could not reach sink: {e}"
             return finish()
@@ -127,7 +146,8 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
                              **{k: v_ for k, v_ in info.items() if k != "current_openapi"}}) + "\n")
         jl.flush()
         if not ok:
-            old = json.loads((vdir / "contract" / "openapi.json").read_text())
+            snapshot = vdir / "contract" / "openapi.json"
+            old = json.loads(snapshot.read_text()) if snapshot.exists() else None
             incident_id = store.open_incident(
                 name=name, version=v, run_id=run_id, type="CONTRACT_CHANGED", reason_codes=["SINK_CONTRACT"],
                 summary=f"Destination contract changed; {len(info['contract_errors'])} contract errors. "

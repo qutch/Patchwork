@@ -377,6 +377,18 @@ sink:
   `form_contract(snapshot, *, title, url) -> dict` (V6), `fill_and_submit(page, values: dict[str, str], *, submit, confirmation_text, dry_run) -> None`,
   `fetch_form_contract(url: str) -> dict` (sync; launches its own browser; for the compiler, control plane and agents).
 - Values sent to a form are strings (`str()` of the mapped value).
+- *Added by W1 (additive):* `fill_and_submit(..., confirm_timeout_ms=10_000)`; helpers `open_form(page, url, *, timeout_ms=15_000)`
+  (raises `UNKNOWN` if the form doesn't load) and `resolve_control(page, label) -> (kind, locator)` (raises `SINK_CONTRACT`).
+  Every label **and** the submit button are resolved before anything is typed, so a failing record leaves nothing half
+  filled. A name match that disagrees with a heading match (a control *named* "Company" plus a different question
+  *titled* "Company") is ambiguous → `SINK_CONTRACT`. Each fill/click has a 5 s timeout (`SINK_CONTRACT` if a control
+  can't be filled). An empty required answer shows up as `VERIFY_MISMATCH` with the page's alerts in the detail.
+  `FormSession(dry_run)` (one browser per run, a fresh context per record) and `FormResult(status_code, text, detail)`
+  are what the runner uses; a dry-run record's outcome `detail` is `"dry run: filled, not submitted"`.
+- *Runtime surface (W1):* `runner.http.Http` (and `runner.testing.FakeHttp`) gain `form_submit(url, values, *, submit,
+  confirmation_text)` and `form_contract(url)`; generated form adapters call those. Generated `integration.py` exposes
+  `PIPELINE_API = 2`, `route(record) -> (parser_id, fn, routed_by)`, `fetch_contract(http)` and `SINK_KIND`;
+  `extract(record) -> (parser_id, fields)` is unchanged.
 
 ## V6. Form contract document (an OpenAPI-shaped synthesised doc, so v1's contract machinery keeps working)
 
@@ -394,6 +406,9 @@ sink:
 - `x-input` ∈ `text|textarea|email|url|date|number|radio|checkbox|select`; `type` is always `string`. No volatile data
   (no tokens, ids, timestamps; on Google: not the generated `iN` ids, `data-params`, `fbzx`, `jsname` or classes): loading an
   unchanged form twice gives the same `runner.contract.openapi_hash` (spike a: stable across loads).
+- *Added by W1:* `info.title` is the page's `document.title`. Radio/select options become `enum`; checkbox options become
+  `x-options` (several may be ticked, so not an enum). If two questions share a label the property gets `"x-count": N`
+  (filling that label fails closed). Google's email-collection question (and the fixture's) snapshots as `x-input: email`.
 - Compiled packages store it at `contract/openapi.json` as in v1; `manifest.json` has `sink_call: {method: POST, path: /form}`
   and `contract_kind: "form"` (`"openapi"` for API sinks).
 - **Preflight** (runner, before any write): fetch the live contract in the run's browser, compare hashes; if changed, run
@@ -425,6 +440,10 @@ launches; the runner fails with a clear message if it's missing). The global `PA
 from one control plane. Parsers extract only page fields (`title`, `company`); link and date come from `record.*` and are
 exempt from the learn lane's evidence check (C7). `fixtures/jobs/spec.yaml` + `examples.yaml` (W1) is a **test fixture**
 built against `fixtures/pages/` and the fixture tracker form; per C8 it is never what runs on stage.
+*Added by W1:* a missing `PATCHWORK_CONTROL_URL` is recorded as a run with `status: failed` and a `message` naming the
+variable (exit code 1), not a traceback. `fixtures/jobs/pages.py` has `page_record(seq, url, html, *, captured_at, ...)`
+(a V1 record builder) and `fixture_records()` for tests; `python -m fixtures.jobs.pages` regenerates `examples.yaml`
+(slimmed HTML: non-JSON-LD scripts, styles, SVGs and comments removed; readers and visible text unchanged).
 
 ## V8. Fixture tracker form (`demo_apps/tracker_form/`, W1)
 
