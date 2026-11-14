@@ -116,3 +116,30 @@ def test_learn_budget_is_capped(engine, monkeypatch):
     wait_for(svc, tid, "failed")
     err = next(e for e in svc.events(tid) if e["type"] == "error")
     assert "budget exhausted (3 calls)" in err["message"]
+
+
+def test_scripted_learn_emits_same_event_types_as_deep(workspace, monkeypatch):
+    """The stage fallback looks the same to the control plane and UI: same event types, same tools called
+    by the same agent names, same done.result keys."""
+    from agents.scripted import ScriptedAgentService
+    DeepAgentService, ScriptedChatModel, call, turn, learn_script = deps()
+    runs = {}
+    for kind in ("deep", "scripted"):
+        monkeypatch.setenv("PATCHWORK_WORKSPACE", str(workspace / kind))
+        eng = FakeEngine().install(monkeypatch)
+        eng.add_page(page("greenhouse_branded-1", seq=5))
+        eng.deploy_baseline(jobs_spec(), [golden("lever-1")])
+        svc = DeepAgentService(model=ScriptedChatModel(learn_script(PAGE))) if kind == "deep" \
+            else ScriptedAgentService(pace_s=0)
+        tid = svc.start_learn(PAGE)
+        wait_for(svc, tid, "done")
+        runs[kind] = check_events(svc, tid)
+    types = {k: {e["type"] for e in evs} for k, evs in runs.items()}
+    assert types["deep"] == types["scripted"], types
+    tools = {k: [(e["agent"], e["tool"]) for e in evs if e["type"] == "tool_call"] for k, evs in runs.items()}
+    assert tools["deep"] == tools["scripted"] == [("learner", "get_page"), ("learner", "test_page_parser"),
+                                                  ("learner", "save_parser")]
+    results = {k: next(e for e in evs if e["type"] == "done")["result"] for k, evs in runs.items()}
+    assert set(results["scripted"]) <= set(results["deep"])
+    assert {"model_calls", "seconds", "page_id", "parser_id", "site", "version", "deployed", "approval"} <= set(results["scripted"])
+    assert results["deep"]["approval"] == results["scripted"]["approval"] == "auto"

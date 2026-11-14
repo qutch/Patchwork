@@ -22,6 +22,7 @@ import jsonpatch
 import yaml
 
 from agents.interface import ThreadedAgentService, _Thread
+from agents.scripted_v2 import ScriptedV2Mixin
 from control import ops
 from runner.lib import Quarantine, cast, extract_product, extract_regex
 from runner.store import Store, workspace_dir
@@ -79,7 +80,7 @@ def load_recording(recording_id: str) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-class ScriptedAgentService(ThreadedAgentService):
+class ScriptedAgentService(ScriptedV2Mixin, ThreadedAgentService):
     def __init__(self, root: Path | None = None, pace_s: float | None = None):
         super().__init__(root)
         self.pace_s = float(os.environ.get("PATCHWORK_SCRIPTED_PACE_S", "0.4")) if pace_s is None else pace_s
@@ -95,6 +96,10 @@ class ScriptedAgentService(ThreadedAgentService):
 
     # ---- BUILD ---------------------------------------------------------------------------
     def _run_build(self, t: _Thread, recording_id: str) -> Any:
+        from agents.deep_tools import default_build_name
+        name = t.integration or default_build_name(recording_id, NAME)
+        if name != NAME:  # v2: page -> form recordings (agents/scripted_v2.py)
+            return self._build_pages(t, recording_id, name)
         rec = load_recording(recording_id)
         todos = [
             {"content": "Interpret the recording into a draft spec", "status": "in_progress"},
@@ -160,6 +165,8 @@ class ScriptedAgentService(ThreadedAgentService):
         inc = store.incident(incident_id)
         if inc is None:
             raise KeyError(f"incident {incident_id} not found")
+        if inc["type"] == "CONTRACT_CHANGED" and self._is_form_integration(inc["integration"]):  # v2: form changed
+            return self._repair_form(t, inc)
         todos = [
             {"content": "Diagnose the incident", "status": "in_progress"},
             {"content": "Propose a spec patch", "status": "pending"},
