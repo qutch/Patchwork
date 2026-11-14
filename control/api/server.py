@@ -19,8 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from control import ops
-from control.api import demo, pages, recordings, sse
-from control.api.runs import RunManager, RunStartError
+from control.api import credentials, demo, pages, recordings, sse
+from control.api.runs import CredentialMissing, RunManager, RunStartError
 from control.api.settings import Settings, load_dotenv
 from control.autorun import AutoRunner, Busy
 from control.page_hooks import PageHooks
@@ -138,6 +138,8 @@ def processed(counts: dict[str, int]) -> int:
 def start_run(request: Request, name: str, **kw: Any) -> int:
     try:
         return request.app.state.runs.start(name, **kw)
+    except CredentialMissing as e:  # V13: names the credential that is not set, never a value
+        raise HTTPException(409, str(e)) from None
     except RunStartError as e:
         raise HTTPException(500, f"runner failed to start: {e}") from None
     except RuntimeError as e:  # a run of this integration is already in progress
@@ -558,8 +560,10 @@ def create_app(*, agent: Any | None = None, dotenv: bool = True) -> FastAPI:
                        allow_methods=["*"], allow_headers=["*"])
     app.add_middleware(ExtensionCORSMiddleware)  # outermost: answers extension preflights itself
     app.add_middleware(ControlURLMiddleware, state=app.state)
+    app.add_middleware(credentials.RedactErrorsMiddleware)  # V13: error bodies never show a credential value
     app.include_router(api)
     app.include_router(recordings.router)
     app.include_router(demo.router)
     app.include_router(pages.router)
+    app.include_router(credentials.router)
     return app

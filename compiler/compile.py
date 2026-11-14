@@ -208,6 +208,13 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
                  {"base_url": spec.sink.base_url, "staging_base_url": spec.sink.staging_base_url}),
         "credentials": {},  # env var names only, never values
     }
+    # contracts V13: `auth` blocks (credential names, never values) for runner/http.py to send. Only written
+    # when the spec has one, so a spec without auth compiles to the same config.yaml as before.
+    for part in ("source", "sink"):
+        auth = getattr(getattr(spec, part), "auth", None)
+        if auth is not None:
+            config[part]["auth"] = auth.model_dump(mode="json", exclude_none=True)
+            config["credentials"][auth.credential] = f"{part}.auth"
     (tmp / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
     oa_hash = None
     if sink_openapi is not None:
@@ -224,6 +231,8 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
         "compiled_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "examples": len(examples),
     }
+    if config["credentials"]:  # V13: names only; absent for specs without auth (manifests unchanged)
+        manifest["credentials"] = sorted(config["credentials"])
     (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2))
     tmp.rename(out)
     return CompileResult(spec.name, version, out, ctx["spec_hash"], oa_hash, contract_errors)

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from control import ops
+from control.credentials import redact
 from runner.store import Store
 
 STARTUP_TIMEOUT_S = 60
@@ -30,6 +31,10 @@ STARTUP_TIMEOUT_S = 60
 
 class RunStartError(Exception):
     pass
+
+
+class CredentialMissing(RunStartError):
+    """V13: the run's spec references a credential that is not set (or not allowed); nothing was started."""
 
 
 @dataclass
@@ -234,10 +239,15 @@ class RunManager:
 
     def _start(self, integration: str, *, version, dry_run, limit, replay) -> int:
         cmd = ops.runner_command(integration, version=version, dry_run=dry_run, limit=limit, replay=replay)
+        spec = ops.run_spec(integration, version)
+        try:
+            env = ops.runner_env(spec)
+        except ops.CredentialError as e:
+            raise CredentialMissing(str(e)) from None
         scratch = Path(tempfile.mkdtemp(prefix="patchwork-run-"))
         stderr = (scratch / "stderr.log").open("w")
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=stderr, text=True, bufsize=1,
-                                env=ops.runner_env(), cwd=scratch)
+                                env=env, cwd=scratch)
         stderr.close()
         live = LiveRun(integration=integration, kind="replay" if replay else "run", proc=proc, scratch=scratch)
         started: queue.Queue[int | None] = queue.Queue()
@@ -270,7 +280,7 @@ class RunManager:
         if run_id is None:
             proc.wait(timeout=10)
             reader.join(timeout=5)
-            err = self._stderr_tail(scratch)
+            err = redact(self._stderr_tail(scratch))
             shutil.rmtree(scratch, ignore_errors=True)
             raise RunStartError(err or f"runner exited with code {proc.returncode} before starting")
         with self._lock:
@@ -293,7 +303,7 @@ class RunManager:
                 why = "timed out" if rc in (-9, -15) else f"exited with code {rc}"
                 store.finish_run(live.run_id, "failed", store.record_counts(live.run_id),
                                  time.monotonic() - live.started, None,
-                                 f"runner {why}: {self._stderr_tail(live.scratch)[-1500:]}")
+                                 f"runner {why}: {redact(self._stderr_tail(live.scratch))[-1500:]}")
             store.close()
         except Exception:  # noqa: BLE001 - the workspace may have been reset under us
             pass
