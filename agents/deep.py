@@ -419,7 +419,7 @@ class DeepAgentService(ThreadedAgentService):
         return result
 
     def _run_build(self, t: _Thread, recording_id: str) -> Any:
-        name = t.integration or default_build_name(recording_id, self.name)
+        name = t.integration = t.integration or default_build_name(recording_id, self.name)
         ctx = ToolContext(self, t, name=name, recording_id=recording_id)
         work_dir(name)
         intent, fields = "", []

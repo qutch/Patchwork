@@ -52,7 +52,7 @@ EVENT_TYPES = {
     "message": ["agent", "text"],                   # free-text reasoning/explanation worth showing
     "artifact": ["kind", "name", "version", "path"],  # kind: recording|candidates|spec|package
     "ask_user": ["interrupt_id", "question", "options"],
-    "request_deploy": ["interrupt_id", "name", "version", "summary", "spec_diff", "code_diff", "tests"],
+    "request_deploy": ["interrupt_id", "name", "version", "summary", "spec_diff", "code_diff", "tests", "review"],
     "resumed": ["interrupt_id", "payload"],
     "deployed": ["name", "version", "previous_version"],
     "done": ["result"],
@@ -60,6 +60,10 @@ EVENT_TYPES = {
     # v2 (contracts V10). UIs ignore types they don't know.
     "evidence": ["page_id", "parser_id", "fields", "ok"],  # fields: [{name, value, ok, where, extractor}]
     "learned": ["integration", "parser_id", "site", "version", "deployed", "approval", "reason"],  # auto|human|pending
+    # TEACH from examples (wizard A). request_deploy also carries `review` (empty outside that mode):
+    # [{dest_field, source, values: {page_id: value}, ai_proposed, status: checked|needs_you, alternatives: [source]}].
+    # Resuming it with {"decision": "approve", "edits": [{dest_field, choice}]} applies the edits in code.
+    "model_call": ["agent"],                        # one per model call of the deep agent (budget, UI cost)
 }
 
 DEFAULT_PAGE_INTEGRATION = "jobs_to_tracker"
@@ -143,7 +147,9 @@ class ThreadedAgentService:
         if t is None:
             evs = self.events(thread_id)  # raises KeyError if unknown
             last_state = next((e["state"] for e in reversed(evs) if e["type"] == "status"), "done")
-            return {"thread_id": thread_id, "state": last_state, "pending": None, "last_seq": len(evs)}
+            integration = next((e.get("integration") for e in evs if e["type"] == "status" and e.get("integration")), None)
+            return {"thread_id": thread_id, "state": last_state, "pending": None, "last_seq": len(evs),
+                    "integration": integration}
         return {"thread_id": t.id, "mode": t.mode, "subject": t.subject, "integration": t.integration, "state": t.state,
                 "pending": t.pending, "last_seq": len(t.events), "created_at": t.created_at}
 
@@ -230,7 +236,7 @@ class ThreadedAgentService:
 
     def _set_state(self, t: _Thread, state: ThreadState) -> None:
         t.state = state
-        self.emit(t, "status", state=state, mode=t.mode)
+        self.emit(t, "status", state=state, mode=t.mode, integration=t.integration)
 
     def _start(self, mode: Mode, subject: str, body: Callable[[_Thread], Any], integration: str | None = None) -> str:
         tid = f"{mode}-{uuid.uuid4().hex[:10]}"

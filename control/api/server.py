@@ -58,6 +58,7 @@ class ResumeRequest(BaseModel):
     answer: str | None = None
     decision: Literal["approve", "reject"] | None = None
     comment: str | None = None
+    edits: list[dict[str, Any]] | None = None  # request_deploy review edits, applied by the agent's code (no model)
 
 
 class VersionBody(BaseModel):
@@ -326,6 +327,8 @@ def agent_resume(thread_id: str, body: ResumeRequest, request: Request) -> dict[
         if body.decision is None:
             raise HTTPException(422, "request_deploy needs decision: approve | reject")
         payload: dict[str, Any] = {"decision": body.decision, "comment": body.comment or ""}
+        if body.edits:
+            payload["edits"] = body.edits
     elif body.answer is not None:
         payload = {"answer": body.answer}
     elif body.decision is not None:
