@@ -22,7 +22,7 @@ Derived from *Patchwork-plus: Technical Plan* (Nov 13, 2026). Hours are on the 3
 - [x] `fixtures/spec.yaml`: hand-written spec covering all 3 supplier formats (D2 builds against it, D3 uses it as the template the agent edits)
 - [x] `fixtures/recording.json`: hand-made recording in the recorder's event format, built from seeded message `msg-0007` (D3 builds the interpreter against it)
 - [x] `fixtures/examples.yaml`: confirmed samples â†’ golden tests
-- [x] **Model and provider**: OpenRouter, `nvidia/nemotron-3-ultra-550b-a55b:free` with `particle-ai/particle-1:free` as fallback (free tier: 20 req/min, 1,000/day). Key lives only in the gitignored `.env`; the runner never sees it
+- [x] **Model and provider**: Claude Haiku 5.5 via the Anthropic API (`anthropic:claude-haiku-5-5`) since the v2 stage; before that OpenRouter, `nvidia/nemotron-3-ultra-550b-a55b:free` with `particle-ai/particle-1:free` as fallback (free tier: 20 req/min, 1,000/day). Either id works in `PATCHWORK_MODEL`. Key lives only in the gitignored `.env`; the runner never sees it
 - [x] **`deepagents` version pin**: `deepagents==0.7.38`, `langchain-openrouter==0.2.9` (full list and why interrupts are blocking tools in `agents/README.md`)
 - [ ] **Spec v1 field names** signed off by all four people (see "Decisions the MVP made" below)
 - [ ] Real business? Outreach owner and the Saturday-noon go/no-go
@@ -125,5 +125,5 @@ Plan: `docs/superpowers/plans/2026-11-14-patchwork-v2-plan.md` (workstreams W1â€
 - [x] W5 Proof: 60 real postings with a cross-checked answer key, `make bench-v2`, `make smoke-v2`, `docs/demo-v2.md`
 - [x] 2-minute script: 3 runs in a row on the deep agent + 1 on the scripted agent (fixture form)
 - [ ] Bootstrap on the demo Google Form (TEACH + learn Lever/Greenhouse/Ashby off camera, save baseline) and rehearse with the owner
-- [ ] Stage speed: deep learn ~25 s and repair ~55 s on the free model (see the owner's D3 decision)
+- [x] Stage speed: Claude Haiku 5.5 via the Anthropic API: learn ~12 s, repair ~22 s, 3 runs in a row (free model was ~25 s / ~55 s)
 - [ ] Backup video, slides

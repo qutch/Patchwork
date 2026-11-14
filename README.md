@@ -189,5 +189,6 @@ Measured on 2026-11-14 (numbers and their `kind` in `bench/v2/results.json`):
 - 60/60 real postings right, 0 wrong rows, 0 held; 4 layouts learned. Patchwork 32 AI calls (8 per learn,
   measured on the deep agent) vs a browser agent's 360 (**estimate**: 6 calls per posting, not run).
 - Known layout: ~0.7 s per posting on the fixture form (the Google Form adds ~1.3–2 s per submission).
-- Deep agent (free `particle-1`) on the 2-minute script, three runs in a row: learn 24–31 s (8 calls), form repair
-  45–63 s (~18 calls). The scripted agent tells the same story with the same checks and no model in ~2.5 s per step.
+- Deep agent on Claude Haiku 5.5 (`PATCHWORK_MODEL=anthropic:claude-haiku-5-5`), 2-minute script, three runs in a
+  row: learn 10–13 s (6–7 calls), form repair 17–23 s, whole script 38–44 s. On the free OpenRouter `particle-1`:
+  learn 24–31 s, repair 45–63 s. The scripted agent tells the same story with the same checks and no model in ~2.5 s per step.

@@ -54,11 +54,12 @@ RESULTS = REPO / "bench" / "v2" / "results.json"
 RECORDING = "fixture-jobs"
 SEED = 2026
 SRC = "bench/v2/run.py (this run)"
-# Deep agent on the 2-minute script (scripts/smoke_v2.py, fixture form, particle-1), 2026-11-14: learn beats
-# 30.8 / 25.6 / 24.1 s, repair beats 55.0 / 62.7 / 45.1 s over three runs in a row.
-DEEP_SOURCE = "make smoke-v2 with PATCHWORK_AGENT=deep (particle-1, fixture form), 3 runs on 2026-11-14"
-DEEP_LEARN_S = 25.6
-DEEP_REPAIR_S = 55.0
+# Deep agent on the 2-minute script (scripts/smoke_v2.py, fixture form), 2026-11-14, three runs in a row each.
+# Claude Haiku 5.5 (Anthropic API, effort low): learn beats 9.8 / 13.2 / 12.0 s (6-7 calls), repair beats
+# 21.7 / 23.2 / 17.1 s. Earlier, free particle-1 on OpenRouter: learn 30.8 / 25.6 / 24.1 s, repair 55.0 / 62.7 / 45.1 s.
+DEEP_SOURCE = "make smoke-v2 with PATCHWORK_AGENT=deep (claude-haiku-5-5, fixture form), 3 runs on 2026-11-14"
+DEEP_LEARN_S = 12.0
+DEEP_REPAIR_S = 21.7
 
 # Inputs this harness does not measure, in one place with their reasoning.
 LEARN_CALLS_BUDGET = 8
@@ -249,11 +250,11 @@ def build_results(raw: dict[str, Any], *, learn_calls: int, learn_calls_kind: st
          if code else metric("seconds_per_known_posting_median", None, "s", "not measured", SRC, "no code rows")),
         (metric("seconds_per_learn_median", round(statistics.median(learn_s), 3), "s", "measured", SRC,
                 f"{raw.get('agent', 'scripted')} agent (no model), page posted until its row was written; "
-                "the deep agent takes ~25 s, see seconds_per_learn_deep_agent")
+                "the deep agent takes ~12 s, see seconds_per_learn_deep_agent")
          if learn_s else metric("seconds_per_learn_median", None, "s", "not measured", SRC, "no learned_now rows")),
         metric("seconds_per_learn_deep_agent", DEEP_LEARN_S, "s", "measured (earlier run)", DEEP_SOURCE,
                "median of the 'new platform: learned now' beat (page posted until its row was written), "
-               "free particle-1 model, ~3 s per model call"),
+               "Claude Haiku 5.5 (free particle-1 took ~25 s)"),
         metric("seconds_per_form_repair_deep_agent", DEEP_REPAIR_S, "s", "measured (earlier run)", DEEP_SOURCE,
                "median of the 'repair + approve' beat, deploy approved instantly"),
         metric("teach_seconds", round(raw["teach"]["seconds"], 3), "s", "measured", SRC,

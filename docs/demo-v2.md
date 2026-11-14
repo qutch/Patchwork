@@ -48,7 +48,8 @@ Pre-flight (all must pass, in order):
    workspace add `--bootstrap` (`scripts/smoke_v2.py --bootstrap`: TEACH from `fixture-jobs`, learn Greenhouse and
    Ashby from one stored posting each, save the baseline). `make smoke-v2-offline` runs the same beats on its own
    in-process stack (fixture form, scripted agent) without touching `make up`.
-5. OpenRouter status: if the learn beat in step 4 took > 15 s, present on the scripted agent (§3).
+5. Model status: on Claude Haiku 5.5 the learn beat takes ~12 s and the repair ~22 s. If step 4's learn took > 20 s,
+   present on the scripted agent (§3).
 
 ---
 
@@ -141,7 +142,7 @@ Footer: "Learns each new layout once. Holds anything it isn't sure of for a pers
 | Situation | Do | Say |
 |---|---|---|
 | Learn has not finished after ~15 s (slow model) | keep talking over the streaming events (todos, evidence); at 25 s switch to the backup video at the learn beat | "The model is slow today; here's the same step from our rehearsal." |
-| Model or OpenRouter down before the slot | `PATCHWORK_AGENT=scripted make up` (restart before going on stage, not during) | "This is the scripted agent: same checks, same compiler and runner, no model. The AI-calls column says 'scripted'." |
+| Model API down before the slot | `PATCHWORK_AGENT=scripted make up` (restart before going on stage, not during) | "This is the scripted agent: same checks, same compiler and runner, no model. The AI-calls column says 'scripted'." |
 | Presenting on the scripted agent | nothing to hide: the Tracker labels say `scripted`; the benchmark chart's per-learn calls come from a deep run (`measured (earlier run)`) | "The learn you just saw ran the scripted agent. The chart's AI calls per learn are from a real-model run earlier today." |
 | Extension badge `!` or nothing happens | press once more; then use the UI's paste-a-URL fallback if W4b ships one, else the backup video | "Let me send that again." |
 | Google Form submit slow (> 5 s) | wait; rows land in the Sheet < 1 s after submit (spike a) | "It's filling the real Google Form in a headless browser." |
