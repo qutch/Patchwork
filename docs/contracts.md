@@ -86,6 +86,24 @@ Demo-app additions (Capture owns `demo_apps/`):
 - Inbox `POST /admin/deliver {"count": N}` appends N new deterministic messages (same 3 formats, same mix ratio), `received_at` after the latest. `POST /admin/reset` restores the 150-message seed.
 - Inbox `POST /admin/new_supplier {"count": N}` delivers N messages in the Break 2 format from `umbrella.com`: `Item code: WID-104 / 2 cases (12/case)` + a PO reference. Ground truth for both endpoints is exposed at `GET /admin/ground_truth`.
 
+**Additions made while building Capture (all additive; nothing above was removed or renamed):**
+- Recording dir also holds `meta.json` (id, intent, allowlist, start_url, status, started_at, stopped_at, pid), `recorder.log` and, while stopping, a `STOP` file. `recording.json` also carries `start_url`. The recorder writes `candidates.json` itself on stop. `POST /api/recordings/{id}/candidates` can still re-run the matcher.
+- `RecordingSession` also has `meta()` and `summary()`. `summary()` returns the `list_recordings()` row. `stop()` blocks for up to 20 s while the recorder flushes, then kills the recorder and finalizes from `events.jsonl` itself.
+- Event extras:
+  - net events carry `origin` (`http://host:port`), and may carry `req_headers` (secret and browser-noise headers removed), `resp_truncated` / `req_truncated` (the body is then a string cut at 20 KB), `resp_type` (a non-text body is not stored) or `error` (failed request).
+  - keydown events carry `key: "Enter"`.
+  - Element descriptors add `id` and `accessible_name`. `name` is the `name` attribute for form controls, otherwise the accessible name, as in the fixture.
+- Redaction also masks values in JSON/form bodies under secret-looking keys (`password`, `token`, `api_key`, `otp`, `cvv`, `card_number`…). It also masks keys whose form field on the page was a password/cc-*/one-time-code field, and drops `X-Api-Key` / `X-CSRF-Token`.
+- candidates.json extras:
+  - `sink.status`
+  - `source.detail` (`{"method": "GET", "path": "/api/messages/{id}"}`) when the record came from a detail GET
+  - `cast` is always present (`null` for strings)
+  - text mappings add `matched` (source text), `regex_ok` (the regex re-extracts the value), optional `copied: true` and `alternatives` (other places the value appeared)
+  - `kind: "copy"` (`{text}`) when only copied text explains a value
+  - with no mutating request captured, `sink` is `null` and typed input values are the destination values
+- Ground truth rows for delivered messages add `delivered: true`. Rows for new-supplier messages add `new_supplier: true` and `intended: {body, body_v2, cases, per_case}`, which is what a repaired spec should send. Score delivered runs with `bench.accuracy.score(records, truth=<GET /admin/ground_truth>)`. The default truth covers only the 150-message seed.
+- The Inbox HTML pages now render from `GET /api/messages[/{id}]` with `fetch`, so a recording sees the source record. The JSON API is unchanged.
+
 ## 3. Agents (owned by Agents)
 
 `agents/interface.py` is the contract (already implemented and tested): `AgentService` with
@@ -148,6 +166,47 @@ GET  /api/bench/accuracy?integration=                exact accuracy vs ground tr
 `diff_versions(name, a, b) -> dict`, `rollback(name, version)`.
 Runs must show live progress: the runner prints `{"event": "started", "run_id": N}` as its first stdout line
 and the API streams counts while the subprocess runs. Optional `PATCHWORK_RUN_PACE_MS` slows the runner per record for a watchable demo.
+
+**Details fixed while building the control plane (additive; nothing above was removed or renamed):**
+- Errors: 404 unknown thing; 409 conflict (AI off, no active version, run already in progress for that
+  integration, no pending interrupt, deploy refused, recording still running); 422 bad body; 501 capture/matcher
+  missing; 502 demo app unreachable; 500 runner failed before printing `started`.
+- `GET /api/health` -> `{status: "ok", workspace, agent, ai_enabled}`. Settings persist in `$PATCHWORK_WORKSPACE/settings.json`
+  (kept by demo reset). `model` is `"scripted"` for the scripted agent, else `$PATCHWORK_MODEL`.
+- Recordings: id `fixture` (fixtures/recording.json) always works, even without capture, and is listed first with
+  `fixture: true`. List rows = `capture.session.list_recordings()` rows. `GET /api/recordings/{id}` also has
+  `started_at, stopped_at, n_events`. Stream: `capture` events with `id` = 1-based event index, then `stopped`
+  (data = list row). `POST /api/recordings` with an empty allowlist -> 422. `PATCHWORK_CAPTURE_HEADLESS=1` records headless.
+- `POST /api/integrations/build`: 404 unknown recording, 409 still recording.
+- Agent stream: `id` = `seq`, `event` = event `type`, `data` = the whole event. Closes after the thread is `done`/`failed`
+  (a finished thread replays everything, then closes); keep-alive comments every 15 s.
+- `POST /api/agent/{id}/resume` -> the thread status after resuming. For a pending `request_deploy` a `decision` is
+  required (422 otherwise); for `ask_user` send `answer`.
+- `GET /api/integrations` -> `open_incidents` is a **count**. `GET /api/integrations/{name}` (`control.ops.status`)
+  keeps `open_incidents` as the list.
+- `GET .../versions/{v}` also has `name, active, created_at, deployed_at`. `files` = every text file in the package
+  (incl. `tests/`, `golden.json`, `contract/openapi.json`), no `__pycache__`.
+- `GET .../diff`: `to` defaults to the latest version, `from` to `to - 1`. Response also has `name, from, to`.
+  `spec_patch` is made by `jsonpatch.make_patch`, so renames show up as `move` ops. `code_diff` only lists files that
+  differ, labelled `v{from}/{file}` -> `v{to}/{file}`.
+- `deploy` -> `{name, active_version, previous_version, resolved_incidents: [ids]}`: deploying a version resolves open
+  incidents raised on older versions (incident `status` becomes `resolved`). `rollback` must target an older
+  version (409 otherwise), never resolves incidents, and adds `rolled_back: true`.
+- `POST /api/runs` also takes `version` (default: active). Run rows (list and `GET /api/runs/{id}`.run) carry
+  `kind: "run"|"replay"`, `dry_run` as a bool and `total` (records fetched; null until known or for runs not started by
+  this API process). While running, `counts` are live.
+- Run stream: `progress` data = `{run_id, status, counts, processed, total}`, sent whenever it changes; `finished` data =
+  `{run_id, integration, version, dry_run, kind, status, counts, duration_s, llm_calls, incident_id, message}`.
+  Progress events are snapshots, so `Last-Event-ID` is accepted but a reconnect just gets the current snapshot; ids are the processed count.
+  A runner that dies mid-run is marked `failed` with its stderr tail in `message`.
+- `GET /api/incidents`: `status` omitted = all; also `?integration=`.
+- Demo proxies pass the app's status and JSON through. `POST /api/demo/stockroom/schema` -> `{stockroom: {...}, staging: {...}}`.
+  `POST /api/demo/reset` -> `{ok, apps: {inbox, stockroom, staging: {status}}, removed: [...]}`; kills runs in progress,
+  keeps recordings and settings.
+- `GET /api/bench/accuracy` -> `bench.accuracy.score` output plus `integration, truth_source: "inbox"|"seed"`. It scores
+  the latest live outcome per record (dry runs excluded); `integration` omitted = all integrations.
+- Runner: stdout is JSON lines: `started`, then `{"event": "fetched", "run_id", "total"}` (absent if preflight blocks), then the
+  summary (also has `kind`). `python -m runner run <name> --replay-quarantined` takes records from the DB.
 
 ## 5. UI (owned by UI)
 

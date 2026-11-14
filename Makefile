@@ -1,6 +1,6 @@
 PY ?= .venv/bin/python
 
-.PHONY: setup test apps demo seed walkthrough
+.PHONY: setup test apps demo seed walkthrough up api
 
 setup:
 	uv venv -p 3.12 .venv
@@ -21,3 +21,9 @@ seed:
 
 walkthrough:
 	scripts/walkthrough/make.sh
+
+up:
+	PY=$(PY) scripts/up.sh
+
+api:
+	$(PY) -m control.api --port 38080

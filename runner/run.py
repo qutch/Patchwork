@@ -6,6 +6,7 @@ This process never calls an LLM. Every run summary carries llm_calls: 0.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from collections import Counter
@@ -62,8 +63,21 @@ def preflight(http: Http, vdir: Path, manifest: dict) -> tuple[bool, dict[str, A
     return not errors, info
 
 
+def _pace_s() -> float:
+    """Optional per-record delay (PATCHWORK_RUN_PACE_MS) so live counters are watchable in a demo."""
+    try:
+        return max(0.0, float(os.environ.get("PATCHWORK_RUN_PACE_MS", "0") or 0) / 1000)
+    except ValueError:
+        return 0.0
+
+
 def run(name: str, version: int | str = "active", *, dry_run: bool = False, limit: int | None = None,
-        store: Store | None = None, log=print) -> dict[str, Any]:
+        replay: bool = False, store: Store | None = None, log=print) -> dict[str, Any]:
+    """Run an integration. With `replay=True` the records come from the DB instead of the source:
+    raw records whose latest live outcome is quarantined. Idempotency keys keep that safe, and a
+    replay never moves the cursor or opens a NEW_SOURCE_FORMAT incident.
+
+    The first line logged is {"event": "started", "run_id": N}; the last is the run summary."""
     ws = workspace_dir()
     store = store or Store()
     if version == "active":
@@ -82,7 +96,10 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
 
     scope = "staging" if dry_run else "live"
     http = Http(config, staging=dry_run)
-    run_id = store.start_run(name, v, dry_run)
+    kind = "replay" if replay else "run"
+    run_id = store.start_run(name, v, dry_run, kind=kind)
+    log(json.dumps({"event": "started", "run_id": run_id}))
+    pace = _pace_s()
     log_path = ws / "runs" / f"{run_id}.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     t0 = time.monotonic()
@@ -93,7 +110,7 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
     def finish() -> dict[str, Any]:
         duration = time.monotonic() - t0
         store.finish_run(run_id, status, dict(counts), duration, incident_id, message)
-        summary = {"run_id": run_id, "integration": name, "version": v, "dry_run": dry_run,
+        summary = {"run_id": run_id, "integration": name, "version": v, "dry_run": dry_run, "kind": kind,
                    "status": status, "counts": dict(counts), "duration_s": round(duration, 3),
                    "llm_calls": 0, "incident_id": incident_id, "message": message, "log": str(log_path)}
         log(json.dumps(summary))
@@ -108,6 +125,7 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
             return finish()
         jl.write(json.dumps({"event": "preflight", "ok": ok,
                              **{k: v_ for k, v_ in info.items() if k != "current_openapi"}}) + "\n")
+        jl.flush()
         if not ok:
             old = json.loads((vdir / "contract" / "openapi.json").read_text())
             incident_id = store.open_incident(
@@ -119,20 +137,29 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
             status, message = "blocked", "preflight: destination contract changed"
             return finish()
 
-        records = integ.list_records(http, store.get_cursor(name, scope))
+        try:
+            records = (store.quarantined_raw(name) if replay
+                       else integ.list_records(http, store.get_cursor(name, scope)))
+        except Exception as e:  # noqa: BLE001
+            status, message = "failed", f"could not fetch source records: {e}"
+            return finish()
         if limit is not None:
             records = records[:limit]
+        log(json.dumps({"event": "fetched", "run_id": run_id, "total": len(records)}))
         streak, quarantined = 0, []
         for rec in records:
             out = process_record(integ, rec, http, _ScopedStore(store, name, scope, run_id))
             store.add_record(run_id, out, rec)
             jl.write(json.dumps({"event": "record", **out.to_dict()}) + "\n")
+            jl.flush()
             counts[out.status] += 1
             if out.reason:
                 counts[f"quarantined:{out.reason}"] += 1
                 quarantined.append((out, rec))
-            if integ.CURSOR_FIELD and rec.get(integ.CURSOR_FIELD):
+            if not replay and integ.CURSOR_FIELD and rec.get(integ.CURSOR_FIELD):
                 store.set_cursor(name, scope, str(rec[integ.CURSOR_FIELD]))
+            if pace:
+                time.sleep(pace)
             streak = streak + 1 if out.reason == "SINK_CONTRACT" else 0
             if streak >= CIRCUIT_BREAKER_THRESHOLD:
                 samples = [{"record_id": o.record_id, "detail": o.detail, "body": o.body}
@@ -146,7 +173,7 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
 
         by_route = Counter(o.route_value for o, _ in quarantined if o.reason == "PARSE_NO_MATCH")
         for route_value, n in by_route.items():
-            if n >= QUARANTINE_THRESHOLD and incident_id is None:
+            if n >= QUARANTINE_THRESHOLD and incident_id is None and not replay:
                 samples = [{"record_id": o.record_id, "detail": o.detail, "record": r}
                            for o, r in quarantined if o.reason == "PARSE_NO_MATCH" and o.route_value == route_value][:5]
                 incident_id = store.open_incident(

@@ -87,8 +87,9 @@ class DeployRefused(Exception):
     pass
 
 
-def deploy(name: str, version: int, *, store: Store | None = None) -> dict[str, Any]:
-    """Move the active pointer. Refuses unless the full suite passed on this exact version."""
+def deploy(name: str, version: int, *, store: Store | None = None, resolve_incidents: bool = True) -> dict[str, Any]:
+    """Move the active pointer. Refuses unless the full suite passed on this exact version.
+    Deploying a newer version resolves the open incidents raised on older versions."""
     store = store or Store()
     v = store.version(name, version)
     if v is None:
@@ -97,32 +98,156 @@ def deploy(name: str, version: int, *, store: Store | None = None) -> dict[str, 
         raise DeployRefused(f"{name} v{version}: tests have not passed on this version")
     previous = store.active_version(name)
     store.set_active(name, version)
-    return {"name": name, "active_version": version, "previous_version": previous}
+    resolved = store.resolve_incidents(name, version) if resolve_incidents else []
+    return {"name": name, "active_version": version, "previous_version": previous, "resolved_incidents": resolved}
 
 
-def run_sandboxed(name: str, *, version: str = "active", dry_run: bool = False, limit: int | None = None,
-                  timeout: int = RUN_TIMEOUT_S) -> dict[str, Any]:
-    """Launch `python -m runner run` as a subprocess with a timeout, a scratch working
-    directory and a stripped environment. Light sandboxing, labelled honestly."""
+def rollback(name: str, version: int, *, store: Store | None = None) -> dict[str, Any]:
+    """Point the integration back at an earlier version (same guard as deploy: its tests passed).
+    Only the pointer moves; versions are immutable and incidents are left as they are."""
+    store = store or Store()
+    active = store.active_version(name)
+    if active is not None and version >= active:
+        raise DeployRefused(f"{name}: rollback target v{version} is not older than active v{active}")
+    out = deploy(name, version, store=store, resolve_incidents=False)
+    return {**out, "rolled_back": True}
+
+
+def runner_command(name: str, *, version: str | int = "active", dry_run: bool = False,
+                   limit: int | None = None, replay: bool = False) -> list[str]:
     cmd = [sys.executable, "-m", "runner", "run", name, "--version", str(version)]
     if dry_run:
         cmd.append("--dry-run")
     if limit is not None:
         cmd += ["--limit", str(limit)]
+    if replay:
+        cmd.append("--replay-quarantined")
+    return cmd
+
+
+def parse_summary(stdout: str) -> dict[str, Any]:
+    """The runner's last JSON stdout line that is not an event line ({"event": "started", ...})."""
+    for line in reversed(stdout.strip().splitlines()):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "event" not in obj:
+            return obj
+    return {}
+
+
+def run_sandboxed(name: str, *, version: str = "active", dry_run: bool = False, limit: int | None = None,
+                  replay: bool = False, timeout: int = RUN_TIMEOUT_S) -> dict[str, Any]:
+    """Launch `python -m runner run` as a subprocess with a timeout, a scratch working
+    directory and a stripped environment. Light sandboxing, labelled honestly. Blocks until done;
+    the API's background runs use the same command (control/api/runs.py)."""
+    cmd = runner_command(name, version=version, dry_run=dry_run, limit=limit, replay=replay)
     with tempfile.TemporaryDirectory(prefix="patchwork-run-") as scratch:
         proc = subprocess.run(cmd, capture_output=True, text=True, env=runner_env(), cwd=scratch,
                               timeout=timeout)
-    summary: dict[str, Any] = {}
-    for line in reversed(proc.stdout.strip().splitlines()):
-        try:
-            summary = json.loads(line)
-            break
-        except json.JSONDecodeError:
-            continue
+    summary = parse_summary(proc.stdout)
     if not summary:
         summary = {"status": "failed", "message": (proc.stderr or proc.stdout)[-2000:]}
     summary["exit_code"] = proc.returncode
     return summary
+
+
+def replay_quarantined(name: str, *, store: Store | None = None) -> dict[str, Any]:
+    """Re-run, through the active version, the raw records whose latest live outcome is
+    quarantined. Records come from the DB (runner --replay-quarantined); idempotency keys make it
+    safe. Returns the run summary."""
+    store = store or Store()
+    if store.active_version(name) is None:
+        raise DeployRefused(f"{name}: no active version to replay on")
+    return run_sandboxed(name, replay=True)
+
+
+# ---- versions, diffs and listings (control-plane API) -------------------------------------
+
+def version_dir(name: str, version: int) -> Path:
+    return workspace_dir() / "integrations" / name / f"v{version}"
+
+
+def _text_files(root: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not root.is_dir():
+        return out
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or "__pycache__" in p.parts or p.suffix in (".pyc", ".db"):
+            continue
+        try:
+            out[p.relative_to(root).as_posix()] = p.read_text()
+        except UnicodeDecodeError:
+            continue
+    return out
+
+
+def version_detail(name: str, version: int, *, store: Store | None = None) -> dict[str, Any] | None:
+    store = store or Store()
+    v = store.version(name, version)
+    vdir = version_dir(name, version)
+    if v is None or not vdir.is_dir():
+        return None
+    files = _text_files(vdir)
+    return {"name": name, "version": version, "active": store.active_version(name) == version,
+            "manifest": json.loads(files.get("manifest.json", "{}")), "spec_yaml": files.get("spec.yaml", ""),
+            "files": files, "tests_passed": bool(v["tests_passed"]), "tests_summary": v["tests_summary"],
+            "created_at": v["created_at"], "deployed_at": v["deployed_at"]}
+
+
+def diff_versions(name: str, a: int, b: int) -> dict[str, Any]:
+    """JSON Patch between the two specs (a -> b), a unified spec diff, and unified diffs of every
+    generated file that differs. Raises FileNotFoundError if either version is missing."""
+    import difflib
+
+    import jsonpatch
+    import yaml
+
+    da, db = version_dir(name, a), version_dir(name, b)
+    for d in (da, db):
+        if not (d / "spec.yaml").exists():
+            raise FileNotFoundError(f"{name} {d.name} does not exist")
+    fa, fb = _text_files(da), _text_files(db)
+
+    def udiff(x: str, y: str, rel: str) -> str:
+        return "".join(difflib.unified_diff(x.splitlines(True), y.splitlines(True), f"v{a}/{rel}", f"v{b}/{rel}"))
+
+    spec_a, spec_b = yaml.safe_load(fa["spec.yaml"]), yaml.safe_load(fb["spec.yaml"])
+    code_diff = {}
+    for rel in sorted(set(fa) | set(fb)):
+        if rel == "spec.yaml" or fa.get(rel) == fb.get(rel):
+            continue
+        code_diff[rel] = udiff(fa.get(rel, ""), fb.get(rel, ""), rel)
+    return {"name": name, "from": a, "to": b,
+            "spec_patch": jsonpatch.make_patch(spec_a, spec_b).patch,
+            "spec_diff": udiff(fa["spec.yaml"], fb["spec.yaml"], "spec.yaml"),
+            "code_diff": code_diff}
+
+
+def list_integrations(*, store: Store | None = None) -> list[dict[str, Any]]:
+    store = store or Store()
+    return [{"name": i["name"], "active_version": i["active_version"],
+             "latest_version": store.latest_version(i["name"]),
+             "open_incidents": len(store.incidents(i["name"], status="open"))}
+            for i in store.integrations()]
+
+
+def reset_workspace() -> list[str]:
+    """Delete workspace state for a fresh demo: DB, run logs, integrations, agent threads.
+    Recordings and settings are kept. Returns what was removed."""
+    import shutil
+
+    ws = workspace_dir()
+    removed = []
+    for sub in ("runs", "integrations", "agent_threads"):
+        if (ws / sub).exists():
+            shutil.rmtree(ws / sub, ignore_errors=True)
+            removed.append(sub)
+    for f in ws.glob("patchwork.db*"):
+        f.unlink(missing_ok=True)
+        removed.append(f.name)
+    return removed
 
 
 def status(name: str, *, store: Store | None = None) -> dict[str, Any]:
