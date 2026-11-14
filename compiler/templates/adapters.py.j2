@@ -16,6 +16,13 @@ def list_records(http, cursor: str | None) -> list[dict]:
     return data if isinstance(data, list) else data.get("items", [])
 
 
+def fetch_contract(http) -> dict:
+    """The destination's live contract (preflight compares its hash with contract/openapi.json)."""
+    resp = http.request("sink", "GET", "/openapi.json")
+    resp.raise_for_status()
+    return resp.json()
+
+
 def send(http, body: dict):
     return http.request("sink", SINK_CALL["method"], SINK_CALL["path"], json=body)
 

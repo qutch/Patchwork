@@ -1,16 +1,31 @@
 {% include "_header.j2" %}
-"""One function per parser, plus the router (route_by: {{ spec.extract.route_by }})."""
+"""One function per parser, plus the router (route_by: {{ spec.extract.route_by }}{% if has_fingerprints %}, then fingerprints{% endif %})."""
 
 import re
 
-from runner.lib import Quarantine, cast, extract_between, extract_json_path, extract_product, extract_regex
+from runner.lib import (  # noqa: F401
+    Quarantine,
+    cast,
+    extract_between,
+    extract_css,
+    extract_json_path,
+    extract_jsonld,
+    extract_product,
+    extract_regex,
+    refine_regex,
+)
+{% if has_fingerprints %}
+from runner.html import fingerprint_present
+{% endif %}
 
 TEXT_FIELD = {{ spec.source.text_field|py }}
+HTML_FIELD = {{ spec.source.html_field|py }}
 ROUTE_BY = {{ spec.extract.route_by|py }}
 {% for p in spec.extract.parsers %}
 
 
-# ---- parser: {{ p.id }}  match={{ p.match }}
+# ---- parser: {{ p.id }}  match={{ p.match }}{% if p.fingerprint %}  fingerprint={{ p.fingerprint }}{% endif %}
+
 {% for fname, f in p.fields.items() %}
 {% if f.regex is not none %}
 _{{ p.id|upper }}__{{ fname|upper }} = re.compile({{ f.regex|py }})
@@ -20,18 +35,28 @@ _{{ p.id|upper }}__{{ fname|upper }} = re.compile({{ f.regex|py }})
 
 def parse_{{ p.id }}(record: dict) -> dict:
     text = record.get(TEXT_FIELD) or ""
+{% if p.fields.values()|selectattr("reads_html")|list %}
+    html = record.get(HTML_FIELD) or ""
+{% endif %}
     fields = {}
 {% for fname, f in p.fields.items() %}
 {% set where = p.id ~ "." ~ fname %}
 {% if f.combine == "product" %}
     fields[{{ fname|py }}] = extract_product(text, _{{ p.id|upper }}__{{ fname|upper }}, {{ f.cast|py }}, {{ where|py }})
 {% else %}
-{% if f.regex is not none %}
+{% if f.css is not none %}
+    raw = extract_css(html, {{ f.css|py }}, {{ f.attr|py }}, {{ where|py }})
+{% elif f.jsonld is not none %}
+    raw = extract_jsonld(html, {{ f.jsonld|py }}, {{ (f.jsonld_type or "JobPosting")|py }}, {{ where|py }})
+{% elif f.regex is not none %}
     raw = extract_regex(text, _{{ p.id|upper }}__{{ fname|upper }}, {{ where|py }})
 {% elif f.between is not none %}
     raw = extract_between(text, {{ f.between[0]|py }}, {{ f.between[1]|py }}, {{ where|py }})
 {% else %}
     raw = extract_json_path(record, {{ f.json_path|py }}, {{ where|py }})
+{% endif %}
+{% if f.refine is not none %}
+    raw = refine_regex(str(raw), _{{ p.id|upper }}__{{ fname|upper }}, {{ where|py }})
 {% endif %}
     fields[{{ fname|py }}] = cast(raw, {{ f.cast|py }}, {{ where|py }})
 {% endif %}
@@ -45,10 +70,41 @@ ROUTES = [
     ({{ p.match|py }}, {{ p.id|py }}, parse_{{ p.id }}),
 {% endfor %}
 ]
+{% if has_fingerprints %}
+FINGERPRINTS = [
+{% for p in spec.extract.parsers if p.fingerprint %}
+    ({{ p.fingerprint|py }}, {{ p.id|py }}, parse_{{ p.id }}),
+{% endfor %}
+]
+DEFAULTS = [
+{% for p in spec.extract.parsers if not p.match and not p.fingerprint %}
+    ({{ p.id|py }}, parse_{{ p.id }}),
+{% endfor %}
+]
 
 
 def route(record: dict):
+    """-> (parser_id, parse_fn, routed_by). Order (contracts V4): site match, fingerprint, catch-all.
+    A fingerprint picks the platform, not the reader: the caller never retries another parser."""
+    for match, parser_id, fn in ROUTES:
+        if match and all(str(record.get(k)) == v for k, v in match.items()):
+            return parser_id, fn, "match"
+    html = record.get(HTML_FIELD)
+    html = html if isinstance(html, str) else ""
+    for selector, parser_id, fn in FINGERPRINTS:
+        if html and fingerprint_present(html, selector):
+            return parser_id, fn, "fingerprint"
+    if DEFAULTS:
+        parser_id, fn = DEFAULTS[0]
+        return parser_id, fn, "default"
+    raise Quarantine("PARSE_NO_MATCH", f"no parser for {ROUTE_BY}={record.get(ROUTE_BY)!r}; no fingerprint matched")
+{% else %}
+
+
+def route(record: dict):
+    """-> (parser_id, parse_fn, routed_by). No fingerprints in this spec: routes exactly as v1."""
     for match, parser_id, fn in ROUTES:
         if all(str(record.get(k)) == v for k, v in match.items()):
-            return parser_id, fn
+            return parser_id, fn, ("match" if match else "default")
     raise Quarantine("PARSE_NO_MATCH", f"no parser for {ROUTE_BY}={record.get(ROUTE_BY)!r}")
+{% endif %}

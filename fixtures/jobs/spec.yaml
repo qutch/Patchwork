@@ -1,0 +1,57 @@
+# Test fixture (contracts V7 + V5): job postings from the page inbox -> the fixture tracker form.
+# Built against fixtures/pages/ (spike b readers) and demo_apps/tracker_form. Per C8 this is never
+# what runs on stage; the stage spec is taught from a recording. Tests override sink.url.
+spec_version: 1
+name: jobs_to_tracker
+intent: "For every job posting I send, add a row to my job tracker"
+source:
+  kind: api
+  base_url: patchwork://control
+  list: {method: GET, path: /api/pages, params: {since: "{cursor}"}}
+  record_id: id
+  text_field: text
+  html_field: html
+  cursor_field: seq
+extract:
+  route_by: site
+  parsers:
+    - id: lever
+      match: {site: jobs.lever.co}
+      fingerprint: ".posting-headline"
+      origin: {kind: fixture}
+      fields:
+        title:   {css: ".posting-headline h2"}
+        company: {jsonld: "hiringOrganization.name"}
+    - id: greenhouse
+      match: {site: job-boards.greenhouse.io}
+      fingerprint: '[src*=".greenhouse.io/"]'
+      origin: {kind: fixture}
+      fields:
+        title:   {css: ".job__title h1"}
+        company: {css: "title", regex: '^Job Application for .* at (.+)$'}
+    - id: ashby
+      match: {site: jobs.ashbyhq.com}
+      fingerprint: '[class*="ashby-job-posting"]'
+      origin: {kind: fixture}
+      fields:
+        title:   {jsonld: "title"}
+        company: {jsonld: "hiringOrganization.name"}
+validate:
+  - {field: title, rule: required}
+  - {field: company, rule: required}
+dedupe: {key: [record.canonical_url]}
+sink:
+  kind: form
+  url: http://127.0.0.1:18010/
+  fields:
+    Email:        {const: demo@example.com}
+    Job Title:    {from: title}
+    Company:      {from: company}
+    Link:         {from: record.canonical_url}
+    Date Applied: {from: record.captured_date}
+  submit: Submit
+  verify: {confirmation_text: "Your response has been recorded"}
+on_error: quarantine
+assumptions:
+  - {id: j1, text: "One posting per page; title and company come from the page, link and date from the record", status: confirmed}
+  - {id: j2, text: "The tracker's Email question is answered with a constant", status: confirmed}

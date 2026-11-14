@@ -20,9 +20,10 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from runner.contract import openapi_hash, validate_body
 from spec import spec_hash, spec_to_dict
-from spec.models import RECORD_PREFIX, Spec, ValueSource
+from spec.models import RECORD_PREFIX, FormSink, Spec, ValueSource
 
-COMPILER_VERSION = "0.1.0"
+COMPILER_VERSION = "0.2.0"
+FORM_SINK_CALL = {"method": "POST", "path": "/form"}  # contracts V6: the form contract's one operation
 TEMPLATES = Path(__file__).parent / "templates"
 QUARANTINE_EXPECTS = {"PARSE_NO_MATCH", "VALIDATION_FAILED", "NOT_FOUND", "SINK_CONTRACT", "AUTH",
                       "VERIFY_MISMATCH", "UNKNOWN"}
@@ -141,12 +142,14 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
     if out.exists():
         raise CompileError(f"{out} already exists; versions are immutable, compile v{version + 1} instead")
 
+    is_form = isinstance(spec.sink, FormSink)
+    sink_call = FORM_SINK_CALL if is_form else {"method": spec.sink.call.method, "path": spec.sink.call.path}
     contract_errors: list[str] = []
     if sink_openapi is not None:
         for ex in examples:
             if "body" in ex.expect:
                 contract_errors += [f"[{ex.name}] {e}" for e in validate_body(
-                    sink_openapi, spec.sink.call.method, spec.sink.call.path, ex.expect["body"])]
+                    sink_openapi, sink_call["method"], sink_call["path"], ex.expect["body"])]
 
     env = _env()
     ctx = {
@@ -154,10 +157,13 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
         "version": version,
         "spec_hash": spec_hash(spec),
         "compiler_version": COMPILER_VERSION,
-        "body_exprs": {k: value_expr(v) for k, v in spec.sink.body.items()},
+        "body_exprs": {k: value_expr(v) for k, v in spec.sink_values().items()},
         "rule_lines": [rule_line(r) for r in spec.validate_],
         "negative_cases": _negative_cases(spec),
         "uses_transforms": bool(needed),
+        "sink_call": sink_call,
+        "has_fingerprints": any(p.fingerprint for p in spec.extract.parsers),
+        "has_catch_all": any(not p.match and not p.fingerprint for p in spec.extract.parsers),
     }
 
     tmp = out.with_name(out.name + ".tmp")
@@ -169,7 +175,7 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
         "__init__.py": env.get_template("package_init.py.j2").render(**ctx),
         "integration.py": env.get_template("integration.py.j2").render(**ctx),
         "parsers.py": env.get_template("parsers.py.j2").render(**ctx),
-        "adapters.py": env.get_template("adapters.py.j2").render(**ctx),
+        "adapters.py": env.get_template("adapters_form.py.j2" if is_form else "adapters.py.j2").render(**ctx),
         "transforms.py": transforms_src or env.get_template("transforms.py.j2").render(**ctx),
         "tests/__init__.py": "",
         "tests/conftest.py": env.get_template("tests/conftest.py.j2").render(**ctx),
@@ -192,7 +198,8 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
     (tmp / "golden.json").write_text(json.dumps([e.to_dict() for e in examples], indent=2))
     config = {
         "source": {"base_url": spec.source.base_url},
-        "sink": {"base_url": spec.sink.base_url, "staging_base_url": spec.sink.staging_base_url},
+        "sink": ({"kind": "form", "url": spec.sink.url} if is_form else
+                 {"base_url": spec.sink.base_url, "staging_base_url": spec.sink.staging_base_url}),
         "credentials": {},  # env var names only, never values
     }
     (tmp / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
@@ -202,7 +209,11 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
         oa_hash = openapi_hash(sink_openapi)
     manifest = {
         "name": spec.name, "version": version, "spec_hash": ctx["spec_hash"], "openapi_hash": oa_hash,
-        "sink_call": {"method": spec.sink.call.method, "path": spec.sink.call.path},
+        "sink_call": sink_call,
+        "contract_kind": "form" if is_form else "openapi",
+        "parsers": [{"id": p.id, "match": dict(p.match), "fingerprint": p.fingerprint,
+                     "origin": p.origin.model_dump(mode="json") if p.origin else None}
+                    for p in spec.extract.parsers],
         "compiler_version": COMPILER_VERSION,
         "compiled_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "examples": len(examples),

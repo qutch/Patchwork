@@ -7,7 +7,7 @@ an error message an agent can read and fix, instead of turning into a broken pro
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -57,6 +57,7 @@ class Source(_Strict):
     list: HttpCall
     record_id: str
     text_field: str
+    html_field: str | None = None  # v2: the record field holding page HTML (css/jsonld/fingerprint read it)
     cursor_field: str | None = None
 
     @model_validator(mode="after")
@@ -67,31 +68,63 @@ class Source(_Strict):
 
 
 class FieldExtract(_Strict):
-    """Exactly one extract method: regex | json_path | between.
+    """Exactly one primary extract method: regex | json_path | between | css | jsonld.
 
-    `combine: product` (regex only) casts every capture group and multiplies them, e.g.
-    '(\\d+) cases \\((\\d+)/case\\)' -> 3 cases x 12 = 36 units."""
+    `combine: product` (primary regex only) casts every capture group and multiplies them, e.g.
+    '(\\d+) cases \\((\\d+)/case\\)' -> 3 cases x 12 = 36 units.
+
+    v2 (contracts V3): `css` (+ optional `attr`) and `jsonld` (+ optional `jsonld_type`, default
+    JobPosting) read the record's HTML (`source.html_field`). A `regex` next to `css`/`jsonld` is a
+    refine: applied to the normalised result, group 1 is the value."""
 
     regex: str | None = None
     json_path: str | None = None
     between: tuple[str, str] | None = None
+    css: str | None = None
+    attr: str | None = None
+    jsonld: str | None = None
+    jsonld_type: str | None = None
     cast: Literal["int", "float", "str"] = "str"
     combine: Literal["product"] | None = None
 
+    @property
+    def reads_html(self) -> bool:
+        return self.css is not None or self.jsonld is not None
+
+    @property
+    def refine(self) -> str | None:
+        """The refine regex (a regex next to css/jsonld), else None."""
+        return self.regex if self.reads_html else None
+
     @model_validator(mode="after")
     def _one_method(self) -> "FieldExtract":
-        chosen = [m for m in ("regex", "json_path", "between") if getattr(self, m) is not None]
-        if len(chosen) != 1:
-            raise ValueError(f"field extract needs exactly one of regex/json_path/between, got {chosen or 'none'}")
+        if not self.reads_html:
+            chosen = [m for m in ("regex", "json_path", "between") if getattr(self, m) is not None]
+            if len(chosen) != 1:
+                raise ValueError(f"field extract needs exactly one of regex/json_path/between, got {chosen or 'none'}")
+        else:
+            chosen = [m for m in ("json_path", "between", "css", "jsonld") if getattr(self, m) is not None]
+            if len(chosen) != 1:
+                raise ValueError("field extract needs exactly one of regex/json_path/between/css/jsonld "
+                                 f"(regex may refine css or jsonld), got {chosen}")
+        if self.attr is not None and self.css is None:
+            raise ValueError("attr only applies to css fields")
+        if self.jsonld_type is not None and self.jsonld is None:
+            raise ValueError("jsonld_type only applies to jsonld fields")
+        if self.css is not None and not self.css.strip():
+            raise ValueError("css selector must not be empty")
+        if self.jsonld is not None and not self.jsonld.strip():
+            raise ValueError("jsonld path must not be empty")
         if self.regex is not None:
             try:
                 compiled = re.compile(self.regex)
             except re.error as e:
                 raise ValueError(f"regex {self.regex!r} does not compile: {e}") from e
             if compiled.groups < 1:
-                raise ValueError(f"regex {self.regex!r} needs one capture group for the value")
+                what = "refine regex" if self.reads_html else "regex"
+                raise ValueError(f"{what} {self.regex!r} needs one capture group for the value")
         if self.combine is not None:
-            if self.regex is None:
+            if self.regex is None or self.reads_html:
                 raise ValueError("combine only applies to regex fields")
             if re.compile(self.regex).groups < 2:
                 raise ValueError(f"combine: {self.combine} needs a regex with at least two capture groups")
@@ -102,10 +135,28 @@ class FieldExtract(_Strict):
         return self
 
 
+class Origin(_Strict):
+    """Layout provenance (contracts V4). Metadata only: copied into manifest.json, never used to route."""
+
+    kind: Literal["taught", "learned", "fixture"]
+    at: str | None = None
+    thread_id: str | None = None
+    approved_by: Literal["auto", "human"] | None = None
+
+
 class Parser(_Strict):
     id: str
     match: dict[str, str] = Field(default_factory=dict)
+    fingerprint: str | None = None  # v2: CSS selector identifying the platform in the record's HTML
+    origin: Origin | None = None
     fields: dict[str, FieldExtract]
+
+    @field_validator("fingerprint")
+    @classmethod
+    def _fingerprint(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("fingerprint must be a non-empty CSS selector")
+        return v
 
     @field_validator("id")
     @classmethod
@@ -201,7 +252,7 @@ class Verify(_Strict):
     expect_count: int = 1
 
 
-class Sink(_Strict):
+class ApiSink(_Strict):
     kind: Literal["api"]
     base_url: str
     staging_base_url: str | None = None
@@ -215,6 +266,40 @@ class Sink(_Strict):
         if v.method == "GET":
             raise ValueError("sink.call must be a mutating request (POST/PUT/PATCH)")
         return v
+
+
+class FormVerify(_Strict):
+    confirmation_text: str
+
+
+class FormSink(_Strict):
+    """v2 (contracts V5): a web form filled by label in headless Chromium. Keys of `fields` are the
+    form's question labels; values use the same vocabulary and reference checks as `body`."""
+
+    kind: Literal["form"]
+    url: str
+    fields: dict[str, ValueSource]
+    submit: str = "Submit"
+    verify: FormVerify | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            raise ValueError(f"form url {v!r} must be http(s)")
+        return v
+
+    @field_validator("fields")
+    @classmethod
+    def _fields(cls, v: dict[str, ValueSource]) -> dict[str, ValueSource]:
+        if not v:
+            raise ValueError("form sink needs at least one field")
+        if any(not label.strip() for label in v):
+            raise ValueError("form field labels must not be empty")
+        return v
+
+
+Sink = Annotated[ApiSink | FormSink, Field(discriminator="kind")]
 
 
 class Assumption(_Strict):
@@ -264,11 +349,13 @@ class Spec(_Strict):
                 check(rule.field, f"validate[{rule.field}:{rule.rule}]")
         for key in self.dedupe.key:
             check(key, "dedupe.key")
-        for name, value in self.sink.body.items():
+        where = self.sink_values_key()
+        for name, value in self.sink_values().items():
             if value.from_ is not None:
-                check(value.from_, f"sink.body.{name}")
+                check(value.from_, f"sink.{where}.{name}")
             for ref in template_refs(value.template or ""):
-                check(ref, f"sink.body.{name}.template")
+                check(ref, f"sink.{where}.{name}.template")
+        errors += self._html_field_errors()
         for call_name, call in self._templated_calls():
             for ref in template_refs(call):
                 check(ref, call_name)
@@ -276,12 +363,33 @@ class Spec(_Strict):
             raise ValueError("; ".join(errors))
         return self
 
+    def _html_field_errors(self) -> list[str]:
+        if self.source.html_field is not None:
+            return []
+        users = []
+        for p in self.extract.parsers:
+            if p.fingerprint is not None:
+                users.append(f"extract.parsers[{p.id}].fingerprint")
+            for fname, f in p.fields.items():
+                if f.reads_html:
+                    users.append(f"extract.parsers[{p.id}].fields.{fname} ({'css' if f.css is not None else 'jsonld'})")
+        if not users:
+            return []
+        return [f"source.html_field (the record field holding the page HTML) is required by {', '.join(users)}"]
+
+    def sink_values_key(self) -> str:
+        return "body" if isinstance(self.sink, ApiSink) else "fields"
+
+    def sink_values(self) -> dict[str, ValueSource]:
+        """The sink's value mapping: `body` for API sinks, `fields` for form sinks."""
+        return self.sink.body if isinstance(self.sink, ApiSink) else self.sink.fields
+
     def _templated_calls(self) -> list[tuple[str, str]]:
         out = []
         for rule in self.validate_:
             if rule.check:
                 out.append((f"validate[{rule.field}].check.path", rule.check.path))
-        if self.sink.verify:
+        if isinstance(self.sink, ApiSink) and self.sink.verify:
             out.append(("sink.verify.path", self.sink.verify.path))
             for k, v in self.sink.verify.params.items():
                 out.append((f"sink.verify.params.{k}", v))
@@ -290,7 +398,7 @@ class Spec(_Strict):
     def custom_transforms(self) -> set[str]:
         return {
             v.transform.removeprefix("custom:")
-            for v in self.sink.body.values()
+            for v in self.sink_values().values()
             if v.transform and v.transform.startswith("custom:")
         }
 

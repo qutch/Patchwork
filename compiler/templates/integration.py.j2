@@ -2,7 +2,8 @@
 """Per-record pipeline for {{ spec.name }} v{{ version }}.
 
 Intent: {{ spec.intent }}
-The runner calls: extract -> validate -> dedupe_key -> build_body -> send -> verify.
+The runner calls: fetch_contract (preflight) -> route -> parse -> validate -> dedupe_key -> build_body
+-> send -> verify.
 """
 
 from runner.lib import (  # noqa: F401
@@ -19,6 +20,7 @@ from runner.lib import (  # noqa: F401
 from . import adapters, transforms  # noqa: F401
 from .parsers import route
 
+PIPELINE_API = 2  # route() returns (parser_id, parse_fn, routed_by); see runner/pipeline.py
 NAME = {{ spec.name|py }}
 VERSION = {{ version }}
 SPEC_HASH = {{ spec_hash|py }}
@@ -26,15 +28,17 @@ RECORD_ID = {{ spec.source.record_id|py }}
 ROUTE_BY = {{ spec.extract.route_by|py }}
 CURSOR_FIELD = {{ spec.source.cursor_field|py }}
 DEDUPE_KEY = {{ spec.dedupe.key|py }}
-SINK_CALL = ({{ spec.sink.call.method|py }}, {{ spec.sink.call.path|py }})
+SINK_KIND = {{ spec.sink.kind|py }}
+SINK_CALL = ({{ sink_call.method|py }}, {{ sink_call.path|py }})
 
 list_records = adapters.list_records
+fetch_contract = adapters.fetch_contract
 send = adapters.send
 verify = adapters.verify
 
 
 def extract(record: dict) -> tuple[str, dict]:
-    parser_id, parse = route(record)
+    parser_id, parse, _routed_by = route(record)
     return parser_id, parse(record)
 
 

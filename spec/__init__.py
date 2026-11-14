@@ -10,9 +10,12 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from spec.models import QUARANTINE_CODES, Spec
+from spec.models import QUARANTINE_CODES, ApiSink, FormSink, Spec
 
-__all__ = ["Spec", "SpecError", "load_spec", "parse_spec", "validate_spec", "spec_hash", "QUARANTINE_CODES"]
+__all__ = ["Spec", "SpecError", "load_spec", "parse_spec", "validate_spec", "spec_hash", "QUARANTINE_CODES",
+           "ApiSink", "FormSink"]
+
+SINK_KINDS = ("api", "form")
 
 
 class SpecError(ValueError):
@@ -26,7 +29,10 @@ class SpecError(ValueError):
 def _format(err: ValidationError) -> list[str]:
     out = []
     for e in err.errors():
-        loc = ".".join(str(p) for p in e["loc"]) or "<root>"
+        parts = list(e["loc"])
+        if len(parts) > 1 and parts[0] == "sink" and parts[1] in SINK_KINDS:
+            del parts[1]  # the discriminated union's tag: keep v1 locations ("sink.call", not "sink.api.call")
+        loc = ".".join(str(p) for p in parts) or "<root>"
         msg = e["msg"].removeprefix("Value error, ")
         out.append(f"{loc}: {msg}")
     return out
