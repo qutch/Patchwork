@@ -313,8 +313,8 @@ def fake_airtable(monkeypatch):
 
 @pytest.fixture
 def compiled(workspace, fake_airtable, monkeypatch):
-    """jobs_to_tracker v1 into the fake table, compiled against its live contract, tested and deployed. The
-    credential is FAKE_AIRTABLE_PAT so it survives control.ops.runner_env's *_TOKEN strip (until A1's V13)."""
+    """jobs_to_tracker v1 into the fake table, compiled against its live contract, tested and deployed. AIRTABLE_TOKEN
+    is in the control plane's env; runner_env(spec) hands it to the runner as PATCHWORK_CRED__AIRTABLE_TOKEN."""
     monkeypatch.setenv(SUBPROCESS_CREDENTIAL, TOKEN)
     path = write_spec(workspace, airtable_spec(credential=SUBPROCESS_CREDENTIAL))
     built = ops.compile_and_test(path, examples_path=JOBS / "examples.yaml")
@@ -411,11 +411,12 @@ def test_missing_credential_fails_the_run_naming_it(compiled, inbox, monkeypatch
     monkeypatch.delenv(SUBPROCESS_CREDENTIAL)
     s = ops.run_sandboxed(NAME)
     assert s["status"] == "failed" and f"credential {SUBPROCESS_CREDENTIAL} is not set" in s["message"], s
+    assert s.get("run_id") is None  # runner_env refuses before the runner starts (V13)
 
 
 def test_in_process_run_with_airtable_token(workspace, fake_airtable, inbox, monkeypatch):
-    """The V14 credential name in the runner process itself (PATCHWORK_CRED__AIRTABLE_TOKEN, as A1's runner_env
-    will pass it): a page run writes, a rename is CONTRACT_CHANGED before any write."""
+    """The runner process itself with PATCHWORK_CRED__AIRTABLE_TOKEN (what runner_env(spec) passes): a page run
+    writes, a rename is CONTRACT_CHANGED before any write."""
     from runner.run import run
     monkeypatch.setenv("PATCHWORK_CRED__AIRTABLE_TOKEN", TOKEN)
     monkeypatch.delenv("AIRTABLE_TOKEN", raising=False)

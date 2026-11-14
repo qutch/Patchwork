@@ -364,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--airtable-base", default=os.environ.get("PATCHWORK_AIRTABLE_BASE_ID"))
     ap.add_argument("--airtable-table", default=os.environ.get("PATCHWORK_AIRTABLE_TABLE", "Applications"))
     ap.add_argument("--credential", default=None,
-                    help="credential name for --sink airtable (default AIRTABLE_TOKEN; in-process: FAKE_AIRTABLE_PAT)")
+                    help="credential name for --sink airtable (default AIRTABLE_TOKEN)")
     ap.add_argument("--form-url", default=os.environ.get("PATCHWORK_TRACKER_FORM_URL", "http://127.0.0.1:18010/"))
     ap.add_argument("--sheet-csv", default=os.environ.get("PATCHWORK_DEMO_SHEET_CSV"))
     ap.add_argument("--in-process", action="store_true", help="own stack on free ports, scripted agent, fixture form")
@@ -444,9 +444,8 @@ def _in_process_airtable(args: argparse.Namespace, ws: Path) -> int:
     from bench.v2.stack import V2Stack
     from demo_apps.fake_airtable.app import BASE_ID, REAL_BASE_FIELDS, TABLE, TOKEN, create_app
 
-    # control.ops.runner_env strips *_TOKEN variables; until the credential pass-through (V13, A1) reaches the
-    # runner, the in-process smoke names a credential the strip keeps. --credential AIRTABLE_TOKEN once it has.
-    credential = args.credential or "FAKE_AIRTABLE_PAT"
+    # the control plane holds the fake's token as AIRTABLE_TOKEN (like .env); runner_env(spec) passes it to runs
+    credential = args.credential or "AIRTABLE_TOKEN"
     old = {k: os.environ.get(k) for k in ("PATCHWORK_AIRTABLE_API_URL", credential)}
     with Server(create_app(fields=REAL_BASE_FIELDS)) as fake:
         os.environ["PATCHWORK_AIRTABLE_API_URL"] = fake.url + "/v0"

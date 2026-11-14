@@ -189,7 +189,16 @@ def stack(workspace, token, monkeypatch):
             _Server(control_app(agent=agent, dotenv=False)) as api, httpx.Client(base_url=api.url, timeout=60) as c:
         monkeypatch.setenv("PATCHWORK_AIRTABLE_API_URL", fake.url + "/v0")
         monkeypatch.setenv("PATCHWORK_CONTROL_URL", inbox.url)  # the runner's page source: the fixture pages
-        yield {"api": c, "fake": fake.url, "agent": agent}
+        yield {"api": c, "fake": fake.url, "agent": agent, "inbox": inbox.url}
+
+
+NEW_URL = "https://jobs.lever.co/palantir/00000000-new0-4000-8000-000000000001"
+
+
+def post_new_lever_page(inbox: str) -> None:
+    from fixtures.jobs.pages import PAGES
+    r = httpx.post(inbox + "/api/pages", json={"url": NEW_URL, "html": (PAGES / "lever-1.html").read_text()})
+    assert r.status_code == 201, r.text
 
 
 def wait(c, tid, states, timeout=90):
@@ -239,6 +248,7 @@ def test_teach_into_airtable_then_run_rename_and_repair(stack):
 
     # the owner renames a field: the next run is held before any write
     httpx.post(fake + "/admin/rename", json={"from": "Company", "to": "Employer"})
+    post_new_lever_page(stack["inbox"])
     blocked = run(NAME, log=lambda _: None)
     assert blocked["status"] == "blocked" and len(httpx.get(fake + "/admin/records").json()) == 2
     inc = Store().incident(blocked["incident_id"])
@@ -256,12 +266,11 @@ def test_teach_into_airtable_then_run_rename_and_repair(stack):
     gold = json.loads((ops.version_dir(NAME, 2) / "golden.json").read_text())
     assert all("Employer" in g["expect"]["body"] and "Company" not in g["expect"]["body"] for g in gold)
 
-    # a run after the reset of the processed keys is not needed: blocked runs never moved the cursor
-    httpx.post(fake + "/admin/reset")
-    httpx.post(fake + "/admin/rename", json={"from": "Company", "to": "Employer"})
+    # the page held by the blocked run (it never moved the cursor) is written by the repaired version
     again = run(NAME, log=lambda _: None)
-    assert again["status"] == "completed", again
-    assert stack["agent"] is not None
+    assert again["status"] == "completed" and again["counts"] == {"success": 1}, again
+    rows = httpx.get(fake + "/admin/records").json()
+    assert len(rows) == 3 and rows[-1]["Employer"] == "Palantir Technologies" and rows[-1]["Link"] == NEW_URL
 
 
 def test_build_without_destination_clears_it(stack):

@@ -12,9 +12,8 @@ from demo_apps.fake_airtable.app import BASE_ID, TABLE, TOKEN
 REPO = Path(__file__).resolve().parents[2]
 JOBS = REPO / "fixtures" / "jobs"
 NAME = "jobs_to_tracker"
-# runner_env (control.ops) strips *_TOKEN variables until A1's credential pass-through lands, so the tests that
-# launch a runner subprocess name a credential the strip keeps; in-process tests use AIRTABLE_TOKEN (V14).
-SUBPROCESS_CREDENTIAL = "FAKE_AIRTABLE_PAT"
+# The credential runner subprocesses get as PATCHWORK_CRED__AIRTABLE_TOKEN (control.ops.runner_env(spec), V13).
+SUBPROCESS_CREDENTIAL = "AIRTABLE_TOKEN"
 
 __all__ = ["BASE_ID", "TABLE", "TOKEN", "NAME", "airtable_sink", "airtable_spec", "write_spec"]
 
