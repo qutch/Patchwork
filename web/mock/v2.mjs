@@ -14,7 +14,9 @@
 
 const NAME = "jobs_to_tracker";
 const DEFAULT_LABELS = ["Email", "Job Title", "Company", "Link", "Date Applied"];
-const TOKEN = "mock-extension-token";
+export const TOKEN = "mock-extension-token";
+/** The demo Google Form (mock: nothing is ever sent to it). */
+const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSmockTrackerForm/viewform";
 
 // ------------------------------------------------------------------------------ pages
 const TRACKING = /^(utm_.*|lever-source|lever-origin|gh_src|source|ref)$/i;
@@ -590,7 +592,9 @@ export function createV2(h) {
     if (p === "/api/tracker" && M === "GET") {
       const limit = Number(url.searchParams.get("limit") || 50);
       const rows = [...V.rows.values()].sort((a, b) => b.seq - a.seq);
-      return send(res, 200, { rows: rows.slice(0, limit), totals: totals(rows) }), true;
+      // V15 item 3: `fields` per row (what the reader extracted; {} before a reader ran) and `field_names`
+      const withFields = rows.slice(0, limit).map((r) => ({ ...r, fields: r.parser ? { title: r.title, company: r.company } : {} }));
+      return send(res, 200, { rows: withFields, totals: totals(rows), field_names: ["title", "company"] }), true;
     }
     if (p === "/api/layouts" && M === "GET") return send(res, 200, V.layouts), true;
     if ((mm = p.match(/^\/api\/layouts\/([^/]+)\/revert$/)) && M === "POST") {
@@ -630,6 +634,19 @@ export function createV2(h) {
         return send(res, 200, { name: NAME, active_version: V.active,
           versions: V.versions.map(({ version, created_at, deployed_at, tests_passed, tests_summary }) => ({ version, created_at, deployed_at, tests_passed, tests_summary })),
           recent_runs: [], open_incidents: V.incidents.filter((i) => i.status === "open") }), true;
+      let vm;
+      if (M === "GET" && (vm = sub.match(/^\/versions\/(\d+)$/))) {
+        const v = V.versions.find((x) => x.version === Number(vm[1]));
+        if (!v) return fail(res, 404, `${NAME} v${vm[1]} does not exist`), true;
+        const spec_yaml = [
+          "spec_version: 1", `name: ${NAME}`, "intent: \"Add the job posting I'm looking at to my application tracker\"",
+          "sink:", "  kind: form", `  url: ${FORM_URL}`, "  fields:",
+          "    Email: {const: demo@example.com}", "    Job Title: {from: title}", `    ${v.companyLabel}: {from: company}`,
+          "    Link: {from: record.canonical_url}", "    Date Applied: {from: record.captured_date}", "",
+        ].join("\n");
+        return send(res, 200, { name: NAME, version: v.version, active: v.version === V.active, created_at: v.created_at, deployed_at: v.deployed_at,
+          manifest: { name: NAME, version: v.version, parsers: v.parsers }, spec_yaml, files: {}, tests_passed: v.tests_passed, tests_summary: v.tests_summary }), true;
+      }
       return fail(res, 404, `mock: ${M} ${p} is not simulated for ${NAME}`), true;
     }
     if ((mm = p.match(/^\/api\/incidents\/(\d+)(\/repair)?$/))) {

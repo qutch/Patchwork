@@ -1,17 +1,32 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, TRACKER, type AgentEvent, type ExtensionInfo, type Settings, type TrackerRow, type TrackerTotals } from "../api";
-import { clock } from "../lib/tracker";
+import { api, type AgentEvent, type Settings, type TrackerResponse, type TrackerRow, type TrackerTotals } from "../api";
+import { clock, fieldColumns, fieldLabel, fieldValue, isLegacyColumns, LEGACY_FIELDS } from "../lib/tracker";
 import { heldHint, isFormChanged, labelKind, labelText, localDay, originText, routedText, totals, type LabelKind } from "../lib/tracker";
-import { useAgentThread, useApp, usePoll } from "../state";
+import { eyebrowFor, humanName, JOBS_WORDING, wordingFor, type Wording } from "../lib/integrations";
+import { useAgentThread, useApp, useIntegrationInfo, usePoll } from "../state";
 import { AiToggle } from "../components/AiToggle";
+import { CredentialWarning, IntegrationBar } from "../components/Destination";
 import { IncidentBanner } from "../components/IncidentBanner";
 import { Card, Empty, PageHead, Spinner } from "../components/ui";
 import { LayoutsPanel } from "../components/Layouts";
 
 // ------------------------------------------------------------------------------- data
-/** The tracker, polled every second so a hotkey press shows up within ~1 s. */
-export function useTracker(ms = 1000) {
-  return usePoll(() => api.tracker({ integration: TRACKER, limit: 50 }), ms);
+/**
+ * The chosen integration's tracker, polled every second so a hotkey press shows up within ~1 s
+ * (`?integration=`, V15 item 4). `data` is null until the chosen integration's rows have arrived, so a switch
+ * never shows the previous integration's rows under the new one's columns.
+ */
+export function useTracker(integration: string, ms = 1000) {
+  const q = usePoll(async () => ({ integration, resp: await api.tracker({ integration, limit: 50 }) }), ms, [integration]);
+  const data: TrackerResponse | null = q.data && q.data.integration === integration ? q.data.resp : null;
+  return { ...q, data };
+}
+
+/** Wording, columns and destination for one page integration. */
+export function usePageView(name: string) {
+  const info = useIntegrationInfo(name);
+  const w = useMemo(() => wordingFor(name, info.destination), [name, info.destination]);
+  return { ...info, w, eyebrow: eyebrowFor(name, info.intent, info.destination) };
 }
 
 /** Rows that arrived after the first load, so they can flash once. */
@@ -46,14 +61,14 @@ const CHIP: Record<LabelKind, { fg: string; bg: string }> = {
 };
 const ICON: Record<LabelKind, string> = { code: "✓", learned: "AI", held: "!", duplicate: "=", learning: "", pending: "", failed: "✗" };
 
-export function LabelChip({ row, settings, big = false }: { row: TrackerRow; settings: Settings | null; big?: boolean }) {
+export function LabelChip({ row, settings, big = false, w = JOBS_WORDING }: { row: TrackerRow; settings: Settings | null; big?: boolean; w?: Wording }) {
   const k = labelKind(row);
   const s = k === "held" && isFormChanged(row) ? CHIP.failed : CHIP[k];
   return (
     <span className="pill" style={{ color: s.fg, background: s.bg, fontSize: big ? 17 : undefined, padding: big ? "7px 10px" : undefined, whiteSpace: "normal", lineHeight: 1.25 }}>
       {(k === "learning" || k === "pending") && <Spinner />}
       {ICON[k] && <b aria-hidden>{ICON[k]}</b>}
-      {labelText(row, settings)}
+      {labelText(row, settings, w)}
     </span>
   );
 }
@@ -69,7 +84,7 @@ function Stat({ label, value, sub, tone, big }: { label: string; value: ReactNod
 }
 
 /** The counter row. AI calls are counted for pages captured today (local time). */
-export function TrackerStats({ rows, settings, big = false }: { rows: TrackerRow[]; settings: Settings | null; big?: boolean }) {
+export function TrackerStats({ rows, settings, big = false, w = JOBS_WORDING }: { rows: TrackerRow[]; settings: Settings | null; big?: boolean; w?: Wording }) {
   const t: TrackerTotals = totals(rows, localDay(new Date()));
   const scripted = settings?.agent === "scripted";
   return (
@@ -79,7 +94,7 @@ export function TrackerStats({ rows, settings, big = false }: { rows: TrackerRow
       <Stat big={big} label="Written by code" value={t.code} sub="0 AI calls each" tone="var(--ok)" />
       <Stat big={big} label="Learned now" value={t.learned_now} sub="AI once, checked by code" tone="var(--accent)" />
       <Stat big={big} label="Held for a person" value={t.held} sub="nothing written" tone={t.held ? "var(--val)" : undefined} />
-      {!big && <Stat label="Already in tracker" value={t.duplicate} sub="same posting, skipped" />}
+      {!big && <Stat label={w.duplicate[0].toUpperCase() + w.duplicate.slice(1)} value={t.duplicate} sub={w.duplicateSub} />}
       {!big && <Stat label="Pages today" value={t.pages} sub="hotkey presses" />}
     </div>
   );
@@ -131,9 +146,9 @@ export function LearnEvidence({ threadId, settings }: { threadId: string; settin
   );
 }
 
-function RowDetail({ row, settings, onReplay }: { row: TrackerRow; settings: Settings | null; onReplay: () => void }) {
+function RowDetail({ row, settings, onReplay, w }: { row: TrackerRow; settings: Settings | null; onReplay: () => void; w: Wording }) {
   const { go, setThreadId } = useApp();
-  const hint = heldHint(row, settings);
+  const hint = heldHint(row, settings, w);
   const o = row.parser_origin ? originText(row.parser_origin) : null;
   return (
     <div className="grid gap-3 px-4 py-3 bg-sunken">
@@ -166,29 +181,59 @@ function RowDetail({ row, settings, onReplay }: { row: TrackerRow; settings: Set
   );
 }
 
-function Posting({ row, big }: { row: TrackerRow; big?: boolean }) {
-  const extracted = row.status === "success" || row.status === "duplicate";
+const extractedRow = (row: TrackerRow) => row.status === "success" || row.status === "duplicate";
+
+/** The jobs demo's cell: title, then company · site (also any integration whose fields are just title/company). */
+function Posting({ row, big, cols }: { row: TrackerRow; big?: boolean; cols: string[] }) {
+  const extracted = extractedRow(row);
+  const title = cols.includes("title") ? fieldValue(row, "title") ?? row.title : row.title;
+  const company = cols.includes("company") ? fieldValue(row, "company") : null;
   return (
     <div className="grid gap-0.5 min-w-0">
       <span className={`font-semibold ${big ? "text-[26px] leading-tight" : "text-[14.5px]"}`} style={extracted ? undefined : { color: "var(--muted)" }}>
-        {row.title ?? "(no title)"}
-        {!extracted && row.title && <span className="font-normal text-[12px]"> (page title, not read yet)</span>}
+        {title ?? "(no title)"}
+        {!extracted && title && <span className="font-normal text-[12px]"> (page title, not read yet)</span>}
       </span>
       <span className={big ? "text-[19px]" : "text-[13px]"}>
-        {row.company ?? <span className="text-muted">—</span>} <span className="font-mono text-muted" style={{ fontSize: big ? 15 : 12 }}>· {row.site}</span>
+        {company ?? <span className="text-muted">—</span>} <span className="font-mono text-muted" style={{ fontSize: big ? 15 : 12 }}>· {row.site}</span>
       </span>
     </div>
   );
 }
 
-/** The live tracker table. `big` is the presenter version (fewer columns, large type, no expanding). */
-export function TrackerTable({ rows, settings, big = false, onReplay }: { rows: TrackerRow[]; settings: Settings | null; big?: boolean; onReplay?: () => void }) {
+/** Any other integration: one cell per field; the first also carries the site (and the page title until it's read). */
+function FieldCell({ row, name, first, big }: { row: TrackerRow; name: string; first: boolean; big?: boolean }) {
+  const extracted = extractedRow(row);
+  const v = fieldValue(row, name);
+  if (!first) return <span className={big ? "text-[20px]" : "text-[13.5px]"}>{v ?? <span className="text-muted">—</span>}</span>;
+  const shown = v ?? (extracted ? null : row.title);
+  return (
+    <div className="grid gap-0.5 min-w-0">
+      <span className={`font-semibold ${big ? "text-[24px] leading-tight" : "text-[14.5px]"}`} style={v ? undefined : { color: "var(--muted)" }}>
+        {shown ?? "—"}
+        {!v && shown && <span className="font-normal text-[12px]"> (page title, not read yet)</span>}
+      </span>
+      <span className="font-mono text-muted" style={{ fontSize: big ? 15 : 12 }}>{row.site}</span>
+    </div>
+  );
+}
+
+/**
+ * The live tracker table. `big` is the presenter version (fewer columns, large type, no expanding).
+ * `columns` are the integration's field names (V15); title/company (the default) keep the jobs demo's one "Posting" cell.
+ */
+export function TrackerTable({ rows, settings, big = false, onReplay, columns = LEGACY_FIELDS, w = JOBS_WORDING }: {
+  rows: TrackerRow[]; settings: Settings | null; big?: boolean; onReplay?: () => void; columns?: string[]; w?: Wording;
+}) {
   const fresh = useNewRows(rows);
   const [open, setOpen] = useState<string | null>(null);
+  const legacy = isLegacyColumns(columns);
+  const fieldCols = legacy ? [] : big ? columns.slice(0, 3) : columns;
+  const nCols = 1 + (legacy ? 1 : fieldCols.length) + (big ? 0 : 1) + 2;
   if (!rows.length) {
     return (
       <Empty>
-        No pages yet. Press <kbd className="font-mono">Alt+Shift+P</kbd> on a job posting with the Patchwork extension (setup below), and the row
+        No pages yet. Press <kbd className="font-mono">Alt+Shift+P</kbd> on a {w.noun} with the Patchwork extension (setup below), and the row
         appears here within a second or two.
       </Empty>
     );
@@ -199,7 +244,7 @@ export function TrackerTable({ rows, settings, big = false, onReplay }: { rows: 
         <thead>
           <tr>
             <th className="w-[84px] whitespace-nowrap">Time</th>
-            <th>Posting</th>
+            {legacy ? <th>{w.item}</th> : fieldCols.map((c) => <th key={c}>{fieldLabel(c)}</th>)}
             {!big && <th>Read by</th>}
             <th>Result</th>
             <th className="text-right whitespace-nowrap">AI calls</th>
@@ -217,7 +262,7 @@ export function TrackerTable({ rows, settings, big = false, onReplay }: { rows: 
                   aria-expanded={big ? undefined : isOpen}
                 >
                   <td className="font-mono text-muted num whitespace-nowrap" style={{ fontSize: big ? 16 : 12.5 }}>{clock(r.captured_at)}</td>
-                  <td><Posting row={r} big={big} /></td>
+                  {legacy ? <td><Posting row={r} big={big} cols={columns} /></td> : fieldCols.map((c, k) => <td key={c}><FieldCell row={r} name={c} first={k === 0} big={big} /></td>)}
                   {!big && (
                     <td className="text-[13px]">
                       {r.parser ? (
@@ -230,7 +275,7 @@ export function TrackerTable({ rows, settings, big = false, onReplay }: { rows: 
                       )}
                     </td>
                   )}
-                  <td><LabelChip row={r} settings={settings} big={big} /></td>
+                  <td><LabelChip row={r} settings={settings} big={big} w={w} /></td>
                   <td className="text-right num font-semibold" style={{ fontSize: big ? 26 : 15, color: r.ai_calls ? "var(--accent)" : "var(--muted)" }}>
                     {r.ai_calls}
                     {!big && <span className="ml-2 text-muted font-normal text-xs" aria-hidden>{isOpen ? "▾" : "▸"}</span>}
@@ -238,8 +283,8 @@ export function TrackerTable({ rows, settings, big = false, onReplay }: { rows: 
                 </tr>
                 {isOpen && (
                   <tr>
-                    <td colSpan={5} className="p-0">
-                      <RowDetail row={r} settings={settings} onReplay={onReplay ?? (() => {})} />
+                    <td colSpan={nCols} className="p-0">
+                      <RowDetail row={r} settings={settings} onReplay={onReplay ?? (() => {})} w={w} />
                     </td>
                   </tr>
                 )}
@@ -282,19 +327,25 @@ function CopyField({ label, value, secret = false }: { label: string; value: str
   );
 }
 
-export function ExtensionCard() {
-  const [ext, setExt] = useState<ExtensionInfo | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => {
-    api.extension().then(setExt, (e) => setErr(e instanceof Error ? e.message : String(e)));
-  }, []);
+export function ExtensionCard({ w = JOBS_WORDING }: { w?: Wording }) {
+  const { extension: ext, extensionError: err, pageIntegrations, pageIntegration } = useApp();
+  const many = pageIntegrations.length > 1;
+  const dflt = ext?.default_integration;
   return (
     <Card eyebrow="Hotkey" title="Extension setup" className="max-w-[760px]">
       <div className="grid gap-3">
         <ol className="m-0 pl-5 text-[13.5px] grid gap-1">
           <li>Chrome → <span className="font-mono">chrome://extensions</span> → Developer mode → <b>Load unpacked</b> → the repo's <span className="font-mono">extension/</span> folder.</li>
           <li>Open the extension's options and paste the two values below.</li>
-          <li>On any job posting press <kbd className="font-mono font-semibold">Alt+Shift+P</kbd>. The badge shows <b>✓</b> code, <b>AI</b> learned now, <b>!</b> held.</li>
+          {many && (
+            <li>
+              Pick where pages go in the options (the popup can switch it):{" "}
+              {pageIntegrations.map((i, k) => (
+                <span key={i.name}>{k > 0 && ", "}<span className="font-mono" style={i.name === pageIntegration ? { fontWeight: 700 } : undefined}>{i.name}</span>{i.name === dflt ? " (default)" : ""}</span>
+              ))}.
+            </li>
+          )}
+          <li>On any {many ? "page" : w.noun} press <kbd className="font-mono font-semibold">Alt+Shift+P</kbd>. The badge shows <b>✓</b> code, <b>AI</b> learned now, <b>!</b> held.</li>
         </ol>
         {ext ? (
           <>
@@ -311,13 +362,16 @@ export function ExtensionCard() {
 
 // ------------------------------------------------------------------------------- tab
 export default function TrackerTab() {
-  const { settings, incidents, act, refresh } = useApp();
-  const q = useTracker(1000);
+  const { settings, incidents, act, refresh, pageIntegration: name } = useApp();
+  const view = usePageView(name);
+  const { w } = view;
+  const q = useTracker(name, 1000);
   const rows = q.data?.rows ?? [];
+  const columns = fieldColumns(q.data);
   const held = rows.filter((r) => r.status === "held").length;
-  const incident = useMemo(() => incidents.find((i) => i.integration === TRACKER && i.status === "open"), [incidents]);
+  const incident = useMemo(() => incidents.find((i) => i.integration === name && i.status === "open"), [incidents, name]);
   const replay = async () => {
-    const r = await act(() => api.replay(TRACKER));
+    const r = await act(() => api.replay(name));
     if (r) {
       refresh();
       void q.reload();
@@ -326,10 +380,11 @@ export default function TrackerTab() {
   return (
     <>
       <PageHead
-        eyebrow="Job postings → tracker form"
+        eyebrow={view.eyebrow}
         title="Tracker"
         right={
           <>
+            <IntegrationBar name={name} d={view.destination} />
             {q.error && !q.data && <span className="pill" style={{ color: "var(--bad)", background: "var(--bad-soft)" }}>tracker unavailable</span>}
             <a className="btn no-underline" href="?present=1" title="Big type for the room; → and ← step through the 2-minute script">Presenter mode</a>
             <button className="btn" onClick={replay} disabled={!held} title={held ? "Run held pages again on the active version" : "Nothing is held"}>
@@ -338,14 +393,17 @@ export default function TrackerTab() {
           </>
         }
       >
-        Every hotkey press on a job posting and what happened to it. Layouts Patchwork already knows are read by code with
+        Every hotkey press on a {w.noun}{w === JOBS_WORDING ? "" : ` for ${view.intent?.trim() ? `“${view.intent.trim()}”` : humanName(name)}`} and what
+        happened to it. Layouts Patchwork already knows are read by code with
         0 AI calls. A new layout is learned once with AI, every value checked by code, and labelled. Anything in doubt is
         held for a person and nothing is written.
       </PageHead>
 
+      <CredentialWarning name={name} d={view.destination} />
+
       {incident && <IncidentBanner key={incident.id} id={incident.id} />}
 
-      <TrackerStats rows={rows} settings={settings} />
+      <TrackerStats rows={rows} settings={settings} w={w} />
 
       <Card
         eyebrow="Live · updates every second"
@@ -353,12 +411,12 @@ export default function TrackerTab() {
         right={<span className="font-mono text-xs text-muted">click a row for details and evidence</span>}
         bodyClass=""
       >
-        {q.data ? <TrackerTable rows={rows} settings={settings} onReplay={replay} /> : <div className="card-b text-muted">{q.error ? `Couldn't load the tracker: ${q.error}` : "Loading…"}</div>}
+        {q.data ? <TrackerTable rows={rows} settings={settings} onReplay={replay} columns={columns} w={w} /> : <div className="card-b text-muted">{q.error ? `Couldn't load the tracker: ${q.error}` : "Loading…"}</div>}
       </Card>
 
       <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_360px] items-start">
-        <LayoutsPanel />
-        <ExtensionCard />
+        <LayoutsPanel integration={name} />
+        <ExtensionCard w={w} />
       </div>
     </>
   );

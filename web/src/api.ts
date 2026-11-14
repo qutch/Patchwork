@@ -182,6 +182,11 @@ export interface IntegrationSummary {
   active_version: number | null;
   latest_version: number;
   open_incidents: number | IncidentSummary[];
+  /** optional extra (v3): the spec's intent, when the control plane lists it */
+  intent?: string | null;
+  /** optional extra (v3): where it writes, when the control plane lists it (otherwise read from the active spec) */
+  destination?: DestinationInfo | null;
+  sink?: DestinationInfo | null;
 }
 export interface VersionRow {
   version: number;
@@ -435,6 +440,8 @@ export interface TrackerRow {
   run_id: number | null;
   learn_thread_id: string | null;
   incident_id: number | null;
+  /** V15: every extracted field, spec order (absent on older backends: use title/company). */
+  fields?: Record<string, unknown> | null;
 }
 export interface TrackerTotals {
   pages: number;
@@ -447,6 +454,8 @@ export interface TrackerTotals {
 export interface TrackerResponse {
   rows: TrackerRow[];
   totals: TrackerTotals;
+  /** V15: the integration's extracted field names, spec order (absent on older backends). */
+  field_names?: string[] | null;
 }
 /** V9 Layout: one parser across the integration's versions. */
 export interface Layout {
@@ -459,9 +468,36 @@ export interface Layout {
   introduced_in: number;
   active: boolean;
 }
+/** V15 item 2: one page integration the extension can send pages to. */
+export interface PageIntegration {
+  name: string;
+  intent?: string | null;
+  /** optional extra: where it writes, if the control plane says so */
+  destination?: DestinationInfo | null;
+  sink?: DestinationInfo | null;
+}
 export interface ExtensionInfo {
   token: string;
   control_url: string;
+  /** V15 item 2 (absent on older backends: fall back to /api/integrations) */
+  integrations?: PageIntegration[] | null;
+  default_integration?: string | null;
+}
+/** Where an integration writes: its spec's `sink` (V5 form, V14 airtable, v1 api). Never carries a value. */
+export interface DestinationInfo {
+  kind: "form" | "airtable" | "api" | string;
+  url?: string | null;
+  base_url?: string | null;
+  base_id?: string | null;
+  table?: string | null;
+  /** the credential NAME the sink's auth references (V13), never its value */
+  credential?: string | null;
+}
+/** V13 `GET /api/credentials`: names and whether they are set. Values are never sent. */
+export interface Credential {
+  name: string;
+  set: boolean;
+  used_by: string[];
 }
 /** V12 bench/v2/results.json. */
 export interface BenchV2Posting {
@@ -577,19 +613,22 @@ export const api = {
 
   // v2 (contracts V9)
   /** What the extension sends on a hotkey press. The UI only uses it in tests and rehearsal tools. */
-  postPage: (b: { url: string; title: string; html: string }, token: string) =>
+  postPage: (b: { url: string; title: string; html: string; integration?: string }, token: string) =>
     request<PageAccepted>("POST", "/api/pages", b, { "X-Patchwork-Token": token }),
   pages: (p: { since?: number; limit?: number } = {}) => request<PageRecord[]>("GET", `/api/pages${qs(p)}`),
   page: (id: string) => request<{ page: PageRecord; row: TrackerRow }>("GET", `/api/pages/${enc(id)}`),
   extension: () => request<ExtensionInfo>("GET", "/api/extension"),
+  /** V13; 404 on backends without credentials. */
+  credentials: () => request<Credential[]>("GET", "/api/credentials"),
   tracker: (p: { integration?: string; limit?: number } = {}) =>
     request<TrackerResponse>("GET", `/api/tracker${qs({ integration: p.integration ?? TRACKER, limit: p.limit })}`),
   layouts: (integration: string = TRACKER) => request<Layout[]>("GET", `/api/layouts${qs({ integration })}`),
   revertLayout: (parser_id: string, integration: string = TRACKER) =>
     request<{ version: number; deployed: true }>("POST", `/api/layouts/${enc(parser_id)}/revert`, { integration }),
   formRename: (from: string, to: string) => request<unknown>("POST", "/api/demo/form/rename", { from, to }),
-  v2SaveBaseline: () => request<unknown>("POST", "/api/demo/v2/save-baseline"),
-  v2Reset: () => request<unknown>("POST", "/api/demo/v2/reset"),
+  /** V15 item 4: `integration` defaults to jobs_to_tracker on the server; only sent when given. */
+  v2SaveBaseline: (integration?: string) => request<unknown>("POST", `/api/demo/v2/save-baseline${qs({ integration })}`),
+  v2Reset: (integration?: string) => request<unknown>("POST", `/api/demo/v2/reset${qs({ integration })}`),
   /** bench/v2/results.json (W5); 404 until it exists. */
   benchV2: () => request<BenchV2Results>("GET", "/api/bench/v2"),
 };
