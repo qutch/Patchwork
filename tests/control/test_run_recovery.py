@@ -134,3 +134,24 @@ def test_an_adopted_runner_that_dies_without_a_summary_is_marked_failed(deployed
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+def test_a_finished_run_does_not_block_the_next_one_while_its_process_exits(workspace):
+    """The runner writes `completed` before its process exits and before the watcher marks it
+    done; a client that sees `completed` and starts the next run must not get a 409."""
+    from control.api.runs import LiveRun, RunManager
+
+    store = Store()
+    run_id = store.start_run(NAME, 1, False, pid=os.getpid())
+    proc = subprocess.Popen(["sleep", "30"])  # stands in for a runner that is still exiting
+    try:
+        mgr = RunManager()
+        mgr._runs[run_id] = LiveRun(integration=NAME, kind="run", proc=proc, scratch=workspace, run_id=run_id)
+        with mgr._lock:
+            assert mgr._busy(NAME), "a run whose row says running blocks"
+        store.finish_run(run_id, "completed", {"success": 1}, 0.1)
+        with mgr._lock:
+            assert not mgr._busy(NAME), "a completed row frees the integration even before the process exits"
+        assert mgr.in_progress(NAME) is None
+    finally:
+        proc.kill()

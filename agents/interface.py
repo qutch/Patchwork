@@ -168,10 +168,14 @@ class ThreadedAgentService:
         with self._lock:
             if t.cancelled:  # checked under the lock reset() takes, so no write follows a reset
                 raise ThreadCancelled(t.id)
-            ev = {"seq": len(t.events) + 1, "t": now(), "thread_id": t.id, "type": type, **payload}
+            line = json.dumps({"seq": len(t.events) + 1, "t": now(), "thread_id": t.id, "type": type, **payload},
+                              default=str)
+            # Store a snapshot, not the caller's objects: an agent that later mutates a list it
+            # emitted (e.g. its todos) must not rewrite history. Memory then matches the JSONL log.
+            ev = json.loads(line)
             t.events.append(ev)
             with (self.root / f"{t.id}.jsonl").open("a") as f:
-                f.write(json.dumps(ev, default=str) + "\n")
+                f.write(line + "\n")
         for fn in list(self._listeners):
             try:
                 fn(ev)

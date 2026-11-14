@@ -104,3 +104,23 @@ def test_service_works_normally_after_reset(workspace, apps):
     s = wait_state(svc, tid, "waiting")
     assert s["pending"]["type"] == "ask_user"
     svc.reset()
+
+
+def test_emitted_events_are_snapshots_and_match_the_log(workspace):
+    """An agent mutating a list after emitting it must not change the recorded event."""
+    import json
+
+    class Mutator(ThreadedAgentService):
+        def _run_build(self, t, recording_id):
+            todos = [{"content": "a", "status": "in_progress"}]
+            self.emit(t, "todos", todos=todos)
+            todos[0]["status"] = "completed"
+            self.emit(t, "todos", todos=todos)
+
+    svc = Mutator()
+    tid = svc.start_build("r")
+    wait_state(svc, tid, "done")
+    mem = [e["todos"][0]["status"] for e in svc.events(tid) if e["type"] == "todos"]
+    assert mem == ["in_progress", "completed"]
+    log = [json.loads(line) for line in (svc.root / f"{tid}.jsonl").read_text().splitlines()]
+    assert log == svc.events(tid)

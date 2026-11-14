@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -98,15 +99,35 @@ class Store:
         path = Path(path) if path else workspace_dir() / "patchwork.db"
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
-        self.db = sqlite3.connect(path, isolation_level=None)
+        self.db = sqlite3.connect(path, isolation_level=None, timeout=10)
         self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.executescript(SCHEMA)
-        run_cols = {r["name"] for r in self.db.execute("PRAGMA table_info(runs)")}
-        if "kind" not in run_cols:  # Phase 2: "run" | "replay"
-            self.db.execute("ALTER TABLE runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'run'")
-        if "pid" not in run_cols:  # runner process id, so a restarted control plane can tell stale runs
-            self.db.execute("ALTER TABLE runs ADD COLUMN pid INTEGER")
+        # The busy timeout doesn't cover every lock escalation on a brand-new DB (the WAL switch
+        # and first schema write can return SQLITE_BUSY at once to avoid deadlock), so retry.
+        deadline = time.monotonic() + 15
+        delay = 0.01
+        while True:
+            try:
+                self.db.execute("PRAGMA journal_mode=WAL")
+                self.db.executescript(SCHEMA)
+                self._add_column("runs", "kind", "TEXT NOT NULL DEFAULT 'run'")  # Phase 2: run | replay
+                self._add_column("runs", "pid", "INTEGER")  # runner pid: lets a restarted API spot stale runs
+                break
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower() or time.monotonic() > deadline:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 0.2)
+
+    def _add_column(self, table: str, column: str, decl: str) -> None:
+        """Idempotent and safe when several processes/threads open a fresh DB at once: the
+        check-then-ALTER race loses to whoever adds the column first, which is fine."""
+        if column in {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+            return
+        try:
+            self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
 
     def close(self) -> None:
         self.db.close()

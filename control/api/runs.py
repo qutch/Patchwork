@@ -146,16 +146,41 @@ class RunManager:
         finally:
             a.done = True
 
+    @staticmethod
+    def _db_running(run_id: int | None) -> bool:
+        """The run row still says running. The runner writes its final status *before* its
+        process exits and before our watcher marks it done, so the row is the source of truth
+        for "can another run start?"; otherwise a client that sees `completed` and immediately
+        starts the next run would get a spurious 409."""
+        if run_id is None:
+            return True
+        try:
+            store = Store()
+            try:
+                run = store.run(run_id)
+            finally:
+                store.close()
+        except Exception:  # noqa: BLE001 - be conservative if the DB is unreadable
+            return True
+        return run is not None and run["status"] == "running"
+
+    def _active(self, integration: str) -> LiveRun | AdoptedRun | None:
+        """Call with self._lock held."""
+        for r in self._runs.values():
+            if r.integration == integration and not r.done and self._db_running(r.run_id):
+                return r
+        for a in self._adopted.values():
+            if a.integration == integration and not a.done and self._db_running(a.run_id):
+                return a
+        return None
+
     def _busy(self, integration: str) -> bool:
         """Call with self._lock held."""
-        return (integration in self._starting
-                or any(r.integration == integration and not r.done for r in self._runs.values())
-                or any(a.integration == integration and not a.done for a in self._adopted.values()))
+        return integration in self._starting or self._active(integration) is not None
 
     def in_progress(self, integration: str) -> LiveRun | AdoptedRun | None:
         with self._lock:
-            return (next((r for r in self._runs.values() if r.integration == integration and not r.done), None)
-                    or next((a for a in self._adopted.values() if a.integration == integration and not a.done), None))
+            return self._active(integration)
 
     def get(self, run_id: int) -> LiveRun | None:
         return self._runs.get(run_id)

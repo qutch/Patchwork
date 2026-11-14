@@ -129,6 +129,7 @@ class Recorder:
         self.log = EventLog(self.dir / "events.jsonl")
         self._req_t: dict[Any, int] = {}
         self._tasks: set[asyncio.Task] = set()
+        self._navs: set[asyncio.Task] = set()  # framenavigated writes still waiting for the title
         self.context = None
         self.sensitive_keys: set[str] = set()  # names of password/cc/otp fields seen on pages
 
@@ -144,10 +145,19 @@ class Recorder:
         for p in context.pages:
             self._on_page(p)
 
-    def _spawn(self, coro) -> None:
+    def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.ensure_future(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
+
+    async def _after_navs(self) -> None:
+        """A navigation's event is written once its title is known (after domcontentloaded),
+        so the page's own first fetches can finish earlier. Wait for navigations already in
+        flight so the live log stays in the order things happened."""
+        pending = [n for n in self._navs if not n.done()]
+        if pending:
+            await asyncio.wait(pending)
 
     def _on_page(self, page) -> None:
         page.on("framenavigated", lambda frame: self._on_nav(page, frame))
@@ -179,7 +189,9 @@ class Recorder:
         if not host_allowed(url, self.allowlist):
             return
         t = now_ms()
-        self._spawn(self._write_nav(frame, url, t))
+        nav = self._spawn(self._write_nav(frame, url, t))
+        self._navs.add(nav)
+        nav.add_done_callback(self._navs.discard)
 
     async def _write_nav(self, frame, url: str, t: int) -> None:
         title = None
@@ -243,6 +255,7 @@ class Recorder:
                     pass
             else:
                 ev["resp_type"] = ctype
+        await self._after_navs()
         self.log.write(ev)
 
     async def _on_failed(self, request) -> None:
@@ -250,6 +263,7 @@ class Recorder:
             return
         ev = self._base_event(request)
         ev["error"] = request.failure
+        await self._after_navs()
         self.log.write(ev)
 
     # ---- teardown ----
