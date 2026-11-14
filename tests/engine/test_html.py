@@ -122,6 +122,8 @@ def test_platform_of_and_match_rank():
     assert platform_of("visa.wd5.myworkdayjobs.com") == "*.myworkdayjobs.com"
     assert platform_of("acme.bamboohr.com") == "*.bamboohr.com"
     assert platform_of("jobs.lever.co") is None and platform_of("myworkdayjobs.com") is None
+    from runner.html import platform_name
+    assert platform_name("*.myworkdayjobs.com") == "workday" and platform_name("*.example.com") is None
     rec = {"site": "visa.wd5.myworkdayjobs.com"}
     assert match_rank({"site": "visa.wd5.myworkdayjobs.com"}, rec) == 2
     assert match_rank({"site": "*.myworkdayjobs.com"}, rec) == 1

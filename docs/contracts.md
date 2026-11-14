@@ -349,9 +349,10 @@ labels, e.g. `site: "*.myworkdayjobs.com"`) covers every host ending in `.<domai
 1 wildcard, 0 none). Step (1) above becomes: the first parser whose `match` equals the record exactly, else the first
 whose wildcard covers it, so a company's own parser beats its platform's whatever their order. The platforms are
 `runner.html.TENANT_PLATFORMS` (`platform_of(site)` → `*.<domain>` or None). LEARN decides the scope in code
-(`save_parser`): a parser for a tenant's page gets the platform match only if it also passes the evidence checks on
-every other stored page of that platform (at most 5, newest first) and the platform has no parser yet; otherwise it is
-saved for that host. An explicit wildcard `match` that fails that check is `REFUSED`. One learn runs per platform at a
+(`save_parser`): a parser for a tenant's page gets the platform match if the platform has no parser yet and it passes
+the evidence checks on at least half of the other companies' stored pages there (newest page per host, at most 5
+hosts); otherwise it is saved for that host. A company the platform parser misses is held (`PARSE_NO_MATCH`, never a
+wrong row) and learns its own exact-host parser. An explicit wildcard `match` that fails that check is `REFUSED`. One learn runs per platform at a
 time (`control/page_hooks.py`); held pages of other tenants are replayed after it deploys. Separately, a regex whose
 group 1 is fixed text (`About Us (Visa) is`) fails evidence in every LEARN check: it writes a constant, not a reading.
 

@@ -294,8 +294,21 @@ def test_workday_tenant_learns_the_platform(workspace, monkeypatch):
     h = Harness(monkeypatch, workday_page("tmobile", seq=7))
     h.engine.add_page(workday_page("nvidia", seq=8))
     assert "platform: tmobile.wd1.myworkdayjobs.com is one company on *.myworkdayjobs.com" in h.tools["get_page"]()
-    out = h.tools["save_parser"](parser={"id": "workday", "fields": WORKDAY_READERS})
+    out = h.tools["save_parser"](parser={"id": "tmobile", "fields": WORKDAY_READERS})
     assert out.startswith("deployed v2 automatically") and "platform *.myworkdayjobs.com" in out, out
+    assert "parser workday for *.myworkdayjobs.com" in out  # named after the platform, not the first company
+    assert learned_parser(active_spec(), "workday")["match"] == {"site": "*.myworkdayjobs.com"}
+
+
+def test_one_odd_tenant_does_not_block_the_platform_parser(workspace, monkeypatch):
+    """Real stage data: Visa leaves hiringOrganization empty. The T-Mobile reader reads NVIDIA but not Visa, so it
+    still becomes the platform parser (1 of 2); Visa's pages are held and learn their own exact-host parser."""
+    from tests.workday_pages import WORKDAY_READERS, workday_page
+    h = Harness(monkeypatch, workday_page("tmobile", seq=7))
+    h.engine.add_page(workday_page("nvidia", seq=8))
+    h.engine.add_page(workday_page("visa", seq=9))
+    out = h.tools["save_parser"](parser={"id": "workday", "fields": WORKDAY_READERS})
+    assert "platform *.myworkdayjobs.com: also reads 1 other company; 1 that it misses will learn their own" in out, out
     assert learned_parser(active_spec(), "workday")["match"] == {"site": "*.myworkdayjobs.com"}
 
 
@@ -309,6 +322,7 @@ def test_parser_that_misses_other_tenants_stays_company_specific(workspace, monk
             "company": {"css": 'meta[property="og:description"]', "attr": "content", "regex": r"^About Us (\w+) is"}}
     out = h.tools["save_parser"](parser={"id": "visa", "fields": visa})
     assert out.startswith("deployed v2 automatically") and "for visa.wd5.myworkdayjobs.com only" in out, out
+    assert "misses 1 of 1" in out
     assert learned_parser(active_spec(), "visa")["match"] == {"site": "visa.wd5.myworkdayjobs.com"}
 
 
@@ -319,7 +333,7 @@ def test_platform_match_asked_for_must_read_every_tenant(workspace, monkeypatch)
     visa = {"title": {"jsonld": "title", "jsonld_type": "JobPosting"},
             "company": {"css": 'meta[property="og:description"]', "attr": "content", "regex": r"^About Us (\w+) is"}}
     out = h.tools["save_parser"](parser={"id": "visa", "match": {"site": "*.myworkdayjobs.com"}, "fields": visa})
-    assert out.startswith("REFUSED: a platform match must read every stored page") and "tmobile" in out, out
+    assert out.startswith("REFUSED: a platform match must read at least half") and "tmobile" in out, out
     assert Store().active_version(NAME) == 1
 
 

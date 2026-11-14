@@ -38,7 +38,7 @@ from agents.scripted import FIXTURES, NAME, load_recording, work_dir
 from compiler.compile import CompileError, Example
 from control import ops
 from runner.contract import request_schema
-from runner.html import fingerprint_present, platform_of
+from runner.html import fingerprint_present, platform_name, platform_of
 from runner.lib import (Quarantine, T, cast, extract_between, extract_json_path, extract_product, extract_regex,
                         match_rank)
 from runner.store import Store, workspace_dir
@@ -1223,27 +1223,36 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             bad = [f"{i['name']}={i['value']!r} ({i.get('detail')})" for i in checks["evidence"] if not i["ok"]]
             return f"REFUSED: evidence check failed, nothing compiled: {'; '.join(bad)}"
         # Platform or company? A tenant of a multi-tenant platform (visa.wd5.myworkdayjobs.com) gets the platform
-        # match (*.myworkdayjobs.com) only if the parser also reads every other stored page from that platform;
-        # otherwise it is saved for this company's host and the platform waits for a parser that generalises.
+        # match (*.myworkdayjobs.com) if the parser also reads at least half of the other companies' stored pages
+        # there (newest page per host). A company it misses is held (PARSE_NO_MATCH, never a wrong row) and learns
+        # its own exact-host parser, which beats the platform's. Otherwise it is saved for this host only.
         plat = platform_of(site) if route_key == "site" else None
         wildcard = any("*" in v for v in p["match"].values())
         scope_note = ""
         if plat and (wildcard or not asked_match):
             taken = any(match_rank({"site": plat}, {"site": (x.get("match") or {}).get("site", "")}) == 2 for x in existing)
-            others = [] if taken else ctx.platform_pages(plat, exclude=rec.get("id"))
-            failing = []
-            for o in others:
+            by_host: dict[str, dict] = {}
+            for o in ([] if taken else ctx.platform_pages(plat, exclude=rec.get("id"), limit=50)):
+                if o.get("site") != site:
+                    by_host.setdefault(o.get("site") or "", o)  # newest first: keep each host's newest page
+            read, missed = [], []
+            for host, o in list(by_host.items())[:5]:
                 c = _check(p, o, active)
-                if "error" in c or not c.get("evidence_ok"):
-                    failing.append(f"{o.get('site')} ({c.get('error') or '; '.join(str(i.get('detail')) for i in c.get('evidence', []) if not i['ok'])})")
-            if wildcard and (taken or failing):
-                return ("REFUSED: a platform match must read every stored page from " + plat + ": " +
-                        ("a parser for the platform already exists" if taken else "; ".join(failing[:3])))
-            if not taken and not failing:
+                (read if "error" not in c and c.get("evidence_ok") else missed).append(host)
+            generalises = not taken and len(read) >= len(missed)
+            if wildcard and not generalises:
+                return ("REFUSED: a platform match must read at least half of the other companies on " + plat + ": " +
+                        ("a parser for the platform already exists" if taken else
+                         f"it reads {len(read)} and misses {len(missed)} ({', '.join(missed[:3])})"))
+            if generalises:
                 p["match"] = {route_key: plat}
-                scope_note = f" (platform {plat}: also read {len(others)} other stored page(s) from it)"
-            elif failing:
-                scope_note = f" (for {site} only: it does not read {len(failing)} other page(s) from {plat})"
+                name = platform_name(plat)  # one parser for the whole platform: name it after the platform, not a company
+                if name and name not in {x["id"] for x in existing}:
+                    p["id"] = name
+                scope_note = (f" (platform {plat}: also reads {len(read)} other compan{'y' if len(read) == 1 else 'ies'}"
+                              + (f"; {len(missed)} that it misses will learn their own" if missed else "") + ")")
+            elif missed:
+                scope_note = f" (for {site} only: it misses {len(missed)} of {len(read) + len(missed)} other companies on {plat})"
         values = checks["fields"]
         ambiguous = {f: v for f, v in {**ctx.ambiguous, **checks["ambiguous"]}.items() if f in p["fields"]}
         for field, options in ambiguous.items():  # V10: ambiguous -> ask with the distinct values

@@ -61,9 +61,10 @@ def site_of(url: str) -> str:
 # Job platforms that give each company its own subdomain (acme.wd5.myworkdayjobs.com, acme.bamboohr.com): every
 # tenant serves the same layout, so a parser can match the platform (`site: "*.myworkdayjobs.com"`) instead of one
 # company's host. Platforms with the company in the path (jobs.lever.co/acme) need nothing: the host is the platform.
-TENANT_PLATFORMS = ("myworkdayjobs.com", "myworkdaysite.com", "icims.com", "taleo.net", "bamboohr.com",
-                    "recruitee.com", "breezy.hr", "teamtailor.com", "pinpointhq.com", "applytojob.com",
-                    "jobs.personio.de", "jobs.personio.com")
+TENANT_PLATFORMS = {"myworkdayjobs.com": "workday", "myworkdaysite.com": "workday", "icims.com": "icims",
+                    "taleo.net": "taleo", "bamboohr.com": "bamboohr", "recruitee.com": "recruitee", "breezy.hr": "breezy",
+                    "teamtailor.com": "teamtailor", "pinpointhq.com": "pinpoint", "applytojob.com": "jazzhr",
+                    "jobs.personio.de": "personio", "jobs.personio.com": "personio"}
 
 
 def platform_of(site: str) -> str | None:
@@ -74,6 +75,11 @@ def platform_of(site: str) -> str | None:
         if host.endswith("." + suffix):
             return "*." + suffix
     return None
+
+
+def platform_name(platform: str) -> str | None:
+    """`*.myworkdayjobs.com` -> `workday` (the id a platform parser gets)."""
+    return TENANT_PLATFORMS.get(platform.removeprefix("*.")) if platform else None
 
 
 def _clean_url(url: str) -> str:
