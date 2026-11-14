@@ -67,12 +67,16 @@ class Source(_Strict):
 
 
 class FieldExtract(_Strict):
-    """Exactly one extract method: regex | json_path | between."""
+    """Exactly one extract method: regex | json_path | between.
+
+    `combine: product` (regex only) casts every capture group and multiplies them, e.g.
+    '(\\d+) cases \\((\\d+)/case\\)' -> 3 cases x 12 = 36 units."""
 
     regex: str | None = None
     json_path: str | None = None
     between: tuple[str, str] | None = None
     cast: Literal["int", "float", "str"] = "str"
+    combine: Literal["product"] | None = None
 
     @model_validator(mode="after")
     def _one_method(self) -> "FieldExtract":
@@ -86,6 +90,13 @@ class FieldExtract(_Strict):
                 raise ValueError(f"regex {self.regex!r} does not compile: {e}") from e
             if compiled.groups < 1:
                 raise ValueError(f"regex {self.regex!r} needs one capture group for the value")
+        if self.combine is not None:
+            if self.regex is None:
+                raise ValueError("combine only applies to regex fields")
+            if re.compile(self.regex).groups < 2:
+                raise ValueError(f"combine: {self.combine} needs a regex with at least two capture groups")
+            if self.cast not in ("int", "float"):
+                raise ValueError(f"combine: {self.combine} needs cast: int or float")
         if self.json_path is not None and not self.json_path.startswith("$"):
             raise ValueError(f"json_path {self.json_path!r} must start with '$'")
         return self

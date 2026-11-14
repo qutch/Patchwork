@@ -33,6 +33,19 @@ def extract_regex(text: str, pattern: re.Pattern[str], where: str) -> str:
     return m.group(1).strip()
 
 
+def extract_product(text: str, pattern: re.Pattern[str], to: str, where: str) -> Any:
+    """`combine: product`: cast every capture group and multiply (e.g. cases x units per case)."""
+    m = pattern.search(text or "")
+    if m is None:
+        raise Quarantine("PARSE_NO_MATCH", f"{where}: /{pattern.pattern}/ did not match")
+    out: Any = 1
+    for g in m.groups():
+        if g is None:
+            raise Quarantine("PARSE_NO_MATCH", f"{where}: a capture group did not participate")
+        out *= cast(g.strip(), to, where)
+    return out
+
+
 def extract_between(text: str, left: str, right: str, where: str) -> str:
     text = text or ""
     i = text.find(left)

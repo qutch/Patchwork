@@ -80,3 +80,20 @@ def test_spec_error_lists_every_problem(raw):
 def test_validate_spec_never_raises_on_garbage():
     assert validate_spec(": : :")
     assert validate_spec("- just a list")
+
+
+UMBRELLA_QTY = r"Item code: \S+ / (\d+) cases \((\d+)/case\)"
+
+
+def test_combine_product_needs_two_groups_and_a_numeric_cast(raw):
+    fields = raw["extract"]["parsers"][0]["fields"]
+    fields["qty"] = {"regex": UMBRELLA_QTY, "cast": "int", "combine": "product"}
+    assert errors_for(raw) == []
+    fields["qty"] = {"regex": r"Qty:\s*(\d+)", "cast": "int", "combine": "product"}
+    assert any("at least two capture groups" in e for e in errors_for(raw))
+    fields["qty"] = {"regex": UMBRELLA_QTY, "combine": "product"}
+    assert any("cast: int or float" in e for e in errors_for(raw))
+    fields["qty"] = {"between": ["a", "b"], "cast": "int", "combine": "product"}
+    assert any("combine only applies to regex" in e for e in errors_for(raw))
+    fields["qty"] = {"regex": UMBRELLA_QTY, "cast": "int", "combine": "sum"}
+    assert errors_for(raw), "combine is a closed set"

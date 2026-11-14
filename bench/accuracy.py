@@ -23,15 +23,19 @@ def score(records: list[dict], truth: dict[str, dict] | None = None) -> dict[str
         if gt is None:
             wrong.append({"record_id": r["record_id"], "why": "not in ground truth"})
             continue
+        intended = gt.get("intended")  # Break 2: quarantined until a repair adds a parser, then this body
+        if intended and r["status"] == "success":
+            gt = {"outcome": "success", "reason": None, "body": intended["body"], "body_v2": intended["body_v2"]}
         ok = r["status"] == gt["outcome"] and (r["reason"] or None) == gt["reason"]
+        expected_body = gt.get("body")
         if ok and gt["outcome"] == "success":
-            expected = gt["body_v2"] if r["sink_body"] and "sku" in r["sink_body"] else gt["body"]
-            ok = r["sink_body"] == expected
+            expected_body = gt["body_v2"] if r["sink_body"] and "sku" in r["sink_body"] else gt["body"]
+            ok = r["sink_body"] == expected_body
         if ok:
             right += 1
         else:
             wrong.append({"record_id": r["record_id"], "got": [r["status"], r["reason"], r["sink_body"]],
-                          "expected": [gt["outcome"], gt["reason"], gt.get("body")]})
+                          "expected": [gt["outcome"], gt["reason"], expected_body]})
     n = len(records)
     return {"records": n, "correct": right, "accuracy": round(right / n, 4) if n else None,
             "mismatches": wrong[:20]}

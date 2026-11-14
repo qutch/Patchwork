@@ -3,7 +3,7 @@
 
 import re
 
-from runner.lib import Quarantine, cast, extract_between, extract_json_path, extract_regex
+from runner.lib import Quarantine, cast, extract_between, extract_json_path, extract_product, extract_regex
 
 TEXT_FIELD = {{ spec.source.text_field|py }}
 ROUTE_BY = {{ spec.extract.route_by|py }}
@@ -23,6 +23,9 @@ def parse_{{ p.id }}(record: dict) -> dict:
     fields = {}
 {% for fname, f in p.fields.items() %}
 {% set where = p.id ~ "." ~ fname %}
+{% if f.combine == "product" %}
+    fields[{{ fname|py }}] = extract_product(text, _{{ p.id|upper }}__{{ fname|upper }}, {{ f.cast|py }}, {{ where|py }})
+{% else %}
 {% if f.regex is not none %}
     raw = extract_regex(text, _{{ p.id|upper }}__{{ fname|upper }}, {{ where|py }})
 {% elif f.between is not none %}
@@ -31,6 +34,7 @@ def parse_{{ p.id }}(record: dict) -> dict:
     raw = extract_json_path(record, {{ f.json_path|py }}, {{ where|py }})
 {% endif %}
     fields[{{ fname|py }}] = cast(raw, {{ f.cast|py }}, {{ where|py }})
+{% endif %}
 {% endfor %}
     return fields
 {% endfor %}

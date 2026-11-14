@@ -28,9 +28,13 @@ up:
 api:
 	$(PY) -m control.api --port 38080
 
+# Pre-demo check: drive the whole demo over HTTP against `make up` (resets the demo state).
+smoke:
+	$(PY) scripts/smoke_demo.py
+
 # UI (web/): dev server on :5180. `web` proxies to the control plane (PATCHWORK_API, default :8000 = `make up`).
 PATCHWORK_API ?= http://127.0.0.1:8000
-.PHONY: web web-mock
+.PHONY: web web-mock smoke
 web:
 	test -d web/node_modules || (cd web && npm ci)
 	cd web && PATCHWORK_API=$(PATCHWORK_API) npm run dev

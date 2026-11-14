@@ -9,6 +9,8 @@ SPEC_STYLE = FILES + """
 Spec rules (closed vocabulary, the compiler rejects anything else):
 - extract.parsers: one parser per source format, routed by `match: {sender_domain: <exact domain>}`.
   Fields use label-anchored regexes with ONE capture group, e.g. 'SKU:\\s*([A-Z0-9-]+)', 'Qty:\\s*(\\d+)' with cast: int.
+  When a quantity is stated as a product (e.g. '3 cases (12/case)'), use one regex with a group per factor plus
+  combine: product and cast: int, e.g. {regex: '(\\d+) cases \\((\\d+)/case\\)', cast: int, combine: product}.
   Every parser must extract the SAME field names (the sink body, dedupe and rules reference them).
 - sink.body values: {from: <field>} | {from: record.<raw field>} | {const: v} | {transform: lookup|int|float|strip|upper|lower|date|multiply, from: ..., args: {...}}.
   lookup: {transform: lookup, from: record.sender_domain, args: {table: {"acme.com": "BOS", ...}}} (keys are exact values).

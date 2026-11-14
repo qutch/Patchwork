@@ -32,7 +32,7 @@ from agents.scripted import FIXTURES, NAME, load_recording, work_dir
 from compiler.compile import CompileError, Example
 from control import ops
 from runner.contract import request_schema
-from runner.lib import Quarantine, T, cast, extract_between, extract_json_path, extract_regex
+from runner.lib import Quarantine, T, cast, extract_between, extract_json_path, extract_product, extract_regex
 from runner.store import Store, workspace_dir
 from spec import SpecError, load_spec, validate_spec
 
@@ -228,6 +228,9 @@ def run_parser(parser: dict, text_field: str, record: dict) -> dict:
     text = record.get(text_field) or ""
     for fname, f in parser["fields"].items():
         where = f"{parser.get('id', 'parser')}.{fname}"
+        if f.get("combine") == "product" and f.get("regex") is not None:
+            fields[fname] = extract_product(text, re.compile(f["regex"]), f.get("cast", "int"), where)
+            continue
         if f.get("regex") is not None:
             raw = extract_regex(text, re.compile(f["regex"]), where)
         elif f.get("between") is not None:

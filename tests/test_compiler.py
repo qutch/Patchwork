@@ -86,3 +86,24 @@ def test_deploy_refuses_untested_versions(workspace, tmp_path, openapi_v1):
     store.set_tests("po_to_stockroom", 1, False, "forced failure")
     with pytest.raises(ops.DeployRefused):
         ops.deploy("po_to_stockroom", 1, store=store)
+
+
+def test_combine_product_multiplies_the_capture_groups(tmp_path):
+    raw = yaml.safe_load(FIXTURE_SPEC.read_text())
+    raw["extract"]["parsers"].append({
+        "id": "umbrella_v1", "match": {"sender_domain": "umbrella.com"},
+        "fields": {"po_id": {"regex": r"reference\s+(PO-\d+)"},
+                   "sku": {"regex": r"Item code:\s*([A-Z0-9-]+)"},
+                   "qty": {"regex": r"Item code: \S+ / (\d+) cases \((\d+)/case\)", "cast": "int", "combine": "product"}}})
+    del raw["sink"]["verify"]
+    res = compile_spec(parse_spec(raw), version=1, out_root=tmp_path)
+    integ = load_integration(res.path)
+    body = ("Good morning,\n\nPlease ship the following against our reference PO-4001.\n\n"
+            "Item code: WID-101 / 3 cases (12/case)\n\nBest regards,\nUmbrella Purchasing")
+    out = process_record(integ, {"id": "m1", "sender_domain": "umbrella.com", "received_at": "x", "body": body},
+                         FakeHttp(), MemoryStore())
+    assert out.status == "success", out.detail
+    assert out.body == {"product_id": "WID-101", "quantity": 36, "reference": "PO-4001"}
+    bad = process_record(integ, {"id": "m2", "sender_domain": "umbrella.com", "received_at": "x",
+                                 "body": body.replace("3 cases", "x cases")}, FakeHttp(), MemoryStore())
+    assert bad.status == "quarantined" and bad.reason == "PARSE_NO_MATCH"
