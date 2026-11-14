@@ -1,0 +1,50 @@
+{% include "_header.j2" %}
+"""One function per parser, plus the router (route_by: {{ spec.extract.route_by }})."""
+
+import re
+
+from runner.lib import Quarantine, cast, extract_between, extract_json_path, extract_regex
+
+TEXT_FIELD = {{ spec.source.text_field|py }}
+ROUTE_BY = {{ spec.extract.route_by|py }}
+{% for p in spec.extract.parsers %}
+
+
+# ---- parser: {{ p.id }}  match={{ p.match }}
+{% for fname, f in p.fields.items() %}
+{% if f.regex is not none %}
+_{{ p.id|upper }}__{{ fname|upper }} = re.compile({{ f.regex|py }})
+{% endif %}
+{% endfor %}
+
+
+def parse_{{ p.id }}(record: dict) -> dict:
+    text = record.get(TEXT_FIELD) or ""
+    fields = {}
+{% for fname, f in p.fields.items() %}
+{% set where = p.id ~ "." ~ fname %}
+{% if f.regex is not none %}
+    raw = extract_regex(text, _{{ p.id|upper }}__{{ fname|upper }}, {{ where|py }})
+{% elif f.between is not none %}
+    raw = extract_between(text, {{ f.between[0]|py }}, {{ f.between[1]|py }}, {{ where|py }})
+{% else %}
+    raw = extract_json_path(record, {{ f.json_path|py }}, {{ where|py }})
+{% endif %}
+    fields[{{ fname|py }}] = cast(raw, {{ f.cast|py }}, {{ where|py }})
+{% endfor %}
+    return fields
+{% endfor %}
+
+
+ROUTES = [
+{% for p in spec.extract.parsers %}
+    ({{ p.match|py }}, {{ p.id|py }}, parse_{{ p.id }}),
+{% endfor %}
+]
+
+
+def route(record: dict):
+    for match, parser_id, fn in ROUTES:
+        if all(str(record.get(k)) == v for k, v in match.items()):
+            return parser_id, fn
+    raise Quarantine("PARSE_NO_MATCH", f"no parser for {ROUTE_BY}={record.get(ROUTE_BY)!r}")

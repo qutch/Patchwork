@@ -1,0 +1,52 @@
+# Hand-written fixture spec (plan section 12, "fixtures first"). This is what the
+# interpreter agent should produce from fixtures/recording.json + candidates. D2 builds
+# the compiler against it; D3 uses it as the template the agent edits.
+spec_version: 1
+name: po_to_stockroom
+intent: "For every new purchase order message, record incoming stock"
+source:
+  kind: api
+  base_url: http://localhost:8001
+  list: {method: GET, path: /api/messages, params: {since: "{cursor}"}}
+  record_id: id
+  text_field: body
+  cursor_field: received_at
+extract:
+  route_by: sender_domain
+  parsers:
+    - id: acme_v1
+      match: {sender_domain: acme.com}
+      fields:
+        po_id: {regex: 'PO Number:\s*(PO-\d+)'}
+        sku:   {regex: 'SKU:\s*([A-Z0-9-]+)'}
+        qty:   {regex: 'Qty:\s*(\d+)', cast: int}
+    - id: globex_v1
+      match: {sender_domain: globex.com}
+      fields:
+        po_id: {regex: 'purchase order\s+(PO-\d+)'}
+        sku:   {regex: 'units of item\s+([A-Z0-9-]+)'}
+        qty:   {regex: 'receive\s+(\d+)\s+units', cast: int}
+    - id: initech_v1
+      match: {sender_domain: initech.com}
+      fields:
+        po_id: {regex: 'REF=(PO-\d+)'}
+        sku:   {regex: 'PART=([A-Z0-9-]+)'}
+        qty:   {regex: 'UNITS=(\d+)', cast: int}
+validate:
+  - {field: qty, rule: positive_int}
+  - {field: sku, rule: exists, check: {method: GET, path: "/api/products/{sku}"}}
+dedupe: {key: [po_id]}
+sink:
+  kind: api
+  base_url: http://localhost:8002
+  staging_base_url: http://localhost:8003
+  call: {method: POST, path: /api/incoming}
+  body:
+    product_id: {from: sku}
+    quantity:   {from: qty}
+    reference:  {from: po_id}
+  verify: {method: GET, path: /api/incoming, params: {reference: "{po_id}"}, expect_count: 1}
+on_error: quarantine
+assumptions:
+  - {id: a1, text: "One PO line per message", status: confirmed}
+  - {id: a2, text: "Messages with no SKU are quarantined, not dropped", status: unconfirmed}

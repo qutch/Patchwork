@@ -1,0 +1,172 @@
+{
+  "id": "fixture-po-001",
+  "intent": "For every new purchase order message, record incoming stock",
+  "allowlist": [
+    "localhost:8001",
+    "localhost:8002"
+  ],
+  "started_at": 1762070400000,
+  "stopped_at": 1762070416500,
+  "note": "Hand-made fixture (plan section 12). Mirrors what capture/recorder.js will emit; built from seeded message msg-0007.",
+  "events": [
+    {
+      "t": 1762070400000,
+      "type": "framenavigated",
+      "url": "http://localhost:8001/",
+      "title": "Supplier Inbox"
+    },
+    {
+      "t": 1762070400120,
+      "type": "net",
+      "method": "GET",
+      "url": "/api/messages",
+      "status": 200,
+      "req": null,
+      "resp": [
+        {
+          "id": "msg-0007",
+          "sender": "orders@acme.com",
+          "sender_domain": "acme.com",
+          "subject": "Purchase Order PO-1022",
+          "body": "Hi team,\n\nPlease find our order below.\n\nPO Number: PO-1022\nSKU: GAD-217\nQty: 20\n\nThanks,\nAcme Supply",
+          "received_at": "2026-11-02T10:32:33Z"
+        }
+      ]
+    },
+    {
+      "t": 1762070402400,
+      "type": "click",
+      "url": "http://localhost:8001/",
+      "el": {
+        "tag": "a",
+        "role": "link",
+        "name": "Purchase Order PO-1022",
+        "label": null,
+        "testid": null,
+        "css": "table tr td a",
+        "nearby": "orders@acme.com"
+      }
+    },
+    {
+      "t": 1762070402600,
+      "type": "framenavigated",
+      "url": "http://localhost:8001/messages/msg-0007",
+      "title": "Purchase Order PO-1022"
+    },
+    {
+      "t": 1762070402650,
+      "type": "net",
+      "method": "GET",
+      "url": "/api/messages/msg-0007",
+      "status": 200,
+      "req": null,
+      "resp": {
+        "id": "msg-0007",
+        "sender": "orders@acme.com",
+        "sender_domain": "acme.com",
+        "subject": "Purchase Order PO-1022",
+        "body": "Hi team,\n\nPlease find our order below.\n\nPO Number: PO-1022\nSKU: GAD-217\nQty: 20\n\nThanks,\nAcme Supply",
+        "received_at": "2026-11-02T10:32:33Z"
+      }
+    },
+    {
+      "t": 1762070406100,
+      "type": "copy",
+      "url": "http://localhost:8001/messages/msg-0007",
+      "text": "PO-1022",
+      "el": {
+        "tag": "pre",
+        "role": null,
+        "name": null,
+        "label": null,
+        "testid": "message-body",
+        "css": "pre",
+        "nearby": "PO Number:"
+      }
+    },
+    {
+      "t": 1762070409000,
+      "type": "framenavigated",
+      "url": "http://localhost:8002/incoming/new",
+      "title": "Add incoming stock"
+    },
+    {
+      "t": 1762070411200,
+      "type": "change",
+      "url": "http://localhost:8002/incoming/new",
+      "value": "GAD-217",
+      "el": {
+        "tag": "select",
+        "role": "combobox",
+        "name": "product_id",
+        "label": "Product",
+        "testid": "product",
+        "css": "form#f select",
+        "nearby": "Product"
+      }
+    },
+    {
+      "t": 1762070413050,
+      "type": "input",
+      "url": "http://localhost:8002/incoming/new",
+      "value": "20",
+      "el": {
+        "tag": "input",
+        "role": "spinbutton",
+        "name": "quantity",
+        "label": "Quantity",
+        "testid": "quantity",
+        "css": "form#f input[name=quantity]",
+        "nearby": "Quantity"
+      }
+    },
+    {
+      "t": 1762070414700,
+      "type": "paste",
+      "url": "http://localhost:8002/incoming/new",
+      "value": "PO-1022",
+      "el": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "reference",
+        "label": "Reference",
+        "testid": "reference",
+        "css": "form#f input[name=reference]",
+        "nearby": "Reference"
+      }
+    },
+    {
+      "t": 1762070415900,
+      "type": "submit",
+      "url": "http://localhost:8002/incoming/new",
+      "el": {
+        "tag": "form",
+        "role": "form",
+        "name": null,
+        "label": null,
+        "testid": null,
+        "css": "form#f",
+        "nearby": "Save"
+      }
+    },
+    {
+      "t": 1762070415950,
+      "type": "net",
+      "method": "POST",
+      "url": "/api/incoming",
+      "status": 201,
+      "req": {
+        "product_id": "GAD-217",
+        "quantity": 20,
+        "reference": "PO-1022"
+      },
+      "resp": {
+        "id": 1,
+        "schema_version": 1,
+        "product_id": "GAD-217",
+        "quantity": 20,
+        "reference": "PO-1022"
+      }
+    }
+  ]
+}

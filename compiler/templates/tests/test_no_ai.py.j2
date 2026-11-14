@@ -1,0 +1,22 @@
+{% include "_header.j2" %}
+"""No-AI test: importing and running this integration must not load any LLM SDK."""
+
+import subprocess
+import sys
+
+from .conftest import PKG
+
+PROBE = """
+import sys
+from runner.loader import load_integration
+from runner.run import run  # noqa: F401  (the runtime itself, too)
+load_integration(sys.argv[1])
+banned = ("langchain", "langchain_core", "langchain_anthropic", "langgraph", "deepagents", "anthropic", "openai")
+leaked = sorted(m for m in sys.modules if m.split(".")[0] in banned)
+assert not leaked, leaked
+"""
+
+
+def test_no_ai_modules_loaded():
+    r = subprocess.run([sys.executable, "-c", PROBE, str(PKG)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr

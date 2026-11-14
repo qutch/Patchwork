@@ -1,0 +1,185 @@
+# Confirmed examples (golden tests). Taken verbatim from seeded Inbox messages; in the
+# full flow the interpreter proposes these and the user confirms them on the Review screen.
+- name: acme_msg_0007
+  record:
+    id: msg-0007
+    sender: orders@acme.com
+    sender_domain: acme.com
+    subject: Purchase Order PO-1022
+    body: 'Hi team,
+
+
+      Please find our order below.
+
+
+      PO Number: PO-1022
+
+      SKU: GAD-217
+
+      Qty: 20
+
+
+      Thanks,
+
+      Acme Supply'
+    received_at: '2026-11-02T10:32:33Z'
+  expect:
+    body:
+      product_id: GAD-217
+      quantity: 20
+      reference: PO-1022
+- name: acme_msg_0012
+  record:
+    id: msg-0012
+    sender: orders@acme.com
+    sender_domain: acme.com
+    subject: Purchase Order PO-1038
+    body: 'Hi team,
+
+
+      Please find our order below.
+
+
+      PO Number: PO-1038
+
+      SKU: WID-122
+
+      Qty: 30
+
+
+      Thanks,
+
+      Acme Supply'
+    received_at: '2026-11-02T12:57:12Z'
+  expect:
+    body:
+      product_id: WID-122
+      quantity: 30
+      reference: PO-1038
+- name: globex_msg_0001
+  record:
+    id: msg-0001
+    sender: procurement@globex.com
+    sender_domain: globex.com
+    subject: Globex order PO-2033
+    body: 'Hello Stockroom,
+
+
+      This is Globex purchase order PO-2033. Please receive 34 units of item WID-114 at your earliest convenience.
+
+
+      Regards,
+
+      Globex Procurement'
+    received_at: '2026-11-02T08:35:16Z'
+  expect:
+    body:
+      product_id: WID-114
+      quantity: 34
+      reference: PO-2033
+- name: globex_msg_0005
+  record:
+    id: msg-0005
+    sender: procurement@globex.com
+    sender_domain: globex.com
+    subject: Globex order PO-2035
+    body: 'Hello Stockroom,
+
+
+      This is Globex purchase order PO-2035. Please receive 115 units of item WID-107 at your earliest convenience.
+
+
+      Regards,
+
+      Globex Procurement'
+    received_at: '2026-11-02T09:39:30Z'
+  expect:
+    body:
+      product_id: WID-107
+      quantity: 115
+      reference: PO-2035
+- name: initech_msg_0002
+  record:
+    id: msg-0002
+    sender: erp-noreply@initech.com
+    sender_domain: initech.com
+    subject: '[ERP] PO-3030'
+    body: 'ORDER REF=PO-3030 | PART=GAD-200 | UNITS=77
+
+      Sent automatically from Initech ERP'
+    received_at: '2026-11-02T08:47:15Z'
+  expect:
+    body:
+      product_id: GAD-200
+      quantity: 77
+      reference: PO-3030
+- name: initech_msg_0003
+  record:
+    id: msg-0003
+    sender: erp-noreply@initech.com
+    sender_domain: initech.com
+    subject: '[ERP] PO-3039'
+    body: 'ORDER REF=PO-3039 | PART=GAD-204 | UNITS=98
+
+      Sent automatically from Initech ERP'
+    received_at: '2026-11-02T09:13:11Z'
+  expect:
+    body:
+      product_id: GAD-204
+      quantity: 98
+      reference: PO-3039
+- name: acme_msg_0024
+  record:
+    id: msg-0024
+    sender: orders@acme.com
+    sender_domain: acme.com
+    subject: Purchase Order PO-1043
+    body: 'Hi team,
+
+
+      Please find our order below.
+
+
+      PO Number: PO-1043
+
+      SKU: GAD-216
+
+      Qty: 0
+
+
+      Thanks,
+
+      Acme Supply'
+    received_at: '2026-11-02T16:59:24Z'
+  expect:
+    quarantine: VALIDATION_FAILED
+- name: globex_msg_0008
+  record:
+    id: msg-0008
+    sender: procurement@globex.com
+    sender_domain: globex.com
+    subject: Globex order PO-2046
+    body: 'Hello Stockroom,
+
+
+      This is Globex purchase order PO-2046. Please receive 26 units of item GAD-404 at your earliest convenience.
+
+
+      Regards,
+
+      Globex Procurement'
+    received_at: '2026-11-02T11:10:18Z'
+  expect:
+    quarantine: NOT_FOUND
+  missing:
+  - GAD-404
+- name: acme_msg_0063
+  record:
+    id: msg-0063
+    sender: news@acme.com
+    sender_domain: acme.com
+    subject: Acme holiday hours
+    body: Our office will be closed on Thursday and Friday for the holiday. Orders resume Monday.
+    received_at: '2026-11-03T05:08:30Z'
+  expect:
+    quarantine: PARSE_NO_MATCH

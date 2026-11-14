@@ -1,0 +1,30 @@
+{% include "_header.j2" %}
+"""Contract test: every golden sink body must satisfy the destination's request schema.
+
+Uses $PATCHWORK_SINK_OPENAPI (the destination's *current* /openapi.json, set by preflight
+and the control plane) when present, else the snapshot taken at compile time."""
+
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from runner.contract import validate_body
+
+from .conftest import PKG, golden_cases
+
+SINK_CALL = ({{ spec.sink.call.method|py }}, {{ spec.sink.call.path|py }})
+
+
+def _openapi():
+    path = os.environ.get("PATCHWORK_SINK_OPENAPI") or PKG / "contract" / "openapi.json"
+    if not Path(path).exists():
+        pytest.skip("no destination OpenAPI available")
+    return json.loads(Path(path).read_text())
+
+
+@golden_cases("body")
+def test_body_matches_destination_contract(example):
+    errors = validate_body(_openapi(), *SINK_CALL, example["expect"]["body"])
+    assert errors == []

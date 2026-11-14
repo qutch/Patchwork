@@ -1,0 +1,39 @@
+{% include "_header.j2" %}
+"""Thin HTTP calls for the source and sink in the spec. `http` is runner.http.Http
+(or runner.testing.FakeHttp in tests)."""
+
+from runner.lib import Quarantine, render  # noqa: F401
+
+SOURCE_LIST = {{ {"method": spec.source.list.method, "path": spec.source.list.path, "params": spec.source.list.params}|py }}
+SINK_CALL = {{ {"method": spec.sink.call.method, "path": spec.sink.call.path}|py }}
+
+
+def list_records(http, cursor: str | None) -> list[dict]:
+    params = {k: v.replace("{cursor}", cursor or "") for k, v in SOURCE_LIST["params"].items()}
+    resp = http.request("source", SOURCE_LIST["method"], SOURCE_LIST["path"], params=params or None)
+    resp.raise_for_status()
+    data = resp.json()
+    return data if isinstance(data, list) else data.get("items", [])
+
+
+def send(http, body: dict):
+    return http.request("sink", SINK_CALL["method"], SINK_CALL["path"], json=body)
+
+
+{% if spec.sink.verify %}
+VERIFY = {{ {"path": spec.sink.verify.path, "params": spec.sink.verify.params, "expect_count": spec.sink.verify.expect_count}|py }}
+
+
+def verify(http, fields: dict, record: dict) -> None:
+    params = {k: render(v, fields, record) for k, v in VERIFY["params"].items()}
+    resp = http.request("sink", "GET", render(VERIFY["path"], fields, record, url=True), params=params or None)
+    if resp.status_code >= 300:
+        raise Quarantine("VERIFY_MISMATCH", f"verify GET returned {resp.status_code}")
+    data = resp.json()
+    n = len(data) if isinstance(data, list) else int(data.get("count", 1)) if isinstance(data, dict) else 0
+    if n != VERIFY["expect_count"]:
+        raise Quarantine("VERIFY_MISMATCH", f"expected {VERIFY['expect_count']} matching row(s), found {n}")
+{% else %}
+def verify(http, fields: dict, record: dict) -> None:
+    return None  # spec has no sink.verify
+{% endif %}

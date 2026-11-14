@@ -1,0 +1,19 @@
+{% include "_header.j2" %}
+"""Dedupe test: the same record processed twice results in exactly one sink call."""
+
+import copy
+
+from runner.pipeline import MemoryStore, process_record
+from runner.testing import FakeHttp
+
+from .conftest import GOLDEN
+
+
+def test_same_record_twice_writes_once(integ):
+    example = next(ex for ex in GOLDEN if "body" in ex["expect"])
+    http, store = FakeHttp(missing=example["missing"]), MemoryStore()
+    first = process_record(integ, copy.deepcopy(example["record"]), http, store)
+    second = process_record(integ, copy.deepcopy(example["record"]), http, store)
+    assert first.status == "success"
+    assert second.status == "duplicate"
+    assert len(http.sink_writes) == 1

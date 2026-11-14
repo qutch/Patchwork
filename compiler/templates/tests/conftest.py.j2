@@ -1,0 +1,20 @@
+{% include "_header.j2" %}
+import json
+from pathlib import Path
+
+import pytest
+
+from runner.loader import load_integration
+
+PKG = Path(__file__).resolve().parent.parent
+GOLDEN = json.loads((PKG / "golden.json").read_text())
+
+
+@pytest.fixture(scope="session")
+def integ():
+    return load_integration(PKG)
+
+
+def golden_cases(kind: str):
+    cases = [ex for ex in GOLDEN if kind in ex["expect"]]
+    return pytest.mark.parametrize("example", cases, ids=[ex["name"] for ex in cases])

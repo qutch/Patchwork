@@ -1,0 +1,57 @@
+{% include "_header.j2" %}
+"""Per-record pipeline for {{ spec.name }} v{{ version }}.
+
+Intent: {{ spec.intent }}
+The runner calls: extract -> validate -> dedupe_key -> build_body -> send -> verify.
+"""
+
+from runner.lib import (  # noqa: F401
+    T,
+    check_exists,
+    check_one_of,
+    check_positive_int,
+    check_regex,
+    check_required,
+    lookup_ref,
+    render,
+)
+
+from . import adapters, transforms  # noqa: F401
+from .parsers import route
+
+NAME = {{ spec.name|py }}
+VERSION = {{ version }}
+SPEC_HASH = {{ spec_hash|py }}
+RECORD_ID = {{ spec.source.record_id|py }}
+ROUTE_BY = {{ spec.extract.route_by|py }}
+CURSOR_FIELD = {{ spec.source.cursor_field|py }}
+DEDUPE_KEY = {{ spec.dedupe.key|py }}
+SINK_CALL = ({{ spec.sink.call.method|py }}, {{ spec.sink.call.path|py }})
+
+list_records = adapters.list_records
+send = adapters.send
+verify = adapters.verify
+
+
+def extract(record: dict) -> tuple[str, dict]:
+    parser_id, parse = route(record)
+    return parser_id, parse(record)
+
+
+def validate(fields: dict, record: dict, http) -> None:
+{% for line in rule_lines %}
+    {{ line }}
+{% endfor %}
+    return None
+
+
+def dedupe_key(fields: dict, record: dict) -> str:
+    return "|".join(str(lookup_ref(k, fields, record)) for k in DEDUPE_KEY)
+
+
+def build_body(fields: dict, record: dict) -> dict:
+    return {
+{% for key, expr in body_exprs.items() %}
+        {{ key|py }}: {{ expr }},
+{% endfor %}
+    }

@@ -1,0 +1,58 @@
+{% include "_header.j2" %}
+"""Negative tests: generated from the spec's validation rules. Each mutation must quarantine
+with the right reason code and must never reach the sink."""
+
+import copy
+
+import pytest
+
+from runner.lib import Quarantine
+from runner.pipeline import MemoryStore, process_record
+from runner.testing import FakeHttp
+
+from .conftest import GOLDEN
+
+BASE = next(ex for ex in GOLDEN if "body" in ex["expect"])
+CASES = {{ negative_cases|py }}
+TEXT_FIELD = {{ spec.source.text_field|py }}
+ROUTE_BY = {{ spec.extract.route_by|py }}
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c["id"] for c in CASES])
+def test_validation_rule_quarantines(integ, case):
+    record = copy.deepcopy(BASE["record"])
+    _, fields = integ.extract(record)
+    if case["op"] == "delete":
+        fields.pop(case["field"], None)
+    else:
+        fields[case["field"]] = case["value"]
+    http = FakeHttp(missing=[case["missing"]] if "missing" in case else [])
+    with pytest.raises(Quarantine) as exc:
+        integ.validate(fields, record, http)
+    assert exc.value.code == case["code"]
+    assert http.sink_writes == []
+
+
+def test_empty_text_is_parse_no_match(integ):
+    record = copy.deepcopy(BASE["record"])
+    record[TEXT_FIELD] = ""
+    http = FakeHttp()
+    out = process_record(integ, record, http, MemoryStore())
+    assert (out.status, out.reason) == ("quarantined", "PARSE_NO_MATCH")
+    assert http.sink_writes == []
+
+
+def test_unrouted_record_is_parse_no_match(integ):
+    from importlib import import_module
+    parsers = import_module(integ.__package__ + ".parsers")
+    if any(not match for match, _, _ in parsers.ROUTES):
+        pytest.skip("spec has a catch-all parser")
+    record = copy.deepcopy(BASE["record"])
+    record[ROUTE_BY] = "__no_parser_for_this__"
+    out = process_record(integ, record, FakeHttp(), MemoryStore())
+    assert (out.status, out.reason) == ("quarantined", "PARSE_NO_MATCH")
+
+
+def test_sink_rejection_is_sink_contract(integ):
+    out = process_record(integ, copy.deepcopy(BASE["record"]), FakeHttp(sink_status=422), MemoryStore())
+    assert (out.status, out.reason) == ("quarantined", "SINK_CONTRACT")

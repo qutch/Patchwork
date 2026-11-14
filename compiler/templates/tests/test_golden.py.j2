@@ -1,0 +1,30 @@
+{% include "_header.j2" %}
+"""Golden tests: each confirmed example goes in, the expected sink body (or quarantine) comes out."""
+
+import pytest
+
+from runner.pipeline import MemoryStore, process_record
+from runner.testing import FakeHttp
+
+from .conftest import GOLDEN, golden_cases
+
+
+def test_has_golden_examples():
+    assert any("body" in ex["expect"] for ex in GOLDEN), "compile with at least one success example"
+
+
+@golden_cases("body")
+def test_golden_body(integ, example):
+    http = FakeHttp(missing=example["missing"])
+    out = process_record(integ, example["record"], http, MemoryStore())
+    assert out.status == "success", f"{out.reason}: {out.detail}"
+    assert out.body == example["expect"]["body"]
+    assert http.sink_writes == [example["expect"]["body"]]
+
+
+@golden_cases("quarantine")
+def test_golden_quarantine(integ, example):
+    http = FakeHttp(missing=example["missing"])
+    out = process_record(integ, example["record"], http, MemoryStore())
+    assert (out.status, out.reason) == ("quarantined", example["expect"]["quarantine"]), out.detail
+    assert http.sink_writes == []
