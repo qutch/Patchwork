@@ -5,13 +5,14 @@ import {
 } from "./api";
 import { deriveThread, mergeEvents } from "./lib/derive";
 
-export type Tab = "record" | "review" | "agent" | "integration" | "runs";
+export type Tab = "record" | "review" | "agent" | "integration" | "runs" | "bench";
 export const TABS: { id: Tab; label: string }[] = [
   { id: "record", label: "Record" },
   { id: "review", label: "Review" },
   { id: "agent", label: "Agent Activity" },
   { id: "integration", label: "Integration" },
   { id: "runs", label: "Runs" },
+  { id: "bench", label: "Benchmark" },
 ];
 
 const store = {

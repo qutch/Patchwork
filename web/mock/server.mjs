@@ -10,7 +10,7 @@
 // PACE scales every delay (0 = instant, handy for tests).
 
 import http from "node:http";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -803,6 +803,12 @@ async function route(req, res) {
   }
   if (M === "POST" && p === "/api/demo/inbox/deliver") return send(res, 200, deliver(Math.max(1, Number(body.count) || 10)));
   if (M === "POST" && p === "/api/demo/inbox/new_supplier") return send(res, 200, newSupplier(Math.max(1, Number(body.count) || 5)));
+  if (M === "GET" && p === "/api/bench/results") {
+    // The real file written by `make bench` (bench/results.json at the repo root); 404 until it exists.
+    const file = join(HERE, "..", "..", "bench", "results.json");
+    if (!existsSync(file)) return fail(res, 404, "bench/results.json not found; run `make bench` first");
+    return send(res, 200, JSON.parse(readFileSync(file, "utf8")));
+  }
   if (M === "GET" && p === "/api/bench/accuracy") return send(res, 200, { ...accuracy(), integration: url.searchParams.get("integration"), truth_source: "inbox" });
 
   return fail(res, 404, `no route ${M} ${p}`);

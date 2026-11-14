@@ -38,7 +38,7 @@ python -m runner run <name>   (subprocess, stripped env, no LLM)  <────�
 | `runner/` | Runtime: pipeline, preflight, store (SQLite), contract checks. Never imports an LLM SDK |
 | `control/` | Operations the API/agents will wrap: compile+test, deploy, sandboxed run, status; CLI |
 | `demo_apps/` | Supplier Inbox (source), Stockroom (destination, v1/v2 contract), deterministic seed |
-| `bench/` | Exact accuracy against seed ground truth |
+| `bench/` | Exact accuracy against seed ground truth; benchmark harness, one-shot baseline script, stopwatch |
 | `fixtures/` | Hand-made spec, examples and recording, so teams don't block each other |
 
 ## CLI
@@ -104,7 +104,37 @@ make web           # terminal 2: UI on http://localhost:5180 (PATCHWORK_API=http
 make web-mock      # UI against an in-memory mock control plane, no Python needed
 ```
 
-Five tabs (Record, Review, Agent Activity, Integration, Runs). See [web/README.md](web/README.md) for the demo click path.
+Six tabs (Record, Review, Agent Activity, Integration, Runs, Benchmark). See [web/README.md](web/README.md) for the demo click path.
+
+## Benchmark
+
+```bash
+make bench                                   # ~7 s, no model calls -> bench/results.json (served at GET /api/bench/results)
+python -m bench.stopwatch manual             # time 5 manual transfers (Enter to start / stop); kept by later `make bench` runs
+python -m bench.stopwatch computer_use -n 5  # same, for a computer-use agent
+```
+
+`make bench` starts its own Inbox, Stockroom live + staging and control plane in-process on free ports (never
+8000–8003) with its own workspace and the scripted agent, then plays the demo scenario twice: once through Patchwork
+(BUILD, run 100 + 50, Break 1 + REPAIR, Break 2 + REPAIR) and once with a **one-shot script**. That script
+(`bench/baseline_script.py`) was written by a fresh Claude session given only `bench/baseline_prompt.md` (the recording,
+the intent, the v1 APIs and six sample messages), and was not tuned afterwards. Both are scored against the seed's
+ground truth by what actually landed in the Stockroom (`bench/scoring.py`).
+
+Every number in `bench/results.json` has a `kind` and a `source`:
+
+| kind | what |
+|---|---|
+| `measured` | this harness, this run: Patchwork BUILD/run/detect/repair times (scripted agent, approvals answered instantly), accuracy, bad writes; the baseline's writes, drops and exit codes |
+| `measured (earlier run)` | deep agent (real model) BUILD 138 s, Break 1 repair 79 s, Break 2 repair 104 s, from a 2026-11-14 `make smoke` run |
+| `estimate` | manual 1 min/record and computer-use 3 min/record (assumptions written next to the number), Patchwork's human setup minutes |
+| `extrapolated` | the chart's lines past the measured records |
+| `not measured` | e.g. the baseline's time to detect: it never opens an incident |
+
+Result on the current run: the script copies the 150 seed messages perfectly, and the Stockroom's validation stops it
+from writing bad rows at Break 1. It never adapts, though, and its "something failed" exit code is already 1 on every
+normal run. At Break 2 it silently drops all 4 new-supplier POs and marks them done, so they are never retried.
+Patchwork blocks Break 1 at preflight, quarantines Break 2 with an incident, and repairs both after approval.
 
 ## Before you present
 

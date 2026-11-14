@@ -26,6 +26,8 @@
   --code-bg: #f6f8f8;
   --diff-add: #dcf1e3; --diff-add-ink: #1d5c35;
   --diff-del: #fbe2df; --diff-del-ink: #8f1d14;
+  /* Benchmark chart series (validated with the dataviz palette checker, light on #fff / dark on #172026) */
+  --s-pw: #1d56b8; --s-manual: #eb6834; --s-cu: #1baf7a; --grid: #e6ebea;
   --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
   --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -39,6 +41,7 @@
     --nf: #f0805a; --nf-soft: #3f1d12; --pnm: #c18be6; --pnm-soft: #2f1d3d; --bad: #f2786c; --bad-soft: #3d1715;
     --f-po: #22385e; --f-po-ink: #b9d0ff; --f-sku: #143f37; --f-sku-ink: #a5ead9; --f-qty: #4a3a0b; --f-qty-ink: #f6dc8c;
     --code-bg: #121a1f; --diff-add: #15301f; --diff-add-ink: #9fe0b5; --diff-del: #3a1714; --diff-del-ink: #f5aaa2;
+    --s-pw: #3987e5; --s-manual: #d95926; --s-cu: #199e70; --grid: #222d33;
     color-scheme: dark;
   }
 }
@@ -49,6 +52,7 @@
   --nf: #f0805a; --nf-soft: #3f1d12; --pnm: #c18be6; --pnm-soft: #2f1d3d; --bad: #f2786c; --bad-soft: #3d1715;
   --f-po: #22385e; --f-po-ink: #b9d0ff; --f-sku: #143f37; --f-sku-ink: #a5ead9; --f-qty: #4a3a0b; --f-qty-ink: #f6dc8c;
   --code-bg: #121a1f; --diff-add: #15301f; --diff-add-ink: #9fe0b5; --diff-del: #3a1714; --diff-del-ink: #f5aaa2;
+    --s-pw: #3987e5; --s-manual: #d95926; --s-cu: #199e70; --grid: #222d33;
   color-scheme: dark;
 }
 

@@ -1,0 +1,444 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-14T13:42:03Z",
+  "command": "python -m bench.run  (make bench)",
+  "environment": {
+    "python": "3.12.5",
+    "platform": "macOS-27.0.1",
+    "agent": "scripted (pace 0, no model calls)"
+  },
+  "scenario": {
+    "seed_records": 150,
+    "run_records": 100,
+    "break1": "Stockroom switches to contract v2 (product_id->sku, quantity->quantity_delta, required warehouse_id); 5 new POs delivered",
+    "break2": "4 POs from a new supplier, umbrella.com: 'Item code: SKU / N cases (M/case)'",
+    "notes": [
+      "Seed: 150 messages from 3 supplier formats: 120 valid, 10 resends, 9 zero-qty, 9 unknown SKUs, 2 junk.",
+      "Patchwork runs through the control-plane API with the scripted agent; questions are answered and deploys approved instantly by the harness, so repair times exclude human think time.",
+      "The baseline script was written once by a fresh Claude session from bench/baseline_prompt.md (recording, intent, v1 APIs, six sample messages) and is unchanged since.",
+      "Baseline Break 2 is measured on a fresh stack with contract v1, so Break 1 (which the script cannot repair) does not mask it. Sequentially the result is the same: the new sender is filtered out before any write."
+    ]
+  },
+  "patchwork": {
+    "agent": "scripted",
+    "build": {
+      "wall_s": {
+        "value": 0.859,
+        "unit": "s",
+        "kind": "measured",
+        "source": "bench/run.py (this run)",
+        "note": "scripted agent: compile + generated tests + approve v1; question answered and deploy approved instantly"
+      },
+      "llm_calls": {
+        "value": 0,
+        "unit": "calls",
+        "kind": "measured",
+        "source": "bench/run.py (this run)",
+        "note": "scripted agent"
+      }
+    },
+    "run": {
+      "records": {
+        "value": 100,
+        "unit": "records",
+        "kind": "measured",
+        "source": "bench/run.py (this run)"
+      },
+      "wall_s": {
+        "value": 0.261,
+        "unit": "s",
+        "kind": "measured",
+        "source": "bench/run.py (this run)",
+        "note": "POST /api/runs until the run finished, incl. subprocess start"
+      },
+      "per_record_ms": {
+        "value": 1.54,
+        "unit": "ms",
+        "kind": "measured",
+        "source": "bench/run.py (this run)",
+        "note": "runner duration_s / records (pace 0)"
+      },
+      "llm_calls": {
+        "value": 0,
+        "unit": "calls",
+        "kind": "measured",
+        "source": "bench/run.py (this run)",
+        "note": "runner's own count; the runner cannot import a model SDK"
+      },
+      "accuracy": {
+        "value": 1.0,
+        "unit": "ratio",
+        "kind": "measured",
+        "source": "bench/run.py (this run)",
+        "note": "bench.accuracy.score vs ground truth: 100/100"
+      }
+    },
+    "seed_accuracy": {
+      "value": 1.0,
+      "unit": "ratio",
+      "kind": "measured",
+      "source": "bench/run.py (this run)",
+      "note": "all 150 seed records (latest outcome per record)"
+    },
+    "setup_human_min": {
+      "value": 2.0,
+      "unit": "min",
+      "kind": "estimate",
+      "source": "assumption",
+      "note": "Estimate: demonstrate one transfer in the browser (~1 min) plus answer the agent's question and approve v1 (~1 min). The agent's own BUILD time is counted separately."
+    },
+    "breaks": {
+      "break1": {
+        "name": "Break 1: Stockroom contract v2",
+        "records_in_break": 5,
+        "detected": true,
+        "caught_before_bad_write": true,
+        "bad_writes": {
+          "value": 0,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run)",
+          "note": "wrong rows written to the Stockroom"
+        },
+        "silently_dropped": {
+          "value": 0,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run)"
+        },
+        "held": {
+          "value": 4,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run)",
+          "note": "held behind an open incident until the repair"
+        },
+        "time_to_detect_s": {
+          "value": 0.119,
+          "unit": "s",
+          "kind": "measured",
+          "source": "bench/run.py (this run)",
+          "note": "wall time of the first run after the break; the incident is open when it ends"
+        },
+        "repair_s": {
+          "value": 0.742,
+          "unit": "s",
+          "kind": "measured",
+          "source": "bench/run.py (this run)",
+          "note": "scripted agent, no model calls, questions answered and v2 approved instantly by the harness (no human think time)"
+        },
+        "incident_type": "CONTRACT_CHANGED",
+        "alert": "run blocked by preflight; incident #1 CONTRACT_CHANGED with old/new OpenAPI",
+        "outcome": "Blocked before any write (0 bad writes); 4 records held, repaired to v2 and written after approval."
+      },
+      "break2": {
+        "name": "Break 2: new supplier format",
+        "records_in_break": 4,
+        "detected": true,
+        "caught_before_bad_write": true,
+        "bad_writes": {
+          "value": 0,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run)",
+          "note": "wrong rows written to the Stockroom"
+        },
+        "silently_dropped": {
+          "value": 0,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run)"
+        },
+        "held": {
+          "value": 4,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run)",
+          "note": "held behind an open incident until the repair"
+        },
+        "time_to_detect_s": {
+          "value": 0.112,
+          "unit": "s",
+          "kind": "measured",
+          "source": "bench/run.py (this run)",
+          "note": "wall time of the first run after the break; the incident is open when it ends"
+        },
+        "repair_s": {
+          "value": 0.796,
+          "unit": "s",
+          "kind": "measured",
+          "source": "bench/run.py (this run)",
+          "note": "scripted agent, no model calls, questions answered and v3 approved instantly by the harness (no human think time)"
+        },
+        "incident_type": "NEW_SOURCE_FORMAT",
+        "alert": "4 records quarantined PARSE_NO_MATCH; incident #2 NEW_SOURCE_FORMAT",
+        "outcome": "Quarantined with a reason code (0 bad writes); repaired to v3 (units = cases x per case) and replayed."
+      }
+    },
+    "accuracy_after_repairs": {
+      "value": 1.0,
+      "unit": "ratio",
+      "kind": "measured",
+      "source": "bench/run.py (this run)",
+      "note": "all 159 records after both repairs"
+    },
+    "deep_agent": {
+      "date": "2026-11-14",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free (OpenRouter)",
+      "source": "scripts/smoke_demo.py against `PATCHWORK_AGENT=deep make up`, log smoke-deep2.log (2026-11-14 01:40); times are from the log, model-call counts from the run report (the log does not print them)",
+      "build_s": {
+        "value": 138.2,
+        "unit": "s",
+        "kind": "measured (earlier run)",
+        "source": "scripts/smoke_demo.py against `PATCHWORK_AGENT=deep make up`, log smoke-deep2.log (2026-11-14 01:40); times are from the log, model-call counts from the run report (the log does not print them)",
+        "note": "BUILD incl. 1 question answered by the smoke script"
+      },
+      "build_calls": {
+        "value": 30,
+        "unit": "calls",
+        "kind": "measured (earlier run)",
+        "source": "scripts/smoke_demo.py against `PATCHWORK_AGENT=deep make up`, log smoke-deep2.log (2026-11-14 01:40); times are from the log, model-call counts from the run report (the log does not print them)"
+      },
+      "repair_break1_s": {
+        "value": 78.7,
+        "unit": "s",
+        "kind": "measured (earlier run)",
+        "source": "scripts/smoke_demo.py against `PATCHWORK_AGENT=deep make up`, log smoke-deep2.log (2026-11-14 01:40); times are from the log, model-call counts from the run report (the log does not print them)",
+        "note": "incident -> v2 approved, 2 questions"
+      },
+      "repair_break1_calls": {
+        "value": 22,
+        "unit": "calls",
+        "kind": "measured (earlier run)",
+        "source": "scripts/smoke_demo.py against `PATCHWORK_AGENT=deep make up`, log smoke-deep2.log (2026-11-14 01:40); times are from the log, model-call counts from the run report (the log does not print them)"
+      },
+      "repair_break2_s": {
+        "value": 104.3,
+        "unit": "s",
+        "kind": "measured (earlier run)",
+        "source": "scripts/smoke_demo.py against `PATCHWORK_AGENT=deep make up`, log smoke-deep2.log (2026-11-14 01:40); times are from the log, model-call counts from the run report (the log does not print them)",
+        "note": "incident -> v3 approved, 1 question"
+      },
+      "repair_break2_calls": {
+        "value": 27,
+        "unit": "calls",
+        "kind": "measured (earlier run)",
+        "source": "scripts/smoke_demo.py against `PATCHWORK_AGENT=deep make up`, log smoke-deep2.log (2026-11-14 01:40); times are from the log, model-call counts from the run report (the log does not print them)"
+      },
+      "demo_total_s": {
+        "value": 325,
+        "unit": "s",
+        "kind": "measured (earlier run)",
+        "source": "scripts/smoke_demo.py against `PATCHWORK_AGENT=deep make up`, log smoke-deep2.log (2026-11-14 01:40); times are from the log, model-call counts from the run report (the log does not print them)",
+        "note": "whole smoke demo incl. runs"
+      }
+    }
+  },
+  "baseline_script": {
+    "prompt": "bench/baseline_prompt.md",
+    "script": "bench/baseline_script.py",
+    "how_written": "One prompt, one answer: a fresh Claude session that could read only the prompt (no repo, no seed, no ground truth, no Break code) wrote it; it was not run or tuned before the benchmark.",
+    "run": {
+      "records": {
+        "value": 150,
+        "unit": "records",
+        "kind": "measured",
+        "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it"
+      },
+      "wall_s": {
+        "value": 0.377,
+        "unit": "s",
+        "kind": "measured",
+        "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+        "note": "one cron-style invocation over the 150-message inbox"
+      },
+      "per_record_ms": {
+        "value": 2.511,
+        "unit": "ms",
+        "kind": "measured",
+        "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+        "note": "process wall time / records (incl. Python start-up)"
+      },
+      "llm_calls": {
+        "value": 0,
+        "unit": "calls",
+        "kind": "measured",
+        "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+        "note": "plain script"
+      },
+      "correct_writes": {
+        "value": 120,
+        "unit": "records",
+        "kind": "measured",
+        "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+        "note": "of 120 expected"
+      },
+      "wrong_writes": {
+        "value": 0,
+        "unit": "records",
+        "kind": "measured",
+        "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it"
+      },
+      "silently_dropped": {
+        "value": 0,
+        "unit": "records",
+        "kind": "measured",
+        "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it"
+      },
+      "held": {
+        "value": 0,
+        "unit": "records",
+        "kind": "measured",
+        "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+        "note": "logged at ERROR, retried every run"
+      },
+      "accuracy": {
+        "value": 1.0,
+        "unit": "ratio",
+        "kind": "measured",
+        "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+        "note": "bench.scoring.score_writes: 150/150 messages handled right"
+      },
+      "exit_code": {
+        "value": 1,
+        "unit": "code",
+        "kind": "measured",
+        "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it"
+      }
+    },
+    "steady_state_exit_code": {
+      "value": 1,
+      "unit": "code",
+      "kind": "measured",
+      "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+      "note": "a run with nothing new: the zero-qty and unknown-SKU POs are retried and fail every time"
+    },
+    "breaks": {
+      "break1": {
+        "name": "Break 1: Stockroom contract v2",
+        "records_in_break": 5,
+        "detected": true,
+        "caught_before_bad_write": true,
+        "bad_writes": {
+          "value": 0,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it"
+        },
+        "silently_dropped": {
+          "value": 0,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it"
+        },
+        "held": {
+          "value": 4,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+          "note": "logged at ERROR and retried every run"
+        },
+        "time_to_detect_s": {
+          "value": null,
+          "unit": "s",
+          "kind": "not measured",
+          "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+          "note": "the script has no notion of a break; it never opens an incident"
+        },
+        "repair_s": {
+          "value": null,
+          "unit": "s",
+          "kind": "not measured",
+          "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+          "note": "no repair path: someone has to notice, then rewrite the script"
+        },
+        "incident_type": null,
+        "alert": "exit code 1, 23 ERROR log lines (Stockroom 422s); every run already exits 1 because the seed's zero-qty and unknown-SKU POs fail on each retry",
+        "outcome": "No bad writes: the Stockroom rejected every v1 body (422) and the script kept 4 records for retry. It cannot adapt, so they fail on every run until someone rewrites it."
+      },
+      "break2": {
+        "name": "Break 2: new supplier format",
+        "records_in_break": 4,
+        "detected": false,
+        "caught_before_bad_write": false,
+        "bad_writes": {
+          "value": 0,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it"
+        },
+        "silently_dropped": {
+          "value": 4,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it"
+        },
+        "held": {
+          "value": 0,
+          "unit": "records",
+          "kind": "measured",
+          "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+          "note": "logged at ERROR and retried every run"
+        },
+        "time_to_detect_s": {
+          "value": null,
+          "unit": "s",
+          "kind": "not measured",
+          "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+          "note": "the script has no notion of a break; it never opens an incident"
+        },
+        "repair_s": {
+          "value": null,
+          "unit": "s",
+          "kind": "not measured",
+          "source": "bench/run.py (this run): bench/baseline_script.py as cron would run it",
+          "note": "no repair path: someone has to notice, then rewrite the script"
+        },
+        "incident_type": null,
+        "alert": "nothing: umbrella.com is not a known supplier, so its messages are filed as 'not a PO' (DEBUG log only); every run already exits 1 because the seed's zero-qty and unknown-SKU POs fail on each retry",
+        "outcome": "4 of 4 purchase orders silently dropped and marked done in the state file, so they are never retried."
+      }
+    }
+  },
+  "manual": {
+    "per_record_min": {
+      "value": 1.0,
+      "unit": "min",
+      "kind": "estimate",
+      "source": "assumption (not timed yet)",
+      "note": "Estimate, not timed: open the message, read PO/SKU/qty, switch to the Stockroom, pick the product from a 50-item list, type qty, paste the reference, save: ~45-60 s per record for a practised person. Replace with `python -m bench.stopwatch manual` (time 5, extrapolate)."
+    },
+    "timings_s": []
+  },
+  "computer_use": {
+    "per_record_min": {
+      "value": 3.0,
+      "unit": "min",
+      "kind": "estimate",
+      "source": "Abhyankar, Qi, Zhang, 'OSWorld-Human: Benchmarking the Efficiency of Computer-Use Agents', arXiv:2506.16042 (v2, 2026): agents take 'tens of minutes' for tasks humans do in 'a few minutes', and the best agents take 2.7-4.3x more steps than necessary; latency is dominated by model calls",
+      "note": "Estimate, not run (no computer-use API key): this is a ~1 min human task of ~15 GUI steps; at the cited 2.7-4.3x step overhead and several seconds per model-call step, ~3 min per record. Replace with `python -m bench.stopwatch computer_use` (run 5, extrapolate)."
+    },
+    "setup_min": {
+      "value": 5.0,
+      "unit": "min",
+      "kind": "estimate",
+      "source": "assumption",
+      "note": "write and test the agent's instructions once"
+    },
+    "llm_calls_per_record": {
+      "value": 15,
+      "unit": "calls",
+      "kind": "estimate",
+      "source": "Abhyankar, Qi, Zhang, 'OSWorld-Human: Benchmarking the Efficiency of Computer-Use Agents', arXiv:2506.16042 (v2, 2026): agents take 'tens of minutes' for tasks humans do in 'a few minutes', and the best agents take 2.7-4.3x more steps than necessary; latency is dominated by model calls",
+      "note": "one model call per GUI step, ~15 steps per record"
+    },
+    "timings_s": []
+  },
+  "summary": {
+    "breaks_total": 2,
+    "caught_before_bad_write": {
+      "patchwork": 2,
+      "baseline_script": 1
+    }
+  }
+}

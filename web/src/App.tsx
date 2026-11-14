@@ -6,6 +6,7 @@ import ReviewTab from "./tabs/Review";
 import AgentTab from "./tabs/Agent";
 import IntegrationTab from "./tabs/Integration";
 import RunsTab from "./tabs/Runs";
+import BenchmarkTab from "./tabs/Benchmark";
 
 type Theme = "system" | "light" | "dark";
 function useTheme(): [Theme, () => void] {
@@ -107,6 +108,7 @@ function Body() {
       {tab === "agent" && <AgentTab />}
       {tab === "integration" && <IntegrationTab />}
       {tab === "runs" && <RunsTab />}
+      {tab === "bench" && <BenchmarkTab />}
     </main>
   );
 }

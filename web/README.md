@@ -1,6 +1,6 @@
 # Patchwork web console
 
-Vite + React + TypeScript + Tailwind. Five tabs: **Record · Review · Agent Activity · Integration · Runs**,
+Vite + React + TypeScript + Tailwind. Six tabs: **Record · Review · Agent Activity · Integration · Runs · Benchmark**,
 with the AI on/off switch in the header and the `LLM calls: 0` badge on Runs. It talks only to the control
 plane API (`docs/contracts.md` section 4) through `src/api.ts`.
 
@@ -21,6 +21,10 @@ node mock/smoke.mjs           # the whole demo over HTTP against the mock (asser
 
 From the repo root, `make up` starts the demo apps and the control plane on :8000 and `make web` starts this UI
 against it. `make web-mock` runs it against the mock.
+
+**Benchmark** reads `GET /api/bench/results` (`bench/results.json`, written by `make bench`): break-even chart, breaks caught
+before any bad write (Patchwork vs a one-shot script), repair times and every number with its kind. Estimates and
+extrapolations are dotted/dashed and badged. The mock serves the same file (404 until `make bench` has run).
 
 ## Demo click path (plan pages 14–15)
 
