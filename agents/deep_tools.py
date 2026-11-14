@@ -19,6 +19,7 @@ gives the plain functions (no langchain import, so the scripted agent calls the 
 from __future__ import annotations
 
 import difflib
+import functools
 import json
 import os
 import re
@@ -36,7 +37,9 @@ from agents.learn import yload as _yload
 from agents.interface import ThreadedAgentService, _Thread, now
 from agents.scripted import FIXTURES, NAME, load_recording, work_dir
 from compiler.compile import CompileError, Example
+from control import credentials as control_credentials
 from control import ops
+from runner import credentials
 from runner.contract import request_schema
 from runner.html import fingerprint_present, platform_name, platform_of
 from runner.lib import (Quarantine, T, cast, extract_between, extract_json_path, extract_product, extract_regex,
@@ -144,6 +147,26 @@ class ToolContext:
         if self.spec_path.exists():
             return self.spec_dict()["sink"]["base_url"].rstrip("/")
         return candidates_for(self.recording_id or "fixture")["sink"]["base_url"].rstrip("/")
+
+    def auth_headers(self, part: str) -> dict[str, str]:
+        """V13: headers for the control plane's own requests to the spec's `source` or `sink` ({} when the
+        spec has no `auth` there, or there is no spec yet). Never shown to the model."""
+        if not self.spec_path.exists():
+            return {}
+        try:
+            return credentials.headers((self.spec_dict().get(part) or {}).get("auth"))
+        except (AttributeError, TypeError, ValueError):
+            return {}
+
+    def credential_names(self) -> list[str]:
+        """Every credential the workspace and this thread's draft spec reference (for redaction)."""
+        spec = None
+        if self.spec_path.exists():
+            try:
+                spec = self.spec_dict()
+            except Exception:  # noqa: BLE001 - a half-written spec still gets the workspace's names
+                spec = None
+        return control_credentials.known_names(spec)
 
     def active_spec_text(self) -> str | None:
         active = Store().active_version(self.name)
@@ -565,7 +588,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                 from runner.forms import fetch_form_contract
                 return summarize_openapi(fetch_form_contract(c["sink"]["url"]))
         base = ctx.sink_base() if target == "sink" else ctx.source_base()
-        doc = httpx.get(base + "/openapi.json", timeout=10).json()
+        doc = httpx.get(base + "/openapi.json", timeout=10, headers=ctx.auth_headers(target)).json()
         return summarize_openapi(doc)
 
     def fetch_source_samples(limit: int = 15) -> str:
@@ -582,7 +605,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                     ctx.samples = [ctx.get_page_record(ctx.page_id)]
                     return f"1 record (page {ctx.page_id}; no PATCHWORK_CONTROL_URL to list more)"
                 return "ERROR: source is the page inbox and PATCHWORK_CONTROL_URL is not set"
-        recs = httpx.get(base + c_list, params={"limit": limit}, timeout=10).json()[:limit]
+        recs = httpx.get(base + c_list, params={"limit": limit}, timeout=10,
+                         headers=ctx.auth_headers("source")).json()[:limit]
         ctx.samples = recs
         groups: dict[str, int] = {}
         for r in recs:
@@ -808,7 +832,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         if rec is None:
             try:
                 path = ctx.spec_dict()["source"]["list"]["path"] if ctx.spec_path.exists() else "/api/messages"
-                resp = httpx.get(f"{ctx.source_base()}{path}/{record_id}", timeout=10)
+                resp = httpx.get(f"{ctx.source_base()}{path}/{record_id}", timeout=10,
+                                 headers=ctx.auth_headers("source"))
                 resp.raise_for_status()
                 rec = resp.json()
             except httpx.HTTPError as e:
@@ -930,7 +955,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         else:
             active = Store().active_version(ctx.name)
             old_doc = json.loads((workspace_dir() / "integrations" / ctx.name / f"v{active}" / "contract" / "openapi.json").read_text())
-            new_doc = ctx.fetch_contract(spec) if is_form else httpx.get(ctx.sink_base() + "/openapi.json", timeout=10).json()
+            new_doc = ctx.fetch_contract(spec) if is_form else httpx.get(
+                ctx.sink_base() + "/openapi.json", timeout=10, headers=ctx.auth_headers("sink")).json()
         d = diff_request_schemas(old_doc, new_doc, method, path, values)
         d["current_sink_fields" if is_form else "current_sink_body"] = values
         route_by = (spec.get("extract") or {}).get("route_by")
@@ -1344,7 +1370,29 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         "get_incident": get_incident, "get_quarantined": get_quarantined, "diff_openapi": diff_openapi,
         "migrate_golden_examples": migrate_golden_examples, "ask_user": ask_user, "request_deploy": request_deploy,
     }
-    return fns
+    return {name: _redacting(fn, ctx) for name, fn in fns.items()}
+
+
+def _redacting(fn: Any, ctx: ToolContext) -> Any:
+    """Contracts V13: the one choke point between a tool and the model (and the scripted agent, and the
+    event stream). Results, and the messages of exceptions a tool raises, pass through `redact` with every
+    credential the workspace and the thread's spec reference, so no credential value reaches the model."""
+
+    @functools.wraps(fn)
+    def tool(*args: Any, **kwargs: Any) -> Any:
+        try:
+            out = fn(*args, **kwargs)
+        except Exception as e:  # ThreadCancelled is a BaseException and passes through untouched
+            msg = str(e)
+            safe = credentials.redact(msg, names=ctx.credential_names())
+            if safe != msg:
+                raise RuntimeError(safe) from None
+            raise
+        if isinstance(out, str):
+            return credentials.redact(out, names=ctx.credential_names())
+        return credentials.redact_obj(out, names=ctx.credential_names())
+
+    return tool
 
 
 def seed_repair_workdir(name: str) -> Path:

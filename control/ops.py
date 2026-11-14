@@ -15,6 +15,8 @@ from typing import Any
 import httpx
 
 from compiler.compile import CompileResult, compile_spec, load_examples
+from runner import credentials
+from runner.credentials import CRED_PREFIX, CredentialError
 from runner.store import Store, workspace_dir
 from spec import load_spec
 
@@ -27,20 +29,68 @@ RUN_TIMEOUT_S = 300
 CONTROL_URL: str | None = None
 
 
-def runner_env() -> dict[str, str]:
+def credential_names(spec: Any) -> list[str]:
+    """The credential names a run of `spec` needs (contracts V13): every `auth` block's `credential`
+    (`source.auth`, `sink.auth`, any sink kind). `spec` is a spec model, a spec dict or a config dict."""
+    return credentials.credential_names(spec)
+
+
+def runner_env(spec: Any = None) -> dict[str, str]:
     """Stripped environment for the runner: no model keys, no secrets, explicit paths, and
-    PATCHWORK_CONTROL_URL so `patchwork://control` sources resolve."""
-    keep = {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k)}
+    PATCHWORK_CONTROL_URL so `patchwork://control` sources resolve.
+
+    V13: no credential reaches a runner by its plain name (nor an inherited PATCHWORK_CRED__*); then, for each
+    name in `credential_names(spec)` only, PATCHWORK_CRED__<NAME>=<value from .env>. Raises CredentialError
+    (message names the credential, never a value) when one is not set or names a model key. Without a spec
+    (generated tests, v1/v2 integrations) no credential is added."""
+    from control.credentials import workspace_credentials
+
+    names = credential_names(spec)
+    plain = {*workspace_credentials(), *names}
+    keep = {k: v for k, v in os.environ.items()
+            if not SECRET_ENV.search(k) and not k.startswith(CRED_PREFIX) and k not in plain}
     keep["PYTHONPATH"] = str(REPO_ROOT)
     keep["PATCHWORK_WORKSPACE"] = str(workspace_dir())
     if not keep.get("PATCHWORK_CONTROL_URL") and CONTROL_URL:
         keep["PATCHWORK_CONTROL_URL"] = CONTROL_URL
+    for name in names:
+        try:
+            credentials.check_name(name)
+        except ValueError as e:
+            raise CredentialError(str(e)) from None
+        keep[CRED_PREFIX + name] = credentials.get(name)
     return keep
 
 
-def fetch_sink_openapi(base_url: str) -> dict[str, Any]:
+def run_spec(name: str, version: str | int = "active", *, store: Store | None = None) -> dict[str, Any] | None:
+    """The spec (as a dict) of the version a run of `name` would use, for `runner_env(spec)`; None when
+    there is no such version (the runner then reports that itself)."""
+    import yaml
+
+    try:
+        v = (store or Store()).active_version(name) if str(version) == "active" else int(version)
+    except ValueError:
+        return None
+    if v is None:
+        return None
+    path = workspace_dir() / "integrations" / name / f"v{v}" / "spec.yaml"
+    try:
+        data = yaml.safe_load(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def sink_auth_headers(spec: Any) -> dict[str, str]:
+    """Headers for the control plane's own requests to `spec`'s sink (contract fetches): {} without auth."""
+    sink = spec.get("sink") if isinstance(spec, dict) else getattr(spec, "sink", None)
+    auth = sink.get("auth") if isinstance(sink, dict) else getattr(sink, "auth", None)
+    return credentials.headers(auth)
+
+
+def fetch_sink_openapi(base_url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
     base = os.environ.get("PATCHWORK_SINK_BASE_URL") or base_url
-    resp = httpx.get(base.rstrip("/") + "/openapi.json", timeout=10)
+    resp = httpx.get(base.rstrip("/") + "/openapi.json", timeout=10, headers=headers or None)
     resp.raise_for_status()
     return resp.json()
 
@@ -48,12 +98,20 @@ def fetch_sink_openapi(base_url: str) -> dict[str, Any]:
 def fetch_contract(spec: Any) -> dict[str, Any]:
     """The destination's current contract (contracts V6). API sinks: GET {base}/openapi.json (as
     `fetch_sink_openapi`). Form sinks: a headless snapshot of the form as an OpenAPI-shaped doc.
-    PATCHWORK_SINK_BASE_URL never applies to form sinks."""
-    if getattr(spec.sink, "kind", "api") == "form":
+    PATCHWORK_SINK_BASE_URL never applies to form sinks. API sinks with `auth` send its headers (V13); the
+    document returned never includes them."""
+    if isinstance(spec, dict):
+        if (spec.get("sink") or {}).get("kind") == "form":
+            from runner.forms import fetch_form_contract
+
+            return fetch_form_contract(spec["sink"]["url"])
+    elif getattr(spec.sink, "kind", "api") == "form":
         from runner.forms import fetch_form_contract
 
         return fetch_form_contract(spec.sink.url)
-    return fetch_sink_openapi(spec.sink.base_url)
+    sink = spec["sink"] if isinstance(spec, dict) else spec.sink
+    base_url = sink["base_url"] if isinstance(sink, dict) else sink.base_url
+    return fetch_sink_openapi(base_url, headers=sink_auth_headers(spec))
 
 
 def compile_and_test(spec_path: str | Path, *, examples_path: str | Path | None = None,
@@ -84,7 +142,7 @@ def run_tests(name: str, version: int, *, store: Store | None = None,
               sink_openapi_path: str | None = None) -> tuple[bool, str]:
     store = store or Store()
     vdir = workspace_dir() / "integrations" / name / f"v{version}"
-    env = runner_env()
+    env = runner_env()  # never a spec: generated tests get no credentials (they use runner.testing.FakeHttp)
     if sink_openapi_path:
         env["PATCHWORK_SINK_OPENAPI"] = sink_openapi_path
     proc = subprocess.run(
@@ -161,12 +219,20 @@ def run_sandboxed(name: str, *, version: str = "active", dry_run: bool = False, 
     directory and a stripped environment. Light sandboxing, labelled honestly. Blocks until done;
     the API's background runs use the same command (control/api/runs.py)."""
     cmd = runner_command(name, version=version, dry_run=dry_run, limit=limit, replay=replay)
+    spec = run_spec(name, version)
+    try:
+        env = runner_env(spec)
+    except CredentialError as e:  # V13: the run refuses to start; the message names the credential only
+        return {"status": "failed", "integration": name, "message": str(e), "llm_calls": 0, "run_id": None,
+                "exit_code": None}
     with tempfile.TemporaryDirectory(prefix="patchwork-run-") as scratch:
-        proc = subprocess.run(cmd, capture_output=True, text=True, env=runner_env(), cwd=scratch,
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=scratch,
                               timeout=timeout)
     summary = parse_summary(proc.stdout)
     if not summary:
-        summary = {"status": "failed", "message": (proc.stderr or proc.stdout)[-2000:]}
+        from control.credentials import redact
+
+        summary = {"status": "failed", "message": redact((proc.stderr or proc.stdout)[-2000:], spec)}
     summary["exit_code"] = proc.returncode
     return summary
 

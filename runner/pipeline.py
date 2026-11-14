@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from runner.credentials import redact
 from runner.lib import Quarantine
 
 
@@ -43,13 +44,17 @@ class Outcome:
         return asdict(self)
 
 
-def _sink_status(status: int, resp_text: str) -> None:
+def _sink_status(status: int, resp_text: str, http: Any = None) -> None:
     if status < 300:
         return
-    detail = f"sink returned {status}: {resp_text[:300]}"
+    detail = f"sink returned {status}: {redact(resp_text[:300])}"
     if status in (400, 422):
         raise Quarantine("SINK_CONTRACT", detail)
     if status in (401, 403):
+        cred = getattr(http, "sink_credential", None)
+        if cred:  # contracts V13: name the credential, never show it (nor the body, which may echo it)
+            raise Quarantine("AUTH", f"{getattr(http, 'sink_label', 'the destination')} rejected the credential "
+                                     f"{cred} (HTTP {status})")
         raise Quarantine("AUTH", detail)
     raise Quarantine("UNKNOWN", detail)
 
@@ -84,7 +89,7 @@ def process_record(integ: Any, record: dict, http: Any, store: ProcessedStore) -
             return out
         out.body = integ.build_body(fields, record)
         resp = integ.send(http, out.body)
-        _sink_status(resp.status_code, resp.text)
+        _sink_status(resp.status_code, resp.text, http)
         integ.verify(http, fields, record)
         store.mark(out.key)
         out.status = "success"
@@ -95,4 +100,6 @@ def process_record(integ: Any, record: dict, http: Any, store: ProcessedStore) -
         out.status, out.reason, out.detail = "quarantined", "UNKNOWN", f"network: {e!r}"
     except Exception as e:  # noqa: BLE001 - every record must end in a known state
         out.status, out.reason, out.detail = "quarantined", "UNKNOWN", f"{type(e).__name__}: {e}"
+    if out.detail:
+        out.detail = redact(out.detail)  # V13: nothing that leaves the runner shows a credential value
     return out

@@ -76,3 +76,65 @@ def redact(text: Any, extra: list[str] | None = None, names: list[str] | None = 
         if v and len(v) >= 6:
             s = s.replace(v, "***")
     return s
+
+
+def redact_obj(obj: Any, names: list[str] | None = None) -> Any:
+    """`redact` applied to every string (keys and values) inside a JSON-like structure; other values kept.
+    Returns `obj` itself when it holds no credential value (the common case: no copy of large records)."""
+    named = [os.environ.get(n, "") for n in (names or []) if NAME.match(n or "")]
+    vals = sorted({v for v in (*named, *_known_values()) if v and len(v) >= 6}, key=len, reverse=True)
+    if not vals:
+        return obj
+
+    def has(o: Any) -> bool:
+        if isinstance(o, str):
+            return any(v in o for v in vals)
+        if isinstance(o, dict):
+            return any(has(k) or has(v) for k, v in o.items())
+        if isinstance(o, (list, tuple)):
+            return any(has(v) for v in o)
+        return False
+
+    def walk(o: Any) -> Any:
+        if isinstance(o, str):
+            for v in vals:
+                o = o.replace(v, "***")
+            return o
+        if isinstance(o, dict):
+            return {walk(k): walk(v) for k, v in o.items()}
+        if isinstance(o, (list, tuple)):
+            return [walk(v) for v in o]
+        return o
+
+    return walk(obj) if has(obj) else obj
+
+
+def auth_blocks(spec: Any) -> list[dict[str, Any]]:
+    """Every `auth` block a spec carries (`source.auth`, `sink.auth`, and any other `auth:` mapping with a
+    `credential`, so new sink kinds such as `airtable` are covered without a change here). `spec` is a spec
+    model, a spec dict (spec.yaml) or a compiled config dict (config.yaml): they share the shape."""
+    if spec is None:
+        return []
+    if hasattr(spec, "model_dump"):
+        spec = spec.model_dump(mode="json", by_alias=True, exclude_none=True)
+    out: list[dict[str, Any]] = []
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k == "auth" and isinstance(v, dict) and v.get("credential"):
+                    out.append(v)
+                else:
+                    walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+
+    walk(spec)
+    return out
+
+
+def credential_names(spec: Any) -> list[str]:
+    """The credential names a spec (model, spec dict or config dict) references: sorted, unique, unchecked
+    (callers that launch a runner pass each through `check_name`)."""
+    return sorted({str(b["credential"]) for b in auth_blocks(spec)})
