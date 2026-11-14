@@ -42,3 +42,9 @@ web:
 web-mock:
 	test -d web/node_modules || (cd web && npm ci)
 	cd web && npm run dev:mock
+
+# Benchmark: Patchwork vs a one-shot script on the demo scenario, own in-process stack on free ports
+# (never 8000-8003), scripted agent, no model calls. Writes bench/results.json (served at /api/bench/results).
+.PHONY: bench
+bench:
+	$(PY) -m bench.run

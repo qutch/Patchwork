@@ -160,6 +160,7 @@ POST /api/demo/stockroom/schema {version}            Break 1 switch (live + stag
 POST /api/demo/inbox/deliver {count}
 POST /api/demo/inbox/new_supplier {count}            Break 2
 GET  /api/bench/accuracy?integration=                exact accuracy vs ground truth
+GET  /api/bench/results                              bench/results.json (`make bench`); 404 until it exists
 ```
 
 `control.ops` additions (Control plane implements; Agents may call): `replay_quarantined(name) -> run summary`,

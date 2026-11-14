@@ -7,6 +7,7 @@ so an Inbox without /admin/deliver answers 404 here too. Unreachable apps answer
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -138,3 +139,19 @@ async def accuracy(integration: str | None = None) -> dict[str, Any]:
     records = [r for n in names for r in store.latest_outcomes(n)]
     truth, source = await ground_truth()
     return {"integration": integration, "truth_source": source, **score(records, truth)}
+
+
+BENCH_RESULTS = Path(__file__).resolve().parents[2] / "bench" / "results.json"
+
+
+@router.get("/bench/results")
+def bench_results() -> JSONResponse:
+    """The committed benchmark (`make bench` writes bench/results.json; `PATCHWORK_BENCH_RESULTS`
+    overrides the path). 404 until it exists."""
+    path = Path(os.environ.get("PATCHWORK_BENCH_RESULTS") or BENCH_RESULTS)
+    try:
+        return JSONResponse(json.loads(path.read_text()))
+    except FileNotFoundError:
+        raise HTTPException(404, "no benchmark results yet: run `make bench`") from None
+    except ValueError as e:
+        raise HTTPException(500, f"{path.name} is not valid JSON: {e}") from None
