@@ -97,7 +97,7 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
     scope = "staging" if dry_run else "live"
     http = Http(config, staging=dry_run)
     kind = "replay" if replay else "run"
-    run_id = store.start_run(name, v, dry_run, kind=kind)
+    run_id = store.start_run(name, v, dry_run, kind=kind, pid=os.getpid())
     log(json.dumps({"event": "started", "run_id": run_id}))
     pace = _pace_s()
     log_path = ws / "runs" / f"{run_id}.jsonl"

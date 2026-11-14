@@ -105,6 +105,8 @@ class Store:
         run_cols = {r["name"] for r in self.db.execute("PRAGMA table_info(runs)")}
         if "kind" not in run_cols:  # Phase 2: "run" | "replay"
             self.db.execute("ALTER TABLE runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'run'")
+        if "pid" not in run_cols:  # runner process id, so a restarted control plane can tell stale runs
+            self.db.execute("ALTER TABLE runs ADD COLUMN pid INTEGER")
 
     def close(self) -> None:
         self.db.close()
@@ -150,12 +152,16 @@ class Store:
         return self._all("SELECT * FROM integrations ORDER BY name")
 
     # -- runs & records ------------------------------------------------------------------
-    def start_run(self, name: str, version: int, dry_run: bool, kind: str = "run") -> int:
+    def start_run(self, name: str, version: int, dry_run: bool, kind: str = "run", pid: int | None = None) -> int:
         cur = self.db.execute(
-            "INSERT INTO runs(integration, version, dry_run, status, started_at, kind) VALUES (?,?,?,?,?,?)",
-            (name, version, int(dry_run), "running", now(), kind),
+            "INSERT INTO runs(integration, version, dry_run, status, started_at, kind, pid) VALUES (?,?,?,?,?,?,?)",
+            (name, version, int(dry_run), "running", now(), kind, pid),
         )
         return int(cur.lastrowid)
+
+    def running_runs(self) -> list[dict]:
+        """Runs whose row still says running (live, or stale after a crash/restart)."""
+        return self._all("SELECT * FROM runs WHERE status='running' ORDER BY id")
 
     def finish_run(self, run_id: int, status: str, counts: dict, duration_s: float,
                    incident_id: int | None = None, message: str | None = None) -> None:

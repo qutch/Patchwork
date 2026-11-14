@@ -11,6 +11,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
+from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -115,7 +116,8 @@ api = APIRouter(prefix="/api")
 @api.get("/health")
 def health(request: Request) -> dict[str, Any]:
     return {"status": "ok", "workspace": str(workspace_dir()), "agent": agent_kind(request.app.state.agent),
-            "ai_enabled": request.app.state.settings.ai_enabled}
+            "ai_enabled": request.app.state.settings.ai_enabled,
+            "recovered_runs": getattr(request.app.state, "recovered_runs", {"failed": [], "adopted": []})}
 
 
 @api.get("/settings")
@@ -376,6 +378,8 @@ def create_app(*, agent: Any | None = None, dotenv: bool = True) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Runs a previous control plane left "running": fail the dead ones, adopt live runners.
+        app.state.recovered_runs = await run_in_threadpool(runs.recover)
         yield
         runs.stop_all()
 

@@ -9,13 +9,16 @@ summary), enforces the timeout, and marks the run failed if the process died mid
 from __future__ import annotations
 
 import json
+import os
 import queue
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,16 +45,117 @@ class LiveRun:
     started: float = field(default_factory=time.monotonic)
 
 
+@dataclass
+class AdoptedRun:
+    """A runner still alive from before this control plane started. We didn't launch it, so we
+    can't read its stdout; we watch its pid, block concurrent runs, and finalize it if it dies
+    without writing its own summary."""
+
+    run_id: int
+    integration: str
+    pid: int
+    started_s: float  # seconds since epoch the run started
+    done: bool = False
+
+
+def runner_alive(pid: int | None) -> bool:
+    """True if `pid` is a live `python -m runner run ...` process (guards against pid reuse)."""
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass  # exists but not ours; check the command line below
+    try:
+        cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True,
+                             timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "runner" in cmd and " run " in f"{cmd} "
+
+
+def _epoch(iso: str) -> float:
+    try:
+        return datetime.fromisoformat(iso).timestamp()
+    except (TypeError, ValueError):
+        return time.time()
+
+
 class RunManager:
     def __init__(self, timeout_s: int = ops.RUN_TIMEOUT_S):
         self.timeout_s = timeout_s
         self._runs: dict[int, LiveRun] = {}
+        self._adopted: dict[int, AdoptedRun] = {}
         self._lock = threading.Lock()
         self._starting: set[str] = set()
 
-    def in_progress(self, integration: str) -> LiveRun | None:
+    # ---- startup recovery ------------------------------------------------------------------
+    def recover(self) -> dict[str, list[int]]:
+        """Reconcile runs left `running` by a previous control plane. A run whose runner process
+        is gone is marked failed with the counts it reached. A run whose runner is still alive is
+        adopted, not killed: killing mid-record could resend a write that wasn't yet marked
+        processed. It blocks concurrent runs of its integration until it exits."""
+        out: dict[str, list[int]] = {"failed": [], "adopted": []}
+        store = Store()
+        try:
+            for run in store.running_runs():
+                with self._lock:
+                    if run["id"] in self._runs or run["id"] in self._adopted:
+                        continue  # ours
+                if runner_alive(run.get("pid")):
+                    adopted = AdoptedRun(run["id"], run["integration"], int(run["pid"]), _epoch(run["started_at"]))
+                    with self._lock:
+                        self._adopted[run["id"]] = adopted
+                    threading.Thread(target=self._watch_adopted, args=(adopted,), daemon=True,
+                                     name=f"adopted-run-{run['id']}").start()
+                    out["adopted"].append(run["id"])
+                else:
+                    store.finish_run(run["id"], "failed", store.record_counts(run["id"]),
+                                     max(0.0, time.time() - _epoch(run["started_at"])), None,
+                                     "control plane restarted while this run was in progress; "
+                                     "the runner process is gone. Records it finished are kept; "
+                                     "run again to continue from the cursor.")
+                    out["failed"].append(run["id"])
+        finally:
+            store.close()
+        return out
+
+    def _watch_adopted(self, a: AdoptedRun) -> None:
+        try:
+            while runner_alive(a.pid):
+                if time.time() - a.started_s > self.timeout_s:
+                    try:
+                        os.kill(a.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    break
+                time.sleep(0.5)
+            store = Store()
+            try:
+                run = store.run(a.run_id)
+                if run is not None and run["status"] == "running":  # died without its own summary
+                    store.finish_run(a.run_id, "failed", store.record_counts(a.run_id),
+                                     max(0.0, time.time() - a.started_s), None,
+                                     "runner exited without a summary after a control-plane restart")
+            finally:
+                store.close()
+        except Exception:  # noqa: BLE001 - the workspace may have been reset under us
+            pass
+        finally:
+            a.done = True
+
+    def _busy(self, integration: str) -> bool:
+        """Call with self._lock held."""
+        return (integration in self._starting
+                or any(r.integration == integration and not r.done for r in self._runs.values())
+                or any(a.integration == integration and not a.done for a in self._adopted.values()))
+
+    def in_progress(self, integration: str) -> LiveRun | AdoptedRun | None:
         with self._lock:
-            return next((r for r in self._runs.values() if r.integration == integration and not r.done), None)
+            return (next((r for r in self._runs.values() if r.integration == integration and not r.done), None)
+                    or next((a for a in self._adopted.values() if a.integration == integration and not a.done), None))
 
     def get(self, run_id: int) -> LiveRun | None:
         return self._runs.get(run_id)
@@ -59,9 +163,7 @@ class RunManager:
     def start(self, integration: str, *, version: str | int = "active", dry_run: bool = False,
               limit: int | None = None, replay: bool = False) -> int:
         with self._lock:
-            busy = integration in self._starting or any(
-                r.integration == integration and not r.done for r in self._runs.values())
-            if busy:
+            if self._busy(integration):
                 raise RuntimeError(f"a run of {integration} is already in progress")
             self._starting.add(integration)
         try:
@@ -149,14 +251,21 @@ class RunManager:
     def stop_all(self, wait_s: float = 5) -> None:
         with self._lock:
             live = [r for r in self._runs.values() if not r.done]
+            adopted = [a for a in self._adopted.values() if not a.done]
         for r in live:
             if r.proc.poll() is None:
                 r.proc.kill()
+        for a in adopted:
+            try:
+                os.kill(a.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         deadline = time.monotonic() + wait_s
-        for r in live:
+        for r in [*live, *adopted]:
             while not r.done and time.monotonic() < deadline:
                 time.sleep(0.02)
 
     def clear(self) -> None:
         with self._lock:
             self._runs = {k: v for k, v in self._runs.items() if not v.done}
+            self._adopted = {k: v for k, v in self._adopted.items() if not v.done}

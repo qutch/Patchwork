@@ -213,3 +213,14 @@ and the API streams counts while the subprocess runs. Optional `PATCHWORK_RUN_PA
 Vite + React + TypeScript + Tailwind in `web/`; dev server proxies `/api` to the control plane. Five tabs from plan section 11:
 **Record · Review · Agent Activity · Integration · Runs**, plus a header with the AI on/off toggle and a global `LLM calls: 0` badge on Runs.
 Build against `PATCHWORK_AGENT=scripted` (no model needed); everything must also work with `deep`.
+
+### Run recovery on control-plane startup
+
+Runs record the runner's `pid`. On startup the control plane reconciles every run still marked `running`:
+if its runner process is gone (or the pid now belongs to something else) the run becomes `failed` with the
+counts it reached and a message saying the control plane restarted; finished records and the cursor are kept,
+so running again continues where it stopped. If the runner is still alive it is **adopted, not killed**
+(killing mid-record could resend a write not yet marked processed): it blocks new runs of that integration
+(409), streams progress as usual (`total` is null), and is marked `failed` only if it exits without writing
+its own summary. `GET /api/health` reports `recovered_runs: {failed: [...], adopted: [...]}`.
+`/api/demo/reset` and shutdown kill adopted runners too.
