@@ -63,7 +63,7 @@ EVENT_TYPES = {
     # TEACH from examples (wizard A). request_deploy also carries `review` (empty outside that mode):
     # [{dest_field, source, values: {page_id: value}, ai_proposed, status: checked|needs_you, alternatives: [source]}].
     # Resuming it with {"decision": "approve", "edits": [{dest_field, choice}]} applies the edits in code.
-    "model_call": ["agent"],                        # one per model call of the deep agent (budget, UI cost)
+    "model_call": ["agent"],                        # one per deep-agent model call, TEACH from examples only (budget, UI cost)
 }
 
 DEFAULT_PAGE_INTEGRATION = "jobs_to_tracker"

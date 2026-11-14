@@ -224,3 +224,101 @@ def learner_description(spec: dict | None) -> str:
 FORM_REPAIR_HINT = """The sink is a FORM or an AIRTABLE table (sink.fields keyed by labels). Don't read files (the golden
 examples hold whole pages). Plan: repairer -> get_incident, diff_openapi, propose_spec_patch with exactly
 diff_openapi.patch_hint, migrate_golden_examples; then builder -> compile_spec; then request_deploy."""
+
+
+# ---- TEACH from example pages (wizard approach A) ------------------------------------------------------
+# Domain-free on purpose: the destination's own field names, the person's intent and the pages' outlines are
+# the only subject matter. Code checks every proposal (propose_mapping, add_site_parser); these prompts only
+# keep the run short (target: 10 model calls with two example sites).
+
+TEACH_EXAMPLES_SUPERVISOR = """You are the Patchwork supervisor in TEACH mode, from example pages. A person named an
+integration, picked a destination and sent example pages. The integration you build runs with zero AI.
+Four steps, one subagent at a time:
+1. In your FIRST turn call write_todos with exactly these todos: "Map the destination fields", "Add a parser for each
+   other example site", "Compile and test", "Request deploy"; and, in the same turn, task(subagent_type="mapper") with
+   the integration name and the first example page id.
+2. When the mapper reports, task(subagent_type="learner") ONCE with every other example page id and the integration
+   field names the mapper reported. Skip this step when there is only one example page.
+3. task(subagent_type="builder") to compile spec.yaml and run its tests.
+4. request_deploy(version, summary) with the version the builder compiled. The person reviews every proposed value
+   there, so keep the summary to one sentence.
+Code checks every proposal: never claim a check passed that a tool did not report. You cannot edit files or ask the
+person questions; the mapper asks when a required field has no source on the page."""
+
+MAPPER_DESCRIPTION = ("Maps every destination field to a reader on the first example page, the page's address, "
+                      "today's date, a constant or skip, with one propose_mapping call (checked in code).")
+EXAMPLES_LEARNER_DESCRIPTION = ("Adds one parser per other example site with add_site_parser, reading exactly the "
+                                "integration's fields from that page.")
+EXAMPLES_BUILDER_DESCRIPTION = "Compiles spec.yaml into the next immutable version and runs its full generated test suite."
+
+MAPPER = """You are the mapper for the integration {name}{intent_part}. A person picked a destination and sent
+example pages. Map EVERY destination field with ONE call to propose_mapping; code checks each proposal on the first
+example page ({first_page}).
+
+Destination fields (type, required):
+{dest_lines}
+
+Sources (exactly one per destination field):
+- Read it from the page when the page shows it: {{"field": "<short_name>", "reader": <a reader from the outline>}}.
+  Prefer a JSON-LD value of the page's main object, then a heading that reads one value (lines without
+  "(N values)"), then a meta tag. Add "regex" with one capture group to cut a value out of a longer one.
+- The page's address: {{"record": "canonical_url"}}. The date the page was sent: {{"today": true}}.
+- A field the page does not show: {{"skip": true}}. A required field cannot be skipped: ask_user once with 2-3 options,
+  then use {{"const": "<the answer>"}}.
+If propose_mapping answers REFUSED, fix only the fields it names and call it again (at most twice). Then reply with
+one sentence: what each field reads, the integration field names, and the pages still to add (its "next" line).
+
+The first example page, as an outline (each line: a reader and the value it reads):
+{outline}"""
+
+EXAMPLES_LEARNER = """You are the learner for the integration {name}. Every other example page comes from its own
+site and gets its own parser. Call add_site_parser once per page below, all in ONE turn, each with
+{{"fields": {{<every integration field the task names>: <reader>}}}}. Pick each reader from that page's outline:
+a JSON-LD value of the main object first, then a heading that reads one value, then a meta tag; add "regex" with one
+capture group to cut a value out of a longer one. Never send a "match": the code matches the page's exact site.
+If a call is REFUSED, fix only that page's readers (get_page and test_page_parser(parser, page_id) help) and call it
+again, at most twice. Reply with one sentence: the parsers added.
+
+{pages}"""
+
+EXAMPLES_BUILDER = """You are the builder. Call compile_spec once (it validates spec.yaml, compiles the next immutable
+version and runs its full generated test suite). Reply with one sentence: the version number and whether its tests
+passed, or the errors if it was REFUSED or FAILED. Never change a value the mapper proposed."""
+
+TEACH_EXAMPLES_TASK = """MODE: TEACH from example pages. Integration: {name}. Recording id: {recording_id}.
+The person's intent: {intent}.
+Destination fields: {fields}.
+Example pages (page id, site): {pages}.
+Build the integration: mapper (first page {first}), then learner (every other page), then builder, then
+request_deploy."""
+
+
+def _dest_lines(dest: dict[str, dict]) -> str:
+    return "\n".join(f"- {k} ({v.get('type') or 'text'}{', required' if v.get('required') else ''})"
+                     for k, v in dest.items())
+
+
+def mapper_prompt(*, name: str, intent: str, dest: dict[str, dict], pages: list[tuple[str, str, str]]) -> str:
+    """`pages`: [(page id, site, outline)]; the first one is mapped."""
+    pid, site, outline = pages[0]
+    intent = " ".join(str(intent or "").split())[:200]
+    return MAPPER.format(name=name, intent_part=f' ("{intent}")' if intent else "", first_page=f"{pid}, {site}",
+                         dest_lines=_dest_lines(dest) or "- (see get_candidates)", outline=outline)
+
+
+def examples_learner_prompt(*, name: str, pages: list[tuple[str, str, str]]) -> str:
+    """`pages`: [(page id, site, outline)] for every example page after the first."""
+    body = "\n\n".join(f"Page {pid} (site {site}):\n{outline}" for pid, site, outline in pages) or \
+        "(no other example pages)"
+    return EXAMPLES_LEARNER.format(name=name, pages=body)
+
+
+def teach_examples_task(*, name: str, intent: str, dest: dict[str, dict], pages: list[tuple[str, str]],
+                        recording_id: str = "") -> str:
+    intent = " ".join(str(intent or "").split())[:200] or "(none given)"
+    fields = ", ".join(f"{k} ({v.get('type') or 'text'}{', required' if v.get('required') else ''})"
+                       for k, v in dest.items())
+    return TEACH_EXAMPLES_TASK.format(name=name, recording_id=recording_id or f"draft-{name}", intent=intent,
+                                      fields=fields or "(see get_candidates)",
+                                      pages=", ".join(f"{p} ({s})" for p, s in pages) or "(none)",
+                                      first=pages[0][0] if pages else "?")
