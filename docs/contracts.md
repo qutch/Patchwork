@@ -521,6 +521,28 @@ LEARN `done.result`: `{model_calls, seconds, page_id, parser_id, site, version, 
 - TEACH from a page→form recording (`start_build(recording_id, name)`) uses V11 candidates and produces a spec shaped as V7
   with one parser (`origin.kind: taught`).
 
+**Details fixed while building W3 (additive):**
+- Thread status rows add `integration` (BUILD: the requested name or null; LEARN: the integration).
+- LEARN tools (`agents/deep_tools.py`, plain functions in `tool_functions(ctx)`, no langchain import, so the scripted
+  agent calls the same code): `get_page(page_id?)` (outline + the fields every parser must extract), `test_page_parser(parser)`
+  (run + evidence + corroboration + ambiguity; emits `evidence`), `save_parser(parser, reason)`. `save_parser` only works
+  on the thread's own page, defaults `match` to `{site: <page site>}`, refuses a field set different from the active
+  parsers', an existing parser id, a `match`/`fingerprint` that doesn't fit the page, and any value without evidence (no
+  compile). It seeds a golden example from the page, compiles, and applies D2 itself.
+- Ambiguity is asked by `save_parser` (code), once per field: `ask_user` "Which is the <field> on this page (<site>)?"
+  with the distinct values + "None of these". An answer that differs from the parser's value → `REFUSED` (fix the
+  selector). A field asked about still counts as ambiguous for D2 (a person approves).
+- Corroboration: matches are whole words; a source longer than 200 chars (e.g. `og:description`, JSON-LD
+  `description`) only counts on an exact match, so the posting body can't corroborate itself.
+- Evidence `where: "html"` covers attribute values and the `<title>` text. Content hidden from visitors (`noscript`,
+  `script`, `template`) is not visible text.
+- `learned` events: auto path → one event (`approval: auto`, `deployed: true`) right after the deploy and before
+  `deployed`; ask path → `approval: pending` before `request_deploy`, then `approval: human` with the outcome.
+  The parser's `origin.approved_by` is `auto` or `human` accordingly (a rejected version keeps `human`, never deployed).
+- `learn_policy` is read from `$PATCHWORK_WORKSPACE/settings.json` (`"auto"` default); an unknown value counts as `"approve"`.
+- For page integrations (`source.base_url: patchwork://control`) the agent never replays after `deployed` (LEARN or
+  REPAIR): the control plane does (V9). LEARN's filesystem allows writing `/spec.yaml` only.
+
 ## V11. Capture (W2): page snapshots, element paths, page→form candidates, extension
 
 Recorder: every `copy` event adds `el.path` (a stable CSS path: `#id` if unique, else tag + stable classes with
