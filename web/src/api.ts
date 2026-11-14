@@ -286,6 +286,68 @@ export interface Accuracy {
   integration?: string | null;
   truth_source?: "inbox" | "seed";
 }
+// ---------------------------------------------------------------- benchmark (bench/results.json)
+/** How a number was obtained. Anything but "measured" must look different in the UI. */
+export type BenchKind = "measured" | "measured (earlier run)" | "extrapolated" | "estimate" | "not measured";
+export interface Metric {
+  value: number | null;
+  /** s | ms | min | records | calls | ratio (0..1) | code */
+  unit: string;
+  kind: BenchKind;
+  source: string;
+  note?: string;
+}
+export interface BreakResult {
+  name: string;
+  records_in_break: number;
+  /** flagged THIS break specifically (not just generic noise) */
+  detected: boolean;
+  caught_before_bad_write: boolean;
+  bad_writes: Metric;
+  silently_dropped: Metric;
+  held: Metric;
+  time_to_detect_s: Metric;
+  repair_s: Metric;
+  incident_type: string | null;
+  alert: string;
+  outcome: string;
+}
+export interface BenchBreaks {
+  break1: BreakResult;
+  break2: BreakResult;
+}
+export interface BenchResults {
+  schema_version: 1;
+  generated_at: string;
+  command: string;
+  scenario: { seed_records: number; run_records: number; break1: string; break2: string; notes: string[] };
+  patchwork: {
+    agent: string;
+    build: { wall_s: Metric; llm_calls: Metric };
+    run: { records: Metric; wall_s: Metric; per_record_ms: Metric; llm_calls: Metric; accuracy: Metric };
+    seed_accuracy: Metric;
+    setup_human_min: Metric;
+    breaks: BenchBreaks;
+    deep_agent: {
+      date: string; model: string; source: string;
+      build_s: Metric; build_calls: Metric; repair_break1_s: Metric; repair_break1_calls: Metric;
+      repair_break2_s: Metric; repair_break2_calls: Metric; demo_total_s: Metric;
+    };
+  };
+  baseline_script: {
+    prompt: string; script: string; how_written: string;
+    run: {
+      records: Metric; wall_s: Metric; per_record_ms: Metric; llm_calls: Metric; correct_writes: Metric;
+      wrong_writes: Metric; silently_dropped: Metric; held: Metric; accuracy: Metric; exit_code: Metric;
+    };
+    steady_state_exit_code: Metric;
+    breaks: BenchBreaks;
+  };
+  manual: { per_record_min: Metric; timings_s: number[] };
+  computer_use: { per_record_min: Metric; setup_min: Metric; llm_calls_per_record: Metric; timings_s: number[] };
+  summary: { breaks_total: number; caught_before_bad_write: { patchwork: number; baseline_script: number } };
+}
+
 export interface DeployResult {
   name: string;
   active_version: number;
@@ -372,6 +434,8 @@ export const api = {
   deliver: (count: number) => request<unknown>("POST", "/api/demo/inbox/deliver", { count }),
   newSupplier: (count: number) => request<unknown>("POST", "/api/demo/inbox/new_supplier", { count }),
   accuracy: (integration: string) => request<Accuracy>("GET", `/api/bench/accuracy${qs({ integration })}`),
+  /** bench/results.json as written by `make bench`; 404 until it has been run. */
+  benchResults: () => request<BenchResults>("GET", "/api/bench/results"),
 };
 
 // ---------------------------------------------------------------- SSE

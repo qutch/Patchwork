@@ -90,6 +90,10 @@ try {
   const status = await j("GET", "/api/integrations/po_to_stockroom");
   assert.equal(status.active_version, 2);
   assert.equal(status.open_incidents.length, 0);
+  // Benchmark tab: serves bench/results.json when `make bench` has written it, else 404.
+  const bench = await fetch(`${BASE}/api/bench/results`);
+  assert.ok(bench.status === 200 || bench.status === 404, `bench results: ${bench.status}`);
+  if (bench.status === 200) assert.equal((await bench.json()).schema_version, 1);
   console.log("smoke OK; runs:", (await j("GET", "/api/runs")).map((r) => `${r.id}:${r.status}${r.dry_run ? "(dry)" : ""}`).join(" "));
 } finally {
   proc.kill();
