@@ -244,12 +244,13 @@ def _no_general_purpose_subagent(model: BaseChatModel) -> None:
 class DeepAgentService(ThreadedAgentService):
     def __init__(self, root: Path | None = None, *, model: BaseChatModel | None = None,
                  fallback_model: BaseChatModel | None = None, name: str | None = None,
-                 max_model_calls: int | None = None, max_nudges: int = 2):
+                 max_model_calls: int | None = None, max_nudges: int = 2, retry_base_delay: float = 3.0):
         super().__init__(root)
         self._model, self._fallback = model, fallback_model
         self.name = name or os.environ.get("PATCHWORK_INTEGRATION_NAME", NAME)
         self.max_model_calls = max_model_calls or int(os.environ.get("PATCHWORK_AGENT_MAX_CALLS", "80"))
         self.max_nudges = max_nudges
+        self.retry_base_delay = retry_base_delay
         self.model_calls: dict[str, int] = {}
 
     def interrupt(self, t: _Thread, type, **payload: Any) -> dict[str, Any]:
@@ -287,7 +288,7 @@ class DeepAgentService(ThreadedAgentService):
 
         def resilient() -> ResilientModelMiddleware:
             return ResilientModelMiddleware(budget, fallback, lambda m: self.emit(t, "message", agent="supervisor", text=m),
-                                            lambda: self.check_cancelled(t))
+                                            lambda: self.check_cancelled(t), base_delay=self.retry_base_delay)
 
         def fs() -> FilesystemMiddleware:
             return FilesystemMiddleware(backend=backend, tools=FS_TOOLS, permissions=permissions)

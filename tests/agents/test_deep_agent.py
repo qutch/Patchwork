@@ -160,3 +160,24 @@ def test_reset_stops_a_thread_waiting_on_ask_user(apps, workspace):
     assert model.remaining == 2  # no further model call
     from agents.scripted import work_dir
     assert not (work_dir() / "spec.yaml").exists()  # the next tool (draft_spec) never ran
+
+
+def test_rate_limited_primary_falls_back(apps, workspace):
+    DeepAgentService, ScriptedChatModel, call, turn, build_script, repair_script = deps()
+
+    class RateLimited(ScriptedChatModel):
+        def _generate(self, *a, **kw):
+            err = RuntimeError("429 Too Many Requests: rate limit exceeded")
+            err.status_code = 429
+            self._seen.append([])
+            raise err
+
+    primary = RateLimited([])
+    fallback = ScriptedChatModel([turn(text="hello from the fallback")], model_name="fallback-fake")
+    svc = DeepAgentService(model=primary, fallback_model=fallback, max_nudges=0, retry_base_delay=0.01)
+    tid = svc.start_build("fixture")
+    wait_for(svc, tid, "failed")  # no deploy requested, by design; we only care about the switch
+    assert len(primary.seen) == 3  # first try + 2 backoff retries
+    assert fallback.remaining == 0
+    texts = [e["text"] for e in svc.events(tid) if e["type"] == "message"]
+    assert any("switching to fallback-fake" in x for x in texts) and "hello from the fallback" in texts
