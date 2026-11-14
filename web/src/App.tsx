@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { AppProvider, TABS, useApp } from "./state";
-import { TRACKER } from "./api";
 import { AiToggle } from "./components/AiToggle";
 import TrackerTab from "./tabs/Tracker";
 import Presenter from "./components/Presenter";
@@ -33,7 +32,7 @@ function useTheme(): [Theme, () => void] {
 }
 
 function Header() {
-  const { tab, go, settings, threads, incidents, apiDown } = useApp();
+  const { tab, go, settings, threads, incidents, apiDown, isPageIntegration } = useApp();
   const [theme, nextTheme] = useTheme();
   const waiting = threads.some((t) => t.state === "waiting");
   return (
@@ -63,10 +62,10 @@ function Header() {
                 {t.id === "agent" && waiting && (
                   <span className="ml-2 inline-block w-2.5 h-2.5 rounded-full align-middle pulse" style={{ background: "var(--gate)" }} title="An agent is waiting for you" />
                 )}
-                {t.id === "tracker" && incidents.some((i) => i.integration === TRACKER) && (
+                {t.id === "tracker" && incidents.some((i) => isPageIntegration(i.integration)) && (
                   <span className="ml-2 inline-block w-2.5 h-2.5 rounded-full align-middle" style={{ background: "var(--bad)" }} title="Open incident" />
                 )}
-                {t.id === "runs" && incidents.some((i) => i.integration !== TRACKER) && (
+                {t.id === "runs" && incidents.some((i) => !isPageIntegration(i.integration)) && (
                   <span className="ml-2 inline-block w-2.5 h-2.5 rounded-full align-middle" style={{ background: "var(--bad)" }} title="Open incident" />
                 )}
               </a>

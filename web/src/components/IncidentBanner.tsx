@@ -3,14 +3,15 @@ import { api, TRACKER, type Incident } from "../api";
 import { useApp } from "../state";
 import { AiToggle } from "./AiToggle";
 
-function headline(inc: Incident): string {
+function headline(inc: Incident, isPage: boolean): string {
   if (inc.type !== "CONTRACT_CHANGED") return inc.summary;
-  return inc.integration === TRACKER ? "Blocked before any write: the tracker form changed" : "Run blocked before any write: Stockroom's contract changed";
+  if (inc.integration === TRACKER) return "Blocked before any write: the tracker form changed";
+  return isPage ? "Blocked before any write: the destination changed" : "Run blocked before any write: Stockroom's contract changed";
 }
 
 /** An open incident with the Repair flow. `onStarted` replaces the default jump to Agent Activity. */
 export function IncidentBanner({ id, big = false, onStarted }: { id: number; big?: boolean; onStarted?: (threadId: string) => void }) {
-  const { settings, act, setThreadId, go, refresh } = useApp();
+  const { settings, act, setThreadId, go, refresh, isPageIntegration } = useApp();
   const [inc, setInc] = useState<Incident | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -39,7 +40,7 @@ export function IncidentBanner({ id, big = false, onStarted }: { id: number; big
             Incident #{inc.id} · {[inc.type, ...inc.reason_codes.filter((c) => c !== inc.type)].join(" · ")} · v{inc.version}
           </div>
           <div className={`display ${big ? "text-[34px]" : "text-[22px]"} font-extrabold leading-tight`} style={{ color: "var(--ink)" }}>
-            {headline(inc)}
+            {headline(inc, isPageIntegration(inc.integration))}
           </div>
           <div className={big ? "text-[20px]" : "text-[15px]"}>{inc.summary}</div>
         </div>

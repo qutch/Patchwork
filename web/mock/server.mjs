@@ -3,6 +3,7 @@
 //   node mock/server.mjs [--port 5182] [--pace 1] [--agent scripted|deep]
 //
 // v2 (jobs -> tracker form: pages, tracker, layouts, LEARN, bench v2) lives in mock/v2.mjs.
+// v3 (other page integrations, Airtable destination, credentials: contracts V13-V15) lives in mock/v3.mjs.
 //
 // No dependencies beyond Node's stdlib. Canned data in mock/data.json comes from a real run
 // of the compiler, runner and ScriptedAgentService (see mock/collect.py). The server keeps
@@ -16,6 +17,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createV2 } from "./v2.mjs";
+import { createV3 } from "./v3.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DATA = JSON.parse(readFileSync(join(HERE, "data.json"), "utf8"));
@@ -670,6 +672,7 @@ async function route(req, res) {
     }
     return send(res, 200, S.settings);
   }
+  if (V3.handle(req, res, url, M, p, body)) return;
   if (V2.handle(req, res, url, M, p, body)) return;
 
   // recordings
@@ -737,6 +740,7 @@ async function route(req, res) {
     return send(res, 200, [
       ...(S.versions.length ? [{ name: NAME, active_version: S.active, latest_version: S.versions.at(-1).version, open_incidents: openIncidents().length }] : []),
       V2.integration(),
+      ...V3.integrations(),
     ]);
   if ((mm = m(/^\/api\/integrations\/([^/]+)(\/.*)?$/))) {
     const name = decodeURIComponent(mm[1]);
@@ -840,6 +844,13 @@ const readRepoJson = (rel) => {
 };
 const V2 = createV2({
   send, fail, sse, broadcast, nowIso, clone, readRepoJson,
+  timer: later,
+  settings: () => S.settings,
+  base: () => `http://127.0.0.1:${server.address()?.port ?? PORT}`,
+});
+
+const V3 = createV3({
+  send, fail, nowIso, clone,
   timer: later,
   settings: () => S.settings,
   base: () => `http://127.0.0.1:${server.address()?.port ?? PORT}`,

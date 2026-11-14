@@ -19,6 +19,24 @@ plane API (`docs/contracts.md` section 4 and Part 2 V9) through `src/api.ts`.
   do, a clock against each beat's slot, the live tracker and AI-calls counter, the incident banner and the yellow gate inline.
   `→`/Space next beat, `←` back, `1`–`6` jump, `T` restart the clock, `Esc` back to the console. `?present=1&beat=3` opens a beat.
 
+## v3: any page integration, any destination (contracts Part 3, V13-V15)
+
+- **Integration picker** (Tracker, Learned layouts, presenter mode): one page integration at a time, from
+  `GET /api/extension` → `integrations`/`default_integration` (older backends: every integration but `po_to_stockroom`
+  from `/api/integrations`). Remembered in localStorage (`pw-page-integration`); `?integration=<name>` overrides it.
+  `/api/tracker`, `/api/layouts`, revert and replay get that name. Hidden when jobs_to_tracker is the only one.
+- **Generic rows**: one column per `field_names` entry, values from each row's `fields`; without them (or when the fields
+  are just title/company) the jobs demo's single *Posting* cell, unchanged.
+- **Wording**: "page" instead of "job posting" outside jobs_to_tracker; the eyebrow is `<intent> → <Google Form | web form |
+  Airtable | API>` (jobs on a form keeps "Job postings → tracker form"). The destination comes from the integration's
+  `destination`/`sink` if the API lists one, else the active version's `spec_yaml` `sink`.
+- **Credentials**: `GET /api/credentials` (names and `set` only). An unset credential used by the integration shows a
+  "Credential missing" warning and `<NAME> not set` on the destination badge; values are never shown (the API has none).
+- **Mock**: `mock/v3.mjs` adds `track_product_prices` (product/price/store → web form) and `papers_to_reading_list`
+  (title/authors/year → Airtable, `AIRTABLE_TOKEN` unset). `npm run press -- amazon --integration track_product_prices`,
+  `npm run press -- arxiv --integration papers_to_reading_list`, `npm run press -- token --set 1` (pretend the token was
+  added to `.env`; then Replay or press again).
+
 ## Commands
 
 ```bash
