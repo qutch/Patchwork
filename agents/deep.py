@@ -43,7 +43,9 @@ from runner.store import Store
 DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 DEFAULT_FALLBACK = "particle-ai/particle-1:free"
 
-SUPERVISOR_TOOLS = ["ask_user", "request_deploy", "get_incident", "validate_spec", "run_tests"]
+# The supervisor plans and delegates. It cannot ask the user or edit files: in a live run it asked its own
+# (vaguer) warehouse question and patched the spec, then the repairer asked again and got a different answer.
+SUPERVISOR_TOOLS = ["request_deploy", "get_incident", "validate_spec", "run_tests"]
 SUBAGENTS: dict[str, tuple[str, str, list[str]]] = {
     "interpreter": ("Recording + candidates -> spec.yaml draft with parsers tested on real samples; asks the user to confirm assumptions.",
                     prompts.INTERPRETER,
@@ -59,6 +61,7 @@ SUBAGENTS: dict[str, tuple[str, str, list[str]]] = {
                   "migrate_golden_examples", "validate_spec", "ask_user"]),
 }
 FS_TOOLS = ["ls", "read_file", "write_file", "edit_file"]
+READ_ONLY_FS_TOOLS = ["ls", "read_file"]
 WRITABLE = ["/spec.yaml", "/examples.yaml", "/transforms.py"]
 
 
@@ -304,7 +307,8 @@ class DeepAgentService(ThreadedAgentService):
             model=model,
             tools=[tools[n] for n in SUPERVISOR_TOOLS],
             system_prompt=prompts.SUPERVISOR,
-            middleware=[fs(), TodoListMiddleware(), EventMiddleware(self, t, "supervisor"), resilient()],
+            middleware=[FilesystemMiddleware(backend=backend, tools=READ_ONLY_FS_TOOLS, permissions=permissions),
+                        TodoListMiddleware(), EventMiddleware(self, t, "supervisor"), resilient()],
             subagents=subagents,
             backend=backend,
             permissions=permissions,

@@ -115,8 +115,9 @@ def test_tools_offered_per_agent(apps, workspace):
     tid = svc.start_build("fixture")
     wait_for(svc, tid, "failed")  # finishing without a deploy request is an error, by design
     sup, builder = model._bound[0], model._bound[1]
-    assert {"task", "write_todos", "ask_user", "request_deploy", "read_file", "edit_file"} <= set(sup)
-    assert not {"execute", "glob", "grep", "delete", "compile_spec"} & set(sup)
+    assert {"task", "write_todos", "request_deploy", "read_file", "ls"} <= set(sup)
+    assert not {"execute", "glob", "grep", "delete", "compile_spec", "ask_user", "edit_file", "write_file"} & set(sup), \
+        "the supervisor delegates: it neither asks the user nor edits files"
     assert {"compile_spec", "validate_spec", "run_tests"} <= set(builder)
     assert not {"request_deploy", "task", "propose_spec_patch"} & set(builder)
     task_desc = model._descriptions["task"]
@@ -129,7 +130,9 @@ def test_tools_offered_per_agent(apps, workspace):
 def test_filesystem_only_spec_files_writable(apps, workspace, path, allowed):
     DeepAgentService, ScriptedChatModel, call, turn, build_script, repair_script = deps()
     model = ScriptedChatModel([
+        turn(call("task", subagent_type="builder", description="write a file")),
         turn(call("write_file", file_path=path, content="def f(x):\n    return x\n")),
+        turn(text="done"),
         turn(text="done"),
     ])
     svc = DeepAgentService(model=model, max_nudges=0)
@@ -143,7 +146,8 @@ def test_filesystem_only_spec_files_writable(apps, workspace, path, allowed):
 
 def test_reset_stops_a_thread_waiting_on_ask_user(apps, workspace):
     DeepAgentService, ScriptedChatModel, call, turn, build_script, repair_script = deps()
-    model = ScriptedChatModel([turn(call("ask_user", question="Which?", options=["a", "b"])),
+    model = ScriptedChatModel([turn(call("task", subagent_type="interpreter", description="draft")),
+                               turn(call("ask_user", question="Which?", options=["a", "b"])),
                                turn(call("draft_spec")), turn(text="never")])
     svc = DeepAgentService(model=model, max_nudges=0)
     tid = svc.start_build("fixture")

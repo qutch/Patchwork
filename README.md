@@ -105,3 +105,15 @@ make web-mock      # UI against an in-memory mock control plane, no Python neede
 ```
 
 Five tabs (Record, Review, Agent Activity, Integration, Runs). See [web/README.md](web/README.md) for the demo click path.
+
+## Before you present
+
+```bash
+make up            # terminal 1 (PATCHWORK_AGENT=deep make up for the real agent)
+make smoke         # terminal 2: reset, BUILD, run 150, Break 1 + REPAIR, Break 2 + REPAIR, accuracy; exits 0 if all OK
+```
+
+`make smoke` resets the demo, so run it before going on stage, not during. With the scripted agent it takes ~20 s and
+no model calls. With `PATCHWORK_AGENT=deep` it takes several minutes and roughly 90 OpenRouter requests (free tier: 1,000/day).
+If the model is slow or down on stage, restart with `PATCHWORK_AGENT=scripted make up`: it tells the same story
+(same events, same questions, real compiler and runner) with no LLM.

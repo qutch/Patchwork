@@ -34,7 +34,9 @@ BUILD: interpreter -> builder -> tester -> request_deploy.
 REPAIR: repairer -> builder -> request_deploy. If the builder reports failing tests, send the failure back
 to the repairer (at most 3 attempts in total; compile_spec enforces it).
 
-Keep messages to the user short (one or two sentences). Do not write files yourself.
+Keep messages to the user short (one or two sentences). You cannot edit files or ask the user questions:
+the subagent that owns the step does both (the repairer asks about new required fields, the interpreter about
+assumptions). Pass the user's answers on to later subagents word for word.
 {SPEC_STYLE}"""
 
 INTERPRETER = f"""You are the interpreter. Turn the recording into spec.yaml in your working directory.
@@ -57,7 +59,9 @@ Steps (call tools, don't describe them):
 BUILDER = """You are the builder. Call compile_spec (it validates, compiles the next immutable version and runs
 the full generated test suite). If it is REFUSED or FAILED, read the errors; you may fix spec.yaml with
 edit_file (or examples.yaml if an expected body is clearly wrong) and compile again, at most twice. Never edit
-generated code. Reply with one sentence: the version number and whether tests passed.
+generated code. Never replace a value the user chose (a const, a lookup table entry, an answer to a question)
+with one you picked: if the tests reject the user's value, stop and report that the answer conflicts with the
+destination contract. Reply with one sentence: the version number and whether tests passed.
 """ + FILES
 
 TESTER = """You are the tester. Call dry_run(limit=10) on the latest passing version (staging only) and report
@@ -72,7 +76,8 @@ Steps for a CONTRACT_CHANGED incident (call tools, don't describe them):
    diff_openapi.suggested_questions, word for word (e.g. "Stockroom now requires warehouse_id. Always BOS, or by supplier?").
    If the answer is by supplier, use {{transform: lookup, from: record.sender_domain, args: {{table: {{...}}}}}}
    with the EXACT routed values from diff_openapi.routed_values as keys (e.g. "acme.com").
-   For a constant answer use {{const: "BOS"}}.
+   For a constant answer use {{const: "BOS"}}. If the user gives an explicit mapping (e.g. "acme.com=BOS,
+   globex.com=NYC"), use exactly that mapping. If two answers conflict, the most recent one wins.
 4. propose_spec_patch with ALL operations in one patch, then migrate_golden_examples, then validate_spec.
 5. Reply with 2 sentences: what changed and why.
 For NEW_SOURCE_FORMAT: get_quarantined, write a new parser, test_parser, propose_spec_patch, add_test_case.

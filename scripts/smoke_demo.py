@@ -18,7 +18,27 @@ import time
 import httpx
 
 NAME = "po_to_stockroom"
-WAREHOUSE_ANSWER = "By supplier (acme→BOS, globex→NYC, initech→BOS)"
+MAPPING = "acme.com=BOS, globex.com=NYC, initech.com=BOS, umbrella.com=NYC"
+
+
+def presenter_answer(question: str, options: list[str]) -> str:
+    """Answer like one consistent presenter: unknown messages are quarantined, warehouses go by supplier
+    (acme/initech BOS, globex/umbrella NYC), and case quantities become units."""
+    q, low = question.lower(), [o.lower() for o in options]
+
+    def pick(*needles):
+        return next((o for o, lo in zip(options, low) if any(n in lo for n in needles)), None)
+
+    if "case" in q:
+        return pick("units =", "× per case", "x per case", "yes") or "Yes: units = cases × units per case"
+    if "warehouse" in q or "warehouse_id" in q:
+        if "umbrella" in q:
+            return pick("nyc") or "NYC"
+        return (pick("acme.com=bos, globex.com=nyc") or pick("supplier", "sender_domain", "sender domain")
+                or f"By supplier: {MAPPING}")
+    if "not order" in q or "not purchase order" in q or "no sku" in q or "holiday" in q:
+        return pick("quarantine") or "Quarantine them for review"
+    return options[0] if options else "Use your best judgement and say what you chose."
 
 
 class Fail(Exception):
@@ -70,24 +90,24 @@ class Demo:
         import json
         return [json.loads(line[5:]) for line in r.text.splitlines() if line.startswith("data:")]
 
-    def answer_until_deploy(self, tid, expect_version: int):
-        """Answer ask_user interrupts until the agent asks to deploy; approve that."""
-        for _ in range(6):
+    def answer_until_deploy(self, tid, after_version: int):
+        """Answer ask_user interrupts until the agent asks to deploy; approve that. A failed compile
+        still uses up a version number, so expect any version newer than `after_version`."""
+        for _ in range(8):
             s = self.wait_thread(tid, {"waiting", "done"})
             check(s["state"] == "waiting", f"agent finished without asking to deploy: {s}")
             p = s["pending"]
             if p["type"] == "ask_user":
-                opts = p.get("options") or []
-                ans = next((o for o in opts if "supplier" in o.lower()), None) or (opts[0] if opts else WAREHOUSE_ANSWER)
+                ans = presenter_answer(p["question"], p.get("options") or [])
                 print(f"           ask_user: {p['question'][:90]!r} -> {ans!r}")
                 self.post(f"/api/agent/{tid}/resume", {"interrupt_id": p["interrupt_id"], "answer": ans})
                 continue
             check(p["type"] == "request_deploy", f"unexpected interrupt {p['type']}")
-            check(p["version"] == expect_version, f"deploy request for v{p['version']}, expected v{expect_version}")
+            check(p["version"] > after_version, f"deploy request for v{p['version']}, expected a version after v{after_version}")
             check(p["tests"]["passed"], f"generated tests failed: {p['tests']}")
             self.post(f"/api/agent/{tid}/resume", {"interrupt_id": p["interrupt_id"], "decision": "approve"})
             self.wait_thread(tid, {"done"})
-            return f"v{expect_version} approved ({p['tests'].get('summary', 'tests passed')})"
+            return f"v{p['version']} approved ({p['tests'].get('summary', 'tests passed')})"
         raise Fail("too many questions from the agent")
 
     def run(self, body=None):
@@ -99,6 +119,9 @@ class Demo:
                 return run
             time.sleep(0.3)
         raise Fail(f"run {rid} still running after 300s")
+
+    def active(self) -> int:
+        return self.get(f"/api/integrations/{NAME}")["active_version"] or 0
 
     def stockroom_rows(self):
         return len(httpx.get(f"{self.stock}/api/incoming", timeout=10).json())
@@ -119,7 +142,7 @@ class Demo:
 
         def build():
             state["tid"] = self.post("/api/integrations/build", {"recording_id": "fixture"})["thread_id"]
-            return self.answer_until_deploy(state["tid"], 1)
+            return self.answer_until_deploy(state["tid"], 0)
         self.step("BUILD from the fixture recording", build)
 
         if ai_off_check:
@@ -153,12 +176,13 @@ class Demo:
 
         def repair1():
             self.api.put("/api/settings", json={"ai_enabled": True}).raise_for_status()
+            state["v1"] = self.active()
             tid = self.post(f"/api/incidents/{state['inc1']}/repair")["thread_id"]
-            return self.answer_until_deploy(tid, 2)
+            return self.answer_until_deploy(tid, state["v1"])
         self.step("REPAIR contract change", repair1)
 
         def after_repair():
-            check(self.get(f"/api/integrations/{NAME}")["active_version"] == 2, "v2 not active")
+            check(self.active() > state["v1"], "the repaired version is not active")
             run = self.run()
             check(run["status"] == "completed", run)
             acc = self.get("/api/bench/accuracy", params={"integration": NAME})
@@ -180,7 +204,7 @@ class Demo:
 
         def repair2():
             tid = self.post(f"/api/incidents/{state['inc2']}/repair")["thread_id"]
-            out = self.answer_until_deploy(tid, 3)
+            out = self.answer_until_deploy(tid, self.active())
             acc = self.get("/api/bench/accuracy", params={"integration": NAME})
             check(acc["accuracy"] == 1.0, acc.get("mismatches"))
             return f"{out}; accuracy={acc['accuracy']:.0%} ({acc['records']} records)"

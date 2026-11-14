@@ -7,11 +7,11 @@ Derived from *Patchwork-plus: Technical Plan* (Nov 13, 2026). Hours are on the 3
 
 | Phase | Hours | Milestone (demo-able proof) | Status |
 |---|---|---|---|
-| 0. Kickoff | 0–3 | Open decisions closed; fixtures committed | fixtures ✅, decisions ⏳ |
+| 0. Kickoff | 0–3 | Open decisions closed; fixtures committed | fixtures ✅, model ✅, team decisions ⏳ |
 | **1. MVP: the spine** | 0–12 | **H12: 100 records, 0 LLM calls**; Break 1 *detected* | ✅ done |
-| 2. BUILD loop | 12–20 | **H20: record → spec → code → run, live** | next |
-| 3. REPAIR loop | 20–28 | **H28: Break 1 repaired with approval** | |
-| 4. Benchmarks & hardening | 28–32 | Benchmark page, Break 2 (stretch) | |
+| **2. BUILD loop** | 12–20 | **H20: record → spec → code → run, live** | ✅ done |
+| **3. REPAIR loop** | 20–28 | **H28: Break 1 repaired with approval** | ✅ done (+ Break 2) |
+| 4. Benchmarks & hardening | 28–32 | Benchmark page, Break 2 (stretch) | Break 2 ✅, `make smoke` ✅; benchmark page next |
 | 5. Freeze & rehearse | 32–36 | Code freeze H32, 5 rehearsals, backup video, Devpost | |
 
 ---
@@ -21,8 +21,8 @@ Derived from *Patchwork-plus: Technical Plan* (Nov 13, 2026). Hours are on the 3
 - [x] `fixtures/spec.yaml`: hand-written spec covering all 3 supplier formats (D2 builds against it, D3 uses it as the template the agent edits)
 - [x] `fixtures/recording.json`: hand-made recording in the recorder's event format, built from seeded message `msg-0007` (D3 builds the interpreter against it)
 - [x] `fixtures/examples.yaml`: confirmed samples → golden tests
-- [ ] **Model and provider**, plus who holds the API keys
-- [ ] **`deepagents` version pin**, confirmed by an H0 spike: hello-world agent with one tool + an interrupt/resume round-trip (D3)
+- [x] **Model and provider**: OpenRouter, `nvidia/nemotron-3-ultra-550b-a55b:free` with `particle-ai/particle-1:free` as fallback (free tier: 20 req/min, 1,000/day). Key lives only in the gitignored `.env`; the runner never sees it
+- [x] **`deepagents` version pin**: `deepagents==0.7.38`, `langchain-openrouter==0.2.9` (full list and why interrupts are blocking tools in `agents/README.md`)
 - [ ] **Spec v1 field names** signed off by all four people (see "Decisions the MVP made" below)
 - [ ] Real business? Outreach owner and the Saturday-noon go/no-go
 - [ ] Destination: Stockroom only, or Stockroom + Google Sheet
@@ -46,7 +46,13 @@ Everything the plan says must work with the AI turned off. Each later phase plug
 
 **Not yet in the MVP:** agents, live recorder, matcher, FastAPI control plane/SSE, React UI, replay of quarantined records, version diffs.
 
-## Phase 2: BUILD loop (H12–20) → *record → spec → code → run, live*
+## Phase 2: BUILD loop (H12–20) → *record → spec → code → run, live* ✅
+
+Built by four parallel workstreams and merged: **Capture** (`capture/`, `matcher/`, Inbox admin endpoints),
+**Agents** (`agents/deep.py`: deepagents + OpenRouter; `agents/scripted.py`: the no-LLM fallback),
+**Control plane** (`control/api/`: FastAPI + SSE, runs, incidents, versions/diffs, demo controls),
+**UI** (`web/`: five tabs). `make up` + `make web` runs it; `make smoke` drives the whole demo over HTTP.
+The table below is the original plan, kept for reference.
 
 | Owner | Work | Plugs into |
 |---|---|---|
@@ -68,21 +74,21 @@ Tool → MVP function mapping (already built, so agents get guardrails for free)
 | `dry_run` | `control.ops.run_sandboxed(dry_run=True)` | staging sink only; errors if no `staging_base_url` |
 | `request_deploy` | `control.ops.deploy` | refuses unless tests passed on that version |
 
-## Phase 3: REPAIR loop (H20–28) → *Break 1 repaired with approval*
+## Phase 3: REPAIR loop (H20–28) → *Break 1 repaired with approval* ✅
 
-- [ ] D3: REPAIR mode (same supervisor, first message = incident) + **repairer** subagent: `get_incident`, `get_quarantined(limit)`, `diff_openapi(old,new)`, `read_openapi`, `test_parser`, `propose_spec_patch` (JSON Patch on the spec only). Max 3 attempts, then escalate
-- [ ] D3: Break 1 script: auto-map `product_id→sku`, `quantity→quantity_delta`; `ask_user` "Always BOS, or by supplier?" → `lookup` on `record.sender_domain` (already supported and tested in `test_compiler.py`)
-- [ ] D2: version diff endpoint (spec JSON Patch + unified code diff); **replay quarantined records** after deploy (raw records are already stored in `records.raw`; idempotency keys make the replay safe)
-- [ ] D2: v(N+1) golden tests: update expected bodies for the new contract and add tests made from quarantined records
-- [ ] D4: **Integration** tab (versions, code viewer, test results, diffs) + Approve/Reject cards for `ask_user` and `request_deploy`
-- [ ] D1: Break 2 data (4th supplier, `Item code: … / 2 cases (12/case)`); Sheets adapter only if a real business commits
+- [x] D3: REPAIR mode (same supervisor, first message = incident) + **repairer** subagent: `get_incident`, `get_quarantined(limit)`, `diff_openapi(old,new)`, `read_openapi`, `test_parser`, `propose_spec_patch` (JSON Patch on the spec only). Max 3 attempts, then escalate
+- [x] D3: Break 1 script: auto-map `product_id→sku`, `quantity→quantity_delta`; `ask_user` "Always BOS, or by supplier?" → `lookup` on `record.sender_domain` (already supported and tested in `test_compiler.py`)
+- [x] D2: version diff endpoint (spec JSON Patch + unified code diff); **replay quarantined records** after deploy (raw records are already stored in `records.raw`; idempotency keys make the replay safe)
+- [x] D2: v(N+1) golden tests: update expected bodies for the new contract and add tests made from quarantined records
+- [x] D4: **Integration** tab (versions, code viewer, test results, diffs) + Approve/Reject cards for `ask_user` and `request_deploy`
+- [x] D1: Break 2 data (4th supplier, `Item code: … / 2 cases (12/case)`). Sheets adapter: not built (only if a real business commits)
 
 ## Phase 4: Benchmarks & hardening (H28–32)
 
 - [ ] D1: benchmark runs: manual (time 5, extrapolate), computer-use agent (run 5, extrapolate), Patchwork (measured on 100). Label every extrapolation
 - [ ] D4: benchmark page: break-even chart, share of breaks caught before any bad write, repair time; slides
-- [ ] D2: hardening; replay mode (stream a recorded agent run from a saved event log) as the live-demo fallback
-- [ ] D3: Break 2 (stretch): new parser + `multiply` transform, confirm case math with the user
+- [x] D2: hardening (store migration/lock races, run-busy race, reset cancels agent threads, stale-run recovery on restart). Live-demo fallback: `PATCHWORK_AGENT=scripted` runs both breaks with no model
+- [x] D3: Break 2: new parser with `combine: product` (`multiply` only takes a constant, and units per case vary), case math confirmed with the user, warehouse asked when routing by supplier
 
 ## Phase 5: Freeze (H32–36)
 
