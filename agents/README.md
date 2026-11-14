@@ -116,6 +116,16 @@ Candidates come from `workspace/recordings/<id>/candidates.json`, then `matcher.
 - **Scripted fallback** (`scripted_v2.py`): same event types, same tool functions; `propose_parser` picks extractors with a
   fixed preference order (JSON-LD JobPosting, a single-valued `h1`, meta, `<title>` refine), so a learn on stage works
   with no model and the checks still decide.
+Live runs (2026-11-14, `PATCHWORK_MODEL=particle-ai/particle-1:free`, W1's compiler stood in by `FakeEngine`;
+`pytest -m live -s tests/agents/test_deep_live.py -k "learn or form_repair"`):
+
+| Run | Result | Model calls | Seconds |
+|---|---|---|---|
+| LEARN careers.airbnb.com (branded Greenhouse) | pass, auto-deployed (`h1.text-size-12`, JSON-LD Organization name) | 8 | 29 |
+| LEARN job-boards.greenhouse.io | pass, auto-deployed (`h1.section-header`, `head title` refine); reads the sibling page too | 8 | 29 |
+| REPAIR form rename Company → Employer (first try) | **fail**: the supervisor paged through `/examples.yaml` (whole pages) until the 80-call budget ran out | 80 | ~240 |
+| REPAIR form rename, after denying `/examples.yaml` reads + 30-call cap + hint | pass, `move` patch, goldens migrated, approved | 17 | 59 |
+
 - W1/W4a seams (until merged): `ToolContext.validate_spec_text`, `compile_and_test`, `fetch_contract`, `get_page_record`.
   Offline tests replace them with `tests/agents/jobs.py::FakeEngine` (real Store versions, real `ops.deploy`).
 
