@@ -186,7 +186,7 @@ make smoke-v2-stage        # the 2-minute script against it on the demo Google F
 ```
 
 Measured on 2026-11-14 (numbers and their `kind` in `bench/v2/results.json`):
-- 60/60 real postings right, 0 wrong rows, 0 held; 4 layouts learned. Patchwork 32 AI calls (8 per learn,
+- 60/60 real postings right, 0 wrong rows, 0 held; 4 layouts learned. Patchwork 28 AI calls (7 per learn,
   measured on the deep agent) vs a browser agent's 360 (**estimate**: 6 calls per posting, not run).
 - Known layout: ~0.7 s per posting on the fixture form (the Google Form adds ~1.3–2 s per submission).
 - Deep agent on Claude Haiku 5.5 (`PATCHWORK_MODEL=anthropic:claude-haiku-5-5`), 2-minute script, three runs in a
