@@ -35,10 +35,10 @@ function Header() {
   const waiting = threads.some((t) => t.state === "waiting");
   return (
     <header className="border-b border-line bg-surface sticky top-0 z-20">
-      <div className="max-w-[1320px] mx-auto px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+      <div className="max-w-[1320px] mx-auto px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-3">
         <div className="flex items-baseline gap-2">
           <span className="display text-[22px] font-extrabold tracking-tight">Patchwork</span>
-          <span className="font-mono text-xs text-muted hidden sm:inline">integration console</span>
+          <span className="font-mono text-xs text-muted hidden 2xl:inline">integration console</span>
         </div>
         <nav className="flex flex-wrap gap-1 order-3 lg:order-none w-full lg:w-auto" aria-label="Sections">
           {TABS.map((t, i) => {
@@ -69,7 +69,7 @@ function Header() {
         </nav>
         <div className="ml-auto flex items-center gap-3">
           {settings && (
-            <span className="font-mono text-xs text-muted hidden md:inline" title="Agent implementation and model">
+            <span className="font-mono text-xs text-muted hidden 2xl:inline" title="Agent implementation and model">
               agent: {settings.agent}
             </span>
           )}
