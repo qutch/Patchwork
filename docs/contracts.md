@@ -86,6 +86,24 @@ Demo-app additions (Capture owns `demo_apps/`):
 - Inbox `POST /admin/deliver {"count": N}` appends N new deterministic messages (same 3 formats, same mix ratio), `received_at` after the latest. `POST /admin/reset` restores the 150-message seed.
 - Inbox `POST /admin/new_supplier {"count": N}` delivers N messages in the Break 2 format from `umbrella.com`: `Item code: WID-104 / 2 cases (12/case)` + a PO reference. Ground truth for both endpoints is exposed at `GET /admin/ground_truth`.
 
+**Additions made while building Capture (all additive; nothing above was removed or renamed):**
+- Recording dir also holds `meta.json` (id, intent, allowlist, start_url, status, started_at, stopped_at, pid), `recorder.log` and, while stopping, a `STOP` file. `recording.json` also carries `start_url`. The recorder writes `candidates.json` itself on stop. `POST /api/recordings/{id}/candidates` can still re-run the matcher.
+- `RecordingSession` also has `meta()` and `summary()`. `summary()` returns the `list_recordings()` row. `stop()` blocks for up to 20 s while the recorder flushes, then kills the recorder and finalizes from `events.jsonl` itself.
+- Event extras:
+  - net events carry `origin` (`http://host:port`), and may carry `req_headers` (secret and browser-noise headers removed), `resp_truncated` / `req_truncated` (the body is then a string cut at 20 KB), `resp_type` (a non-text body is not stored) or `error` (failed request).
+  - keydown events carry `key: "Enter"`.
+  - Element descriptors add `id` and `accessible_name`. `name` is the `name` attribute for form controls, otherwise the accessible name, as in the fixture.
+- Redaction also masks values in JSON/form bodies under secret-looking keys (`password`, `token`, `api_key`, `otp`, `cvv`, `card_number`…). It also masks keys whose form field on the page was a password/cc-*/one-time-code field, and drops `X-Api-Key` / `X-CSRF-Token`.
+- candidates.json extras:
+  - `sink.status`
+  - `source.detail` (`{"method": "GET", "path": "/api/messages/{id}"}`) when the record came from a detail GET
+  - `cast` is always present (`null` for strings)
+  - text mappings add `matched` (source text), `regex_ok` (the regex re-extracts the value), optional `copied: true` and `alternatives` (other places the value appeared)
+  - `kind: "copy"` (`{text}`) when only copied text explains a value
+  - with no mutating request captured, `sink` is `null` and typed input values are the destination values
+- Ground truth rows for delivered messages add `delivered: true`. Rows for new-supplier messages add `new_supplier: true` and `intended: {body, body_v2, cases, per_case}`, which is what a repaired spec should send. Score delivered runs with `bench.accuracy.score(records, truth=<GET /admin/ground_truth>)`. The default truth covers only the 150-message seed.
+- The Inbox HTML pages now render from `GET /api/messages[/{id}]` with `fetch`, so a recording sees the source record. The JSON API is unchanged.
+
 ## 3. Agents (owned by Agents)
 
 `agents/interface.py` is the contract (already implemented and tested): `AgentService` with

@@ -128,6 +128,149 @@ def generate(seed: int = 42, valid_per_supplier: int = 40, n_dupes: int = 10,
     return Seed(messages=messages, ground_truth=truth)
 
 
+# --------------------------------------------------------------------------------------
+# Live deliveries (Inbox POST /admin/deliver and /admin/new_supplier).
+# Added after generate() so the 150-message seed above stays byte-for-byte unchanged.
+# --------------------------------------------------------------------------------------
+
+DELIVERY_BLOCK = 50  # every block of 50 deliveries has exactly the seed's mix ratio
+DELIVERY_MIX = {"valid": 40, "resend": 3, "invalid_qty": 3, "unknown_sku": 3, "junk": 1}
+DELIVERY_PO_OFFSET = 100  # delivered POs start at PO-1101 / PO-2101 / PO-3101
+
+NEW_SUPPLIER = {"domain": "umbrella.com", "sender": "purchasing@umbrella.com", "po_base": 4000,
+                "warehouse": "NYC"}
+
+
+def render_new_supplier(po: str, sku: str, cases: int, per_case: int) -> tuple[str, str]:
+    """Break 2: a fourth supplier quoting cases, not units."""
+    return (
+        f"Umbrella order {po}",
+        f"Good morning,\n\nPlease ship the following against our reference {po}.\n\n"
+        f"Item code: {sku} / {cases} cases ({per_case}/case)\n\nBest regards,\nUmbrella Purchasing",
+    )
+
+
+def _next_time(after: str, rng: random.Random) -> str:
+    t = datetime.strptime(after, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    t += timedelta(minutes=rng.randint(3, 40), seconds=rng.randint(0, 59))
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _seed_valid_items(seed: int) -> list[dict[str, Any]]:
+    """Seed POs that end as success, as delivery items (resend candidates for the first block)."""
+    s = generate(seed=seed)
+    out = []
+    for m in s.messages:
+        gt = s.ground_truth[m["id"]]
+        if gt["outcome"] == "success":
+            b = gt["body"]
+            out.append({"domain": m["sender_domain"], "po": b["reference"], "sku": b["product_id"],
+                        "qty": b["quantity"], "expect": ("success", None)})
+    return out
+
+
+def _delivery_items(n: int, seed: int) -> list[dict[str, Any]]:
+    """The first n items of the deterministic delivery stream (independent of timing)."""
+    known = sorted(CATALOG)
+    domains = list(SUPPLIERS)
+    counters = {d: 0 for d in SUPPLIERS}
+    seed_valid: list[dict[str, Any]] | None = None
+    items: list[dict[str, Any]] = []
+    block = 0
+    while len(items) < n:
+        rng = random.Random(f"deliver:{seed}:{block}")
+        kinds = [k for k, c in DELIVERY_MIX.items() for _ in range(c)]
+        rng.shuffle(kinds)
+        for j, kind in enumerate(kinds):
+            d = domains[(block * DELIVERY_BLOCK + j) % 3]
+            if kind == "resend":
+                pool = [it for it in items if it["expect"][0] == "success"]
+                if not pool:
+                    seed_valid = seed_valid or _seed_valid_items(seed)
+                    pool = seed_valid
+                items.append(dict(rng.choice(pool), expect=("duplicate", None), resend=True))
+            elif kind == "junk":
+                sender, jd, subject, body = JUNK[block % len(JUNK)]
+                items.append({"domain": jd, "junk": (sender, subject, body),
+                              "expect": ("quarantined", "PARSE_NO_MATCH")})
+            else:
+                counters[d] += 1
+                po = f"PO-{SUPPLIERS[d]['po_base'] + DELIVERY_PO_OFFSET + counters[d]}"
+                if kind == "valid":
+                    items.append({"domain": d, "po": po, "sku": rng.choice(known), "qty": rng.randint(1, 120),
+                                  "expect": ("success", None)})
+                elif kind == "invalid_qty":
+                    items.append({"domain": d, "po": po, "sku": rng.choice(known), "qty": 0,
+                                  "expect": ("quarantined", "VALIDATION_FAILED")})
+                else:
+                    items.append({"domain": d, "po": po, "sku": UNKNOWN_SKUS[(block + j) % len(UNKNOWN_SKUS)],
+                                  "qty": rng.randint(1, 120), "expect": ("quarantined", "NOT_FOUND")})
+        block += 1
+    return items[:n]
+
+
+def deliveries(start: int, count: int, after: str, first_id: int, seed: int = 42) -> Seed:
+    """Items `start .. start+count-1` (0-based) of the delivery stream: the same 3 formats and
+    the seed's mix (valid, resends, zero qty, unknown SKU, junk). Received after `after`;
+    ids continue from `first_id`. Ground truth says what the v1 spec should do with each."""
+    items = _delivery_items(start + count, seed)[start:]
+    rng = random.Random(f"deliver-times:{seed}:{start}:{after}")
+    messages, truth = [], {}
+    t = after
+    for k, it in enumerate(items):
+        t = _next_time(t, rng)
+        mid = f"msg-{first_id + k:04d}"
+        if "junk" in it:
+            sender, subject, body = it["junk"]
+        else:
+            sender = SUPPLIERS[it["domain"]]["sender"]
+            subject, body = render(it["domain"], it["po"], it["sku"], it["qty"])
+            if it.get("resend"):
+                subject = f"RESEND: {subject}"
+        messages.append({"id": mid, "sender": sender, "sender_domain": it["domain"], "subject": subject,
+                         "body": body, "received_at": t})
+        outcome, reason = it["expect"]
+        gt: dict[str, Any] = {"outcome": outcome, "reason": reason, "delivered": True}
+        if outcome == "success":
+            gt["body"] = {"product_id": it["sku"], "quantity": it["qty"], "reference": it["po"]}
+            gt["body_v2"] = {"sku": it["sku"], "quantity_delta": it["qty"], "reference": it["po"],
+                             "warehouse_id": SUPPLIER_WAREHOUSE[it["domain"]]}
+        truth[mid] = gt
+    return Seed(messages=messages, ground_truth=truth)
+
+
+def new_supplier_messages(start: int, count: int, after: str, first_id: int, seed: int = 42) -> Seed:
+    """Break 2 messages from umbrella.com. The v1 spec has no parser for them, so their
+    ground truth is quarantined:PARSE_NO_MATCH; `intended` holds the body a repaired spec
+    should send (quantity = cases * per_case)."""
+    known = sorted(CATALOG)
+    rng = random.Random(f"new-supplier-times:{seed}:{start}:{after}")
+    messages, truth = [], {}
+    t = after
+    for k in range(count):
+        n = start + k
+        item_rng = random.Random(f"new-supplier:{seed}:{n}")
+        po = f"PO-{NEW_SUPPLIER['po_base'] + n + 1}"
+        sku = item_rng.choice(known)
+        cases, per_case = item_rng.randint(1, 10), item_rng.choice([6, 12, 24])
+        subject, body = render_new_supplier(po, sku, cases, per_case)
+        t = _next_time(t, rng)
+        mid = f"msg-{first_id + k:04d}"
+        messages.append({"id": mid, "sender": NEW_SUPPLIER["sender"], "sender_domain": NEW_SUPPLIER["domain"],
+                         "subject": subject, "body": body, "received_at": t})
+        qty = cases * per_case
+        truth[mid] = {
+            "outcome": "quarantined", "reason": "PARSE_NO_MATCH", "delivered": True, "new_supplier": True,
+            "intended": {
+                "body": {"product_id": sku, "quantity": qty, "reference": po},
+                "body_v2": {"sku": sku, "quantity_delta": qty, "reference": po,
+                            "warehouse_id": NEW_SUPPLIER["warehouse"]},
+                "cases": cases, "per_case": per_case,
+            },
+        }
+    return Seed(messages=messages, ground_truth=truth)
+
+
 def main() -> None:
     out = Path("workspace/seed")
     out.mkdir(parents=True, exist_ok=True)
