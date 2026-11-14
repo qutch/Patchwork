@@ -181,6 +181,8 @@ Chrome extension (Alt+Shift+P) --POST /api/pages--> page inbox --> run jobs_to_t
 make smoke-v2-offline      # the 2-minute script on its own in-process stack (fixture form, scripted agent), ~20 s
 make bench-v2              # 60 postings, 5 platforms -> bench/v2/results.json (GET /api/bench/v2), no model calls
 make smoke-v2              # the same script against `make up`; PATCHWORK_FORM=google for the demo Form + Sheet
+make stage-v2              # the stage control plane on :38091 (workspace-v2/, deep agent; baseline already built)
+make smoke-v2-stage        # the 2-minute script against it on the demo Google Form + Sheet (pauses for the rename)
 ```
 
 Measured on 2026-11-14 (numbers and their `kind` in `bench/v2/results.json`):

@@ -62,3 +62,26 @@ smoke-v2:
 
 smoke-v2-offline:
 	$(PY) scripts/smoke_v2.py --in-process
+
+# v2 stage (I-2): control plane on :38091 over workspace-v2/ (gitignored; holds the TEACH + Greenhouse/Ashby baseline
+# built on the demo Google Form), deep agent. Never touches 8000-8003/5180. smoke-v2-stage runs the 2-minute script
+# against it on the demo Form + Sheet: it pauses for you to rename "Company" -> "Employer" in the Form editor.
+DEMO_FORM_URL ?= https://docs.google.com/forms/d/e/1FAIpQLSeJSRbMx1pr9nMwj4n1E5vOUxmz2Zo19-lJXyz0-8HhmfeNoQ/viewform
+DEMO_SHEET_CSV ?= https://docs.google.com/spreadsheets/d/1sEDvJMO4sQN3RJxo1JKFqqfrDfQTjZrNL2Ztlz0j60M/gviz/tq?tqx=out:csv&sheet=Form%20Responses%201
+STAGE_PORT ?= 38091
+STAGE_AGENT ?= deep
+.PHONY: stage-v2 web-stage smoke-v2-stage
+stage-v2:
+	PATCHWORK_WORKSPACE=$(CURDIR)/workspace-v2 PATCHWORK_AGENT=$(STAGE_AGENT) \
+	PATCHWORK_MODEL=$${PATCHWORK_MODEL:-particle-ai/particle-1:free} \
+	PATCHWORK_MODEL_FALLBACK=$${PATCHWORK_MODEL_FALLBACK:-nvidia/nemotron-3-ultra-550b-a55b:free} \
+	PATCHWORK_AI_ENABLED=1 $(PY) -m control.api --port $(STAGE_PORT)
+
+web-stage:
+	test -d web/node_modules || (cd web && npm ci)
+	cd web && PATCHWORK_API=http://127.0.0.1:$(STAGE_PORT) npm run dev -- --port 5181
+
+smoke-v2-stage:
+	PATCHWORK_CONTROL=http://127.0.0.1:$(STAGE_PORT) PATCHWORK_FORM=google PATCHWORK_DEMO_FORM_URL='$(DEMO_FORM_URL)' \
+	PATCHWORK_DEMO_SHEET_CSV='$(DEMO_SHEET_CSV)' PATCHWORK_SMOKE_TIMEOUT=$${PATCHWORK_SMOKE_TIMEOUT:-300} \
+	$(PY) scripts/smoke_v2.py
