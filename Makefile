@@ -48,3 +48,17 @@ web-mock:
 .PHONY: bench
 bench:
 	$(PY) -m bench.run
+
+# v2 proof (W5). bench-v2: 60 real postings from fixtures/postings through an in-process stack (fixture form,
+# control plane, scripted agent) on free ports, no model calls -> bench/v2/results.json (GET /api/bench/v2).
+# smoke-v2: the 2-minute script, every beat asserted, against `make up` (PATCHWORK_FORM=google for the demo Form;
+# it resets the v2 demo state). smoke-v2-offline: the same beats on an own in-process stack.
+.PHONY: bench-v2 smoke-v2 smoke-v2-offline
+bench-v2:
+	$(PY) -m bench.v2.run
+
+smoke-v2:
+	$(PY) scripts/smoke_v2.py
+
+smoke-v2-offline:
+	$(PY) scripts/smoke_v2.py --in-process
