@@ -7,9 +7,10 @@ an error message an agent can read and fix, instead of turning into a broken pro
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing_extensions import TypeAliasType
 
 IDENT = re.compile(r"^[a-z][a-z0-9_]*$")
 RECORD_PREFIX = "record."
@@ -281,6 +282,21 @@ class ValueSource(_Strict):
         return self
 
 
+# An API sink's body: values, or objects of values (`venue: {name: {from: venue}}`), as the API's schema nests them.
+BodyTree = TypeAliasType("BodyTree", "dict[str, Union[ValueSource, BodyTree]]")
+
+
+def flatten_body(body: dict[str, Any], prefix: str = "") -> dict[str, ValueSource]:
+    """A (possibly nested) body as {dotted path: value}: `{venue: {name: v}}` -> `{"venue.name": v}`."""
+    out: dict[str, ValueSource] = {}
+    for k, v in body.items():
+        if isinstance(v, dict):
+            out.update(flatten_body(v, f"{prefix}{k}."))
+        else:
+            out[f"{prefix}{k}"] = v
+    return out
+
+
 class Verify(_Strict):
     method: Literal["GET"] = "GET"
     path: str
@@ -293,9 +309,23 @@ class ApiSink(_Strict):
     base_url: str
     staging_base_url: str | None = None
     call: HttpCall
-    body: dict[str, ValueSource]
+    body: BodyTree
     verify: Verify | None = None
     auth: Auth | None = None  # contracts V13: sent on every sink request (names a credential, never a value)
+
+    @field_validator("body")
+    @classmethod
+    def _no_empty_objects(cls, v: dict) -> dict:
+        def walk(tree: dict, at: str) -> None:
+            if not tree:
+                raise ValueError(f"sink.body{at}: an object needs at least one value")
+            for k, sub in tree.items():
+                if "." in k:
+                    raise ValueError(f"sink.body{at}.{k}: nest objects instead of dotted keys")
+                if isinstance(sub, dict):
+                    walk(sub, f"{at}.{k}")
+        walk(v, "")
+        return v
 
     @field_validator("call")
     @classmethod
@@ -512,7 +542,7 @@ class Spec(_Strict):
 
     def sink_values(self) -> dict[str, ValueSource]:
         """The sink's value mapping: `body` for API sinks, `fields` for form and Airtable sinks."""
-        return self.sink.body if isinstance(self.sink, ApiSink) else self.sink.fields
+        return flatten_body(self.sink.body) if isinstance(self.sink, ApiSink) else self.sink.fields
 
     def _templated_calls(self) -> list[tuple[str, str]]:
         out = []

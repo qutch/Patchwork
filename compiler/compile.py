@@ -90,6 +90,19 @@ def value_expr(v: ValueSource) -> str:
     return repr(v.const)
 
 
+def body_literal(tree: dict[str, Any], indent: int = 8) -> str:
+    """The Python dict literal build_body returns: one line per value, nested objects nested."""
+    if not tree:
+        return "{}"
+    pad = " " * indent
+    lines = ["{"]
+    for k, v in tree.items():
+        val = body_literal(v, indent + 4) if isinstance(v, dict) else value_expr(v)
+        lines.append(f"{pad}{k!r}: {val},")
+    lines.append(" " * (indent - 4) + "}")
+    return "\n".join(lines)
+
+
 def rule_line(rule: Any) -> str:
     f = rule.field
     if rule.rule == "required":
@@ -170,6 +183,7 @@ def compile_spec(spec: Spec, *, version: int, out_root: Path, examples: list[Exa
         "spec_hash": spec_hash(spec),
         "compiler_version": COMPILER_VERSION,
         "body_exprs": {k: value_expr(v) for k, v in spec.sink_values().items()},
+        "body_literal": body_literal(spec.sink.body if spec.sink.kind == "api" else spec.sink_values()),
         "rule_lines": [rule_line(r) for r in spec.validate_],
         "negative_cases": _negative_cases(spec),
         "uses_transforms": bool(needed),

@@ -64,9 +64,5 @@ def build_body(fields: dict, record: dict) -> dict:
 {% endfor %}
     })
 {% else %}
-    return {
-{% for key, expr in body_exprs.items() %}
-        {{ key|py }}: {{ expr }},
-{% endfor %}
-    }
+    return {{ body_literal }}
 {% endif %}

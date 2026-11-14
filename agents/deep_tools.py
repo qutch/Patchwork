@@ -92,7 +92,7 @@ def is_label_keyed(spec: dict | None) -> bool:
 def sink_values(spec: dict) -> dict:
     """`sink.body` (API sinks) or `sink.fields` (form and Airtable sinks): what every reference check looks at."""
     sink = spec.get("sink") or {}
-    return sink.get("fields") if is_label_keyed(spec) else (sink.get("body") or {})
+    return sink.get("fields") if is_label_keyed(spec) else body_to_dotted(sink.get("body") or {})
 
 
 def sink_values_path(spec: dict) -> str:
