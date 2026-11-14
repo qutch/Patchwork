@@ -57,6 +57,8 @@ Steps (call tools, don't describe them):
 PAGE -> FORM recordings (get_candidates shows source.kind "page" and sink.kind "form"): call draft_spec() with
 no arguments (it writes a page parser from the copied elements and the form fields), then test_parser(),
 confirm the constant values (e.g. the Email) with ONE ask_user, validate_spec, and reply. Skip steps 3-7.
+If get_candidates shows a `destination` (an Airtable table), draft_spec writes the Airtable sink itself and asks
+the user about every form question without a field of the same name: never ask that again or map it yourself.
 {SPEC_STYLE}"""
 
 BUILDER = """You are the builder. Call compile_spec (it validates, compiles the next immutable version and runs

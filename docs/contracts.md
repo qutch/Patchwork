@@ -811,6 +811,18 @@ sink:
   `scripts/smoke_v2.py --sink airtable` runs the 2-minute script against the fake (in-process) or the real base
   (`PATCHWORK_AIRTABLE_BASE_ID`, `PATCHWORK_AIRTABLE_TABLE`, credential `AIRTABLE_TOKEN`; the rename is by hand, or via
   the Meta API when the token also has `schema.bases:write`).
+- *Added by A2 (additive):* field types not listed above (collaborators, barcodes, AI text, ...) are omitted
+  like computed ones; `info` is `{title: <table name>, x-patchwork-kind: airtable, x-airtable-base}`. The compiler
+  bakes the mapped fields' types from the snapshot into `adapters.FIELD_TYPES` and `build_body` returns typed
+  values (`runner.airtable.convert_values`), so golden bodies hold what is sent; `send` types again against the
+  live contract, validates, POSTs and reads back in one step (`verify()` is a no-op, like forms). Runtime
+  surface: `Http.airtable_contract(base, table)` / `Http.airtable_submit(base, table, values)` (and
+  `FakeHttp`); `control.ops.fetch_airtable_contract(base_id, table, credential, headers=None)`. TEACH: the
+  build stores the destination as `destination` in `$WS/recordings/<id>/candidates.json` (a build without one
+  clears it); `draft_spec` asks once per unmatched label, options = the table's unmatched writable fields +
+  `"Skip this field"` (skip drops the label, recorded as a confirmed assumption); any other answer writes
+  nothing. `propose_spec_patch` refuses `/sink/base_id`, `/sink/table`, `/sink/auth`. The fake takes
+  `create_app(fields=REAL_BASE_FIELDS)` (no Email, like the real demo base) and `--no-email`.
 
 ## V15. Generalization: integrations that are not about jobs
 
