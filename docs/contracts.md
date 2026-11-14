@@ -259,6 +259,12 @@ Model calls: OpenRouter free tier, **20/min and 1,000/day shared by everyone**. 
 offline fake model. Per-workstream live-call budget: W3 ≤ 150, everyone else 0 (the integrator owns the rest).
 Never print, log or commit `.env` or the key.
 
+Demo targets (spike a, 2026-11-14): Form "Patchwork Test Form"
+`https://docs.google.com/forms/d/e/1FAIpQLSeJSRbMx1pr9nMwj4n1E5vOUxmz2Zo19-lJXyz0-8HhmfeNoQ/viewform` (env `PATCHWORK_DEMO_FORM_URL`);
+linked Sheet CSV `https://docs.google.com/spreadsheets/d/1sEDvJMO4sQN3RJxo1JKFqqfrDfQTjZrNL2Ztlz0j60M/gviz/tq?tqx=out:csv&sheet=Form%20Responses%201`
+(env `PATCHWORK_DEMO_SHEET_CSV`; header `Timestamp, Email Address, Job Title, Company, Link, Date Applied`; rows visible < 1 s
+after submit). Only the integrator's rehearsals and opt-in live checks submit to it; automated tests never do.
+
 ## V1. Page record (the page inbox's record, the integration's source record)
 
 ```json
@@ -312,6 +318,10 @@ fields:
   attribute instead. `jsonld` reads the same HTML via `jsonld_get` (`jsonld_type` default `JobPosting`).
 - Nothing matched, empty value, or the refine didn't match → `Quarantine("PARSE_NO_MATCH", "<parser>.<field>: …")`.
 - `attr` only with `css`; `jsonld_type` only with `jsonld`; `combine` only with a primary `regex`.
+- Runtime helpers (in `runner/lib.py`, used by generated parsers **and** by the agents' `test_parser`, so tests and runs
+  share one implementation): `extract_css(html, selector, attr, where) -> str`,
+  `extract_jsonld(html, path, jsonld_type, where) -> Any`, `refine_regex(value, pattern: re.Pattern, where) -> str`.
+  Each raises `Quarantine("PARSE_NO_MATCH", …)` on no match or an empty value.
 - `Source.html_field: str | None = None` is new; specs using `css`/`jsonld`/`fingerprint` must set it (validator error otherwise).
 
 ## V4. Routing and layout provenance (spec `Parser` additions)
@@ -340,10 +350,11 @@ sink:
   kind: form
   url: https://docs.google.com/forms/d/e/<id>/viewform
   fields:
-    Job title:    {from: title}
+    Email:        {const: demo@example.com}     # the demo Form collects a required email; taught as a constant
+    Job Title:    {from: title}
     Company:      {from: company}
     Link:         {from: record.canonical_url}
-    Date applied: {from: record.captured_date}
+    Date Applied: {from: record.captured_date}
   submit: Submit
   verify: {confirmation_text: "Your response has been recorded"}
 ```
@@ -351,9 +362,12 @@ sink:
 - `Sink` becomes a union discriminated by `kind`: `ApiSink` (v1, unchanged) | `FormSink`. Keys of `fields` are form
   labels; values use the same `ValueSource` vocabulary and the same reference checks as `body`.
 - Runtime (W1, `runner/forms.py`, Playwright headless Chromium, one browser per run, a fresh page per record):
-  open `url` → snapshot (V6) → resolve each label to **exactly one** control by accessible name (`normalize_ws`,
-  case-insensitive, trailing `*` / `(required)` ignored) → fill (text-like: fill; radio/select/checkbox: the option equal
-  to the value) → click the button whose accessible name is `submit` → wait up to 10 s for `confirmation_text`.
+  open `url` → snapshot (V6) → resolve each label to **exactly one** control: first by accessible name, else the single
+  control inside the `role=listitem` whose `role=heading` text equals the label (both `normalize_ws`'d, case-insensitive,
+  required markers `*` / `(required)` / `[aria-label="Required question"]` ignored; spike a: Google's Email input is
+  labelled "Your email", not by its heading) → fill (text-like: fill; radio/select/checkbox: the option equal
+  to the value) → click the button (`button` or `role=button`) whose accessible name **equals** `submit` (Google also shows "Clear form")
+  → wait up to 10 s for `confirmation_text`.
   0 or >1 controls for a label, a missing option, or a missing submit button → `SINK_CONTRACT`; no confirmation →
   `VERIFY_MISMATCH`; page didn't load in 15 s → `UNKNOWN`.
 - **Dry run** (`--dry-run`): open, snapshot, resolve, fill, **never click submit**; the outcome is `success` with detail
@@ -371,19 +385,21 @@ sink:
  "info": {"title": "Job tracker", "x-patchwork-kind": "form", "x-form-url": "https://docs.google.com/forms/d/e/<id>/viewform"},
  "paths": {"/form": {"post": {"requestBody": {"content": {"application/json": {"schema": {
    "type": "object", "additionalProperties": false,
-   "required": ["Company", "Job title"],
-   "properties": {"Job title": {"type": "string", "x-input": "text"},
+   "required": ["Email"],
+   "properties": {"Email": {"type": "string", "x-input": "email"},
+                  "Job Title": {"type": "string", "x-input": "text"},
                   "Seniority": {"type": "string", "x-input": "radio", "enum": ["Junior", "Senior"]}}}}}}}}}}
 ```
 
 - `x-input` ∈ `text|textarea|email|url|date|number|radio|checkbox|select`; `type` is always `string`. No volatile data
-  (no tokens, ids, timestamps): loading an unchanged form twice gives the same `runner.contract.openapi_hash`.
+  (no tokens, ids, timestamps; on Google: not the generated `iN` ids, `data-params`, `fbzx`, `jsname` or classes): loading an
+  unchanged form twice gives the same `runner.contract.openapi_hash` (spike a: stable across loads).
 - Compiled packages store it at `contract/openapi.json` as in v1; `manifest.json` has `sink_call: {method: POST, path: /form}`
   and `contract_kind: "form"` (`"openapi"` for API sinks).
 - **Preflight** (runner, before any write): fetch the live contract in the run's browser, compare hashes; if changed, run
   `runner.contract.validate_body` on the golden bodies; errors → block, `CONTRACT_CHANGED` incident with the same fields
   as v1 (`contract_errors`, `sink_call`, `old_openapi`, `new_openapi`). "Company" → "Employer" yields
-  `body.Company: not accepted by destination (no such property)` and, if required,
+  `body.Company: not accepted by destination (no such property)` and, if `Employer` is required,
   `body.Employer: required by destination but missing from body`.
 - `control.ops.fetch_contract(spec) -> dict` (W1): API sinks → `GET {base}/openapi.json` (today's `fetch_sink_openapi`,
   kept as an alias); form sinks → `runner.forms.fetch_form_contract(url)`. `compile_and_test` and the agents' tools use it.
@@ -412,10 +428,14 @@ built against `fixtures/pages/` and the fixture tracker form; per C8 it is never
 
 ## V8. Fixture tracker form (`demo_apps/tracker_form/`, W1)
 
-`create_app(labels: list[str] | None = None) -> FastAPI`; `python -m demo_apps.tracker_form --port 18010`.
-Default labels `["Job title", "Company", "Link", "Date applied"]`, all required short-answer. Markup mimics Google Forms:
-each question is `div[role=listitem]` with a `div[role=heading]` title and an `input` whose `aria-labelledby` points at it;
-a `Submit` button; after submit, a page saying `Your response has been recorded.`
+`python -m demo_apps.tracker_form --port 18010`.
+Default questions copy the demo Google Form (spike a, `fixtures/google_form/viewform.html`): `Email` (required, input
+`aria-label="Your email"`, not tied to its heading), then `Job Title`, `Company`, `Link`, `Date Applied` (short answer, not
+required). Markup mimics Google Forms: each question is `div[role=listitem]` with a `div[role=heading][aria-level=3]`
+title (required ones end with `<span aria-label="Required question"> *</span>`) and an `input type=text` whose
+`aria-labelledby` points at the heading; `div[role=button][aria-label=Submit]` and `div[role=button][aria-label="Clear form"]`;
+submitting leads to `/formResponse` saying `Your response has been recorded.` Empty required → `role=alert`
+"This is a required question", no row. `create_app(questions=[{label, required}] | None)`.
 `GET /` form · `POST /submit` · `GET /admin/rows` → `[{<label>: value, "_ts": iso}]` · `POST /admin/rename {from, to}` ·
 `POST /admin/reset` (rows cleared, labels back to default).
 
@@ -487,8 +507,11 @@ LEARN `done.result`: `{model_calls, seconds, page_id, parser_id, site, version, 
   validation rules. `record.*` values are exempt.
 - **Ambiguity check (code):** a field is ambiguous if its css selector matches elements with different normalised values,
   or if the learner proposed two passing extractors that disagree. Ambiguous → `ask_user` with the distinct values as options.
+- **Corroboration check (code):** a page value is *corroborated* if it also occurs (normalised, case-insensitive) in the
+  record's `title` (document.title), an `og:*`/`twitter:*`/`<title>` meta value, or a JSON-LD string. Spike b: title and
+  company are corroborated on all four platforms; page chrome (cookie banners, "Apply") is not.
 - **D2 auto-use, enforced in a tool:** the learned version is deployed without asking iff `learn_policy == "auto"`, the
-  exact version passed its full suite, every evidence check passed, nothing was ambiguous in this thread, and the JSON Patch
+  exact version passed its full suite, every evidence check passed, every value is corroborated, nothing was ambiguous in this thread, and the JSON Patch
   from the active spec only adds one parser (`add` ops under `/extract/parsers`). Otherwise `request_deploy` (a person).
   Either way the parser's `origin` records it (`approved_by: auto|human`).
 - Learn budget: target ≤ 8 model calls on the deep agent; the learner sees a compact page outline from a tool, never the
@@ -509,13 +532,14 @@ time, saved in the recording dir). Allowlist entries may be bare hosts (`docs.go
 {"recording_id": "…", "intent": "…",
  "source": {"kind": "page", "site": "jobs.lever.co", "url": "…", "snapshot": "snapshots/1.html"},
  "sink": {"kind": "form", "url": "https://docs.google.com/forms/d/e/<id>/viewform",
-          "labels": ["Job title", "Company", "Link", "Date applied"], "submit": "Submit",
+          "labels": ["Email", "Job Title", "Company", "Link", "Date Applied"], "submit": "Submit",
           "confirmation_text": "Your response has been recorded"},
  "mappings": [
-   {"dest_field": "Job title", "value": "American Tech Fellowship", "kind": "css", "css": ".posting-headline h2",
+   {"dest_field": "Job Title", "value": "American Tech Fellowship", "kind": "css", "css": ".posting-headline h2",
     "attr": null, "regex": null, "copied": true, "alternatives": [{"jsonld": "title"}]},
    {"dest_field": "Link", "value": "https://jobs.lever.co/…", "kind": "record", "from": "record.canonical_url"},
-   {"dest_field": "Date applied", "value": "2026-11-14", "kind": "record", "from": "record.captured_date"}],
+   {"dest_field": "Date Applied", "value": "2026-11-14", "kind": "record", "from": "record.captured_date"},
+   {"dest_field": "Email", "value": "demo@example.com", "kind": "const"}],
  "unexplained": []}
 ```
 Fixture recording for everyone: `fixtures/recording_jobs/` (`recording.json`, `candidates.json`, `snapshots/`), recording
