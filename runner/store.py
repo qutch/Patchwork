@@ -102,6 +102,9 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        run_cols = {r["name"] for r in self.db.execute("PRAGMA table_info(runs)")}
+        if "kind" not in run_cols:  # Phase 2: "run" | "replay"
+            self.db.execute("ALTER TABLE runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'run'")
 
     def close(self) -> None:
         self.db.close()
@@ -147,10 +150,10 @@ class Store:
         return self._all("SELECT * FROM integrations ORDER BY name")
 
     # -- runs & records ------------------------------------------------------------------
-    def start_run(self, name: str, version: int, dry_run: bool) -> int:
+    def start_run(self, name: str, version: int, dry_run: bool, kind: str = "run") -> int:
         cur = self.db.execute(
-            "INSERT INTO runs(integration, version, dry_run, status, started_at) VALUES (?,?,?,?,?)",
-            (name, version, int(dry_run), "running", now()),
+            "INSERT INTO runs(integration, version, dry_run, status, started_at, kind) VALUES (?,?,?,?,?,?)",
+            (name, version, int(dry_run), "running", now(), kind),
         )
         return int(cur.lastrowid)
 
@@ -190,6 +193,34 @@ class Store:
             r["sink_body"] = json.loads(r["sink_body"]) if r["sink_body"] else None
             r["raw"] = json.loads(r["raw"])
         return rows
+
+    def record_counts(self, run_id: int) -> dict[str, int]:
+        """Counts for a run so far, in the runner's summary format (live progress)."""
+        counts: dict[str, int] = {}
+        for r in self._all("SELECT status, reason, COUNT(*) AS n FROM records WHERE run_id=? GROUP BY status, reason",
+                           run_id):
+            counts[r["status"]] = counts.get(r["status"], 0) + r["n"]
+            if r["reason"]:
+                key = f"quarantined:{r['reason']}"
+                counts[key] = counts.get(key, 0) + r["n"]
+        return counts
+
+    def latest_outcomes(self, name: str) -> list[dict]:
+        """The latest live (non-dry-run) outcome per source record of an integration."""
+        rows = self._all(
+            "SELECT r.* FROM records r JOIN runs u ON u.id = r.run_id "
+            "WHERE u.integration=? AND u.dry_run=0 AND r.run_id = ("
+            "  SELECT MAX(r2.run_id) FROM records r2 JOIN runs u2 ON u2.id = r2.run_id"
+            "  WHERE u2.integration=? AND u2.dry_run=0 AND r2.record_id = r.record_id) "
+            "ORDER BY r.record_id", name, name)
+        for r in rows:
+            r["sink_body"] = json.loads(r["sink_body"]) if r["sink_body"] else None
+            r["raw"] = json.loads(r["raw"])
+        return rows
+
+    def quarantined_raw(self, name: str) -> list[dict]:
+        """Raw source records whose latest live outcome is quarantined (the input of a replay)."""
+        return [r["raw"] for r in self.latest_outcomes(name) if r["status"] == "quarantined"]
 
     # -- idempotency & cursors ----------------------------------------------------------
     def is_processed(self, name: str, scope: str, key: str) -> bool:
@@ -239,3 +270,11 @@ class Store:
         for r in rows:
             r["reason_codes"] = json.loads(r["reason_codes"])
         return rows
+
+    def resolve_incidents(self, name: str, below_version: int) -> list[int]:
+        """Mark open incidents raised on versions older than `below_version` as resolved."""
+        ids = [r["id"] for r in self._all(
+            "SELECT id FROM incidents WHERE integration=? AND status='open' AND version<?", name, below_version)]
+        if ids:
+            self.db.execute(f"UPDATE incidents SET status='resolved' WHERE id IN ({','.join('?' * len(ids))})", ids)
+        return ids
