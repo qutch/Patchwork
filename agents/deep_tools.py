@@ -637,6 +637,19 @@ def build_tools(ctx: ToolContext) -> dict[str, StructuredTool]:
         d["current_sink_body"] = spec["sink"]["body"]
         routed = sorted({str(p.get("match", {}).get(spec["extract"]["route_by"])) for p in spec["extract"]["parsers"]})
         d["routed_values"] = {spec["extract"]["route_by"]: routed}
+        dest = (new_doc.get("info") or {}).get("title") or "The destination"
+        props = _resolve(new_doc, request_schema(new_doc, method, path) or {}).get("properties", {})
+        d["suggested_questions"] = []
+        for field in d["new_required_unmapped"]:
+            enum = _resolve(new_doc, props.get(field, {})).get("enum")
+            if enum:
+                d["suggested_questions"].append({
+                    "field": field,
+                    "question": f"{dest} now requires {field}. Always {enum[0]}, or by supplier?",
+                    "options": [f"Always {enum[0]}", "By supplier (tell me which " + field.removesuffix("_id") + " for each supplier)"]})
+            else:
+                d["suggested_questions"].append({"field": field, "question": f"{dest} now requires {field}. What value should it get?",
+                                                 "options": []})
         return json.dumps(d, indent=1)
 
     def migrate_golden_examples() -> str:
