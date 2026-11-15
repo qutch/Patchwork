@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-14, by the lead (Claude), after merging plan A Task 9.
+Last updated: 2026-11-14, by the lead (Claude), after reviewing PR #4.
 
 ## What Patchwork is
 
@@ -176,7 +176,10 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 
 - **`./patchwork` launcher** (lead's agent): one command, one port, auto port choice, the extension finds it.
   It is used for the demo. Design: `docs/superpowers/specs/2026-11-14-one-command-launcher-design.md`.
-- **PR #4 (Satvik, G4–G7)**: under review by the lead's agent.
+- **PR #4 (Satvik, G4–G7): changes requested.** See the review on the PR. The one blocking item is that
+  `control/tracker.py` still looks up outcomes by record id, so a document whose rows were written shows as
+  pending forever; group outcomes per document and add a test. Six Minor items are listed in the review. Push
+  fixes to the same branch and the lead re-reviews.
 - **Satvik:** teammate Task 1 (`fixtures/emails/`), Task 2 (`runner/documents.py`), then **G4–G7**.
 
 ### Next
