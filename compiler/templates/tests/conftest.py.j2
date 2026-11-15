@@ -18,3 +18,10 @@ def integ():
 def golden_cases(kind: str):
     cases = [ex for ex in GOLDEN if kind in ex["expect"]]
     return pytest.mark.parametrize("example", cases, ids=[ex["name"] for ex in cases])
+{% if has_rows %}
+
+
+def row_bodies(example) -> list:
+    """contracts V18: a rows package's success example expects one sink body per row, in row order."""
+    return example["expect"]["rows"]
+{% endif %}

@@ -1,4 +1,24 @@
 {% include "_header.j2" %}
+{% if has_rows %}
+"""Dedupe test: the same document processed twice writes each of its rows exactly once."""
+
+import copy
+
+from runner.pipeline import MemoryStore, process_document
+from runner.testing import FakeHttp
+
+from .conftest import GOLDEN, row_bodies
+
+
+def test_same_document_twice_writes_once(integ):
+    example = next(ex for ex in GOLDEN if "rows" in ex["expect"])
+    http, store = FakeHttp(missing=example["missing"]), MemoryStore()
+    first = process_document(integ, copy.deepcopy(example["record"]), http, store)
+    second = process_document(integ, copy.deepcopy(example["record"]), http, store)
+    assert {o.status for o in first} == {"success"}
+    assert {o.status for o in second} == {"duplicate"}
+    assert len(http.sink_writes) == len(row_bodies(example))
+{% else %}
 """Dedupe test: the same record processed twice results in exactly one sink call."""
 
 import copy
@@ -17,3 +37,4 @@ def test_same_record_twice_writes_once(integ):
     assert first.status == "success"
     assert second.status == "duplicate"
     assert len(http.sink_writes) == 1
+{% endif %}

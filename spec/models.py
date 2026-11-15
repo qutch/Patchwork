@@ -38,6 +38,41 @@ def _check_ident(value: str, what: str) -> str:
     return value
 
 
+def _check_clean(v: str | dict | None) -> str | dict | None:
+    """contracts V18: `clean` is a closed set of cleaners (runner.clean.CLEANERS), by name or {name: args}."""
+    from runner.clean import CLEANERS
+
+    if v is None:
+        return v
+    examples = ("money | number | strip | upper | lower | {money: {decimal: ','}} | {date: ['%d %b %Y']} | "
+                "{split: {sep: ',', part: 1}}")
+    if isinstance(v, str):
+        if v not in CLEANERS:
+            raise ValueError(f"unknown cleaner {v!r}; use one of {examples}")
+        if v in ("date", "split"):
+            raise ValueError(f"cleaner {v!r} needs arguments, e.g. " +
+                             ("{date: ['%m/%d/%Y']}" if v == "date" else "{split: {sep: ',', part: 1}}"))
+        return v
+    if not isinstance(v, dict) or len(v) != 1:
+        raise ValueError(f"clean must be one cleaner: {examples}")
+    name, args = next(iter(v.items()))
+    if name not in CLEANERS:
+        raise ValueError(f"unknown cleaner {name!r}; use one of {examples}")
+    if name in ("money", "number"):
+        if not isinstance(args, dict) or set(args) - {"decimal"} or args.get("decimal", ".") not in (".", ","):
+            raise ValueError(f"clean {name} takes {{decimal: '.' | ','}}, got {args!r}")
+    elif name == "date":
+        if not isinstance(args, list) or not args or not all(isinstance(f, str) and "%" in f for f in args):
+            raise ValueError(f"clean date needs a non-empty list of strptime formats (e.g. ['%m/%d/%Y']), got {args!r}")
+    elif name == "split":
+        if (not isinstance(args, dict) or set(args) - {"sep", "part"} or not isinstance(args.get("sep"), str)
+                or not args.get("sep") or not isinstance(args.get("part"), int) or isinstance(args.get("part"), bool)):
+            raise ValueError(f"clean split needs {{sep: <non-empty text>, part: <index from 0>}}, got {args!r}")
+    else:
+        raise ValueError(f"cleaner {name!r} takes no arguments; write clean: {name}")
+    return v
+
+
 class Auth(_Strict):
     """contracts V13: how a sink (or API source) authenticates. Names a credential; never holds a value."""
 
@@ -96,7 +131,10 @@ class FieldExtract(_Strict):
 
     v2 (contracts V3): `css` (+ optional `attr`) and `jsonld` (+ optional `jsonld_type`, default
     JobPosting) read the record's HTML (`source.html_field`). A `regex` next to `css`/`jsonld` is a
-    refine: applied to the normalised result, group 1 is the value."""
+    refine: applied to the normalised result, group 1 is the value.
+
+    V18: a `regex` next to `json_path` is a refine too. `clean` (runner.clean.CLEANERS) runs on the raw value
+    before `cast`."""
 
     regex: str | None = None
     json_path: str | None = None
@@ -107,6 +145,7 @@ class FieldExtract(_Strict):
     jsonld_type: str | None = None
     cast: Literal["int", "float", "str"] = "str"
     combine: Literal["product"] | None = None
+    clean: str | dict | None = None  # contracts V18
 
     @property
     def reads_html(self) -> bool:
@@ -114,12 +153,21 @@ class FieldExtract(_Strict):
 
     @property
     def refine(self) -> str | None:
-        """The refine regex (a regex next to css/jsonld), else None."""
-        return self.regex if self.reads_html else None
+        """The refine regex (a regex next to css/jsonld/json_path), else None."""
+        return self.regex if (self.reads_html or self.json_path is not None) else None
+
+    @field_validator("clean")
+    @classmethod
+    def _clean(cls, v: str | dict | None) -> str | dict | None:
+        return _check_clean(v)
 
     @model_validator(mode="after")
     def _one_method(self) -> "FieldExtract":
-        if not self.reads_html:
+        if not self.reads_html and self.json_path is not None and self.regex is not None:
+            if self.between is not None:
+                raise ValueError("field extract needs exactly one of regex/json_path/between "
+                                 "(regex may refine json_path), got ['json_path', 'between']")
+        elif not self.reads_html:
             chosen = [m for m in ("regex", "json_path", "between") if getattr(self, m) is not None]
             if len(chosen) != 1:
                 raise ValueError(f"field extract needs exactly one of regex/json_path/between, got {chosen or 'none'}")
@@ -142,10 +190,10 @@ class FieldExtract(_Strict):
             except re.error as e:
                 raise ValueError(f"regex {self.regex!r} does not compile: {e}") from e
             if compiled.groups < 1:
-                what = "refine regex" if self.reads_html else "regex"
+                what = "refine regex" if self.refine is not None else "regex"
                 raise ValueError(f"{what} {self.regex!r} needs one capture group for the value")
         if self.combine is not None:
-            if self.regex is None or self.reads_html:
+            if self.regex is None or self.refine is not None:
                 raise ValueError("combine only applies to regex fields")
             if re.compile(self.regex).groups < 2:
                 raise ValueError(f"combine: {self.combine} needs a regex with at least two capture groups")
@@ -165,12 +213,172 @@ class Origin(_Strict):
     approved_by: Literal["auto", "human"] | None = None
 
 
+def _check_regex(pattern: str, what: str, groups: int = 0) -> str:
+    try:
+        compiled = re.compile(pattern)
+    except re.error as e:
+        raise ValueError(f"{what} {pattern!r} does not compile: {e}") from e
+    if compiled.groups < groups:
+        raise ValueError(f"{what} {pattern!r} needs one capture group for the value")
+    return pattern
+
+
+class RowExtract(_Strict):
+    """contracts V18: one row field, read relative to its row. Exactly one of `column` (a table header or a
+    named group of `select.lines.match`, case-insensitive), `index` (a cell or group position, from 0), `css`
+    (inside the row element, optional `attr`) or `regex` (on the row's text, group 1). A `regex` next to
+    `column`/`index`/`css` is a refine. `clean` runs before `cast`. An empty value is None."""
+
+    column: str | None = None
+    index: int | None = None
+    css: str | None = None
+    regex: str | None = None
+    attr: str | None = None
+    cast: Literal["int", "float", "str"] = "str"
+    clean: str | dict | None = None
+
+    @property
+    def refine(self) -> str | None:
+        """The refine regex (a regex next to column/index/css), else None."""
+        primary = self.column is not None or self.index is not None or self.css is not None
+        return self.regex if primary else None
+
+    @field_validator("clean")
+    @classmethod
+    def _clean(cls, v: str | dict | None) -> str | dict | None:
+        return _check_clean(v)
+
+    @model_validator(mode="after")
+    def _one_method(self) -> "RowExtract":
+        chosen = [m for m in ("column", "index", "css") if getattr(self, m) is not None]
+        if len(chosen) > 1 or (not chosen and self.regex is None):
+            raise ValueError("row field needs exactly one of column/index/css/regex "
+                             f"(regex may refine column, index or css), got {chosen or 'none'}")
+        if self.column is not None and not self.column.strip():
+            raise ValueError("column must name a column")
+        if self.css is not None and not self.css.strip():
+            raise ValueError("css selector must not be empty")
+        if self.index is not None and self.index < 0:
+            raise ValueError(f"index {self.index} must be 0 or more")
+        if self.attr is not None and self.css is None:
+            raise ValueError("attr only applies to css row fields")
+        if self.regex is not None:
+            _check_regex(self.regex, "refine regex" if self.refine else "regex", groups=1)
+        return self
+
+
+class TableSelect(_Strict):
+    columns: list[str]
+
+    @field_validator("columns")
+    @classmethod
+    def _columns(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("select.table.columns must not be empty (the header names that find the table)")
+        if any(not c.strip() for c in v):
+            raise ValueError("select.table.columns must not contain an empty name")
+        return v
+
+
+class LineSelect(_Strict):
+    """Text lines between `after` and `before` (both exclusive). Each line `match`es (a row; its named groups
+    are the row's cells) or is explained: blank, a repeat of a line from before the window (above and including
+    the `after` line), or `skip`."""
+
+    after: str | None = None
+    before: str | None = None
+    match: str
+    skip: str | None = None
+
+    @model_validator(mode="after")
+    def _regexes(self) -> "LineSelect":
+        for name in ("after", "before", "match", "skip"):
+            value = getattr(self, name)
+            if value is not None:
+                _check_regex(value, f"select.lines.{name}")
+        return self
+
+
+class RowSelect(_Strict):
+    table: TableSelect | None = None
+    css: str | None = None
+    lines: LineSelect | None = None
+
+    @property
+    def kind(self) -> str:
+        return "table" if self.table is not None else "css" if self.css is not None else "lines"
+
+    @model_validator(mode="after")
+    def _one(self) -> "RowSelect":
+        chosen = [m for m in ("table", "css", "lines") if getattr(self, m) is not None]
+        if len(chosen) != 1:
+            raise ValueError(f"rows.select needs exactly one of table/css/lines, got {chosen or 'none'}")
+        if self.css is not None and not self.css.strip():
+            raise ValueError("rows.select.css must not be empty")
+        return self
+
+
+class Rows(_Strict):
+    """contracts V18: a parser with `rows` emits one record per row (document fields + row fields)."""
+
+    select: RowSelect
+    fields: dict[str, RowExtract]
+    require: list[str] | None = None  # default: [the first row field]
+    hold: Literal["document", "row"] = "document"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_require(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("require") is None and isinstance(data.get("fields"), dict) \
+                and data["fields"]:
+            data = {**data, "require": [next(iter(data["fields"]))]}
+        return data
+
+    @model_validator(mode="after")
+    def _shape(self) -> "Rows":
+        if not self.fields:
+            raise ValueError("rows needs at least one field")
+        for name in self.fields:
+            _check_ident(name, "row field name")
+        if not self.require:
+            raise ValueError("rows.require must name at least one row field")
+        for name in self.require:
+            if name not in self.fields:
+                raise ValueError(f"rows.require names {name!r}, which is not a row field ({sorted(self.fields)})")
+        kind = self.select.kind
+        groups = {g.lower() for g in re.compile(self.select.lines.match).groupindex} if self.select.lines else set()
+        for name, f in self.fields.items():
+            if f.css is not None and kind != "css":
+                raise ValueError(f"rows.fields.{name}: css row fields need select.css (this select is {kind})")
+            if (f.column is not None or f.index is not None) and kind == "css":
+                raise ValueError(f"rows.fields.{name}: column/index need select.table or select.lines, "
+                                 "not select.css (use css or regex)")
+            if f.column is not None and kind == "lines" and f.column.strip().lower() not in groups:
+                raise ValueError(f"rows.fields.{name}: column {f.column!r} is not a named group of "
+                                 f"select.lines.match (groups: {sorted(groups)})")
+        return self
+
+
 class Parser(_Strict):
     id: str
     match: dict[str, str] = Field(default_factory=dict)
     fingerprint: str | None = None  # v2: CSS selector identifying the platform in the record's HTML
     origin: Origin | None = None
     fields: dict[str, FieldExtract]
+    rows: Rows | None = None  # contracts V18: one record per row
+
+    def all_fields(self) -> set[str]:
+        """The document field names plus the row field names (what one emitted record carries)."""
+        return set(self.fields) | (set(self.rows.fields) if self.rows else set())
+
+    @model_validator(mode="after")
+    def _no_collision(self) -> "Parser":
+        if self.rows:
+            both = sorted(set(self.fields) & set(self.rows.fields))
+            if both:
+                raise ValueError(f"{', '.join(repr(b) for b in both)} is both a document field and a row field; "
+                                 "rename one")
+        return self
 
     @field_validator("match")
     @classmethod
@@ -218,18 +426,49 @@ class Extract(_Strict):
         return v
 
 
+CROSS_RULES = ("sum_equals", "product_equals", "count_equals")  # contracts V18: rules over a document's rows
+
+
 class ValidationRule(_Strict):
     field: str
-    rule: Literal["required", "positive_int", "regex", "one_of", "exists", "number", "date", "url"]
+    rule: Literal["required", "positive_int", "regex", "one_of", "exists", "number", "date", "url",
+                  "sum_equals", "product_equals", "count_equals"]
     pattern: str | None = None
     values: list[Any] | None = None
     check: HttpCall | None = None
     # `number` only (contracts V15): inclusive bounds on the value cast to float
     min: float | None = None
     max: float | None = None
+    # cross-check rules only (contracts V18). `tolerance` is 0.01 when a cross-check rule omits it, and absent
+    # (None) on every other rule, so specs without cross-checks dump and hash exactly as before.
+    rows_field: str | None = None
+    fields: list[str] | None = None
+    tolerance: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_tolerance(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("rule") in CROSS_RULES and data.get("tolerance") is None:
+            data = {**data, "tolerance": 0.01}
+        return data
 
     @model_validator(mode="after")
     def _args(self) -> "ValidationRule":
+        if self.rule in CROSS_RULES:
+            if self.rule == "sum_equals" and not self.rows_field:
+                raise ValueError(f"rule 'sum_equals' on {self.field!r} needs 'rows_field' (the row field to add up)")
+            if self.rule == "product_equals" and (self.fields is None or len(self.fields) != 2):
+                raise ValueError(f"rule 'product_equals' on {self.field!r} needs two fields to multiply "
+                                 "(fields: [a, b])")
+            if self.rule != "sum_equals" and self.rows_field is not None:
+                raise ValueError(f"rows_field only applies to rule 'sum_equals' (on {self.field!r})")
+            if self.rule != "product_equals" and self.fields is not None:
+                raise ValueError(f"fields only applies to rule 'product_equals' (on {self.field!r})")
+            if self.tolerance is not None and self.tolerance < 0:
+                raise ValueError(f"tolerance on {self.field!r} must be 0 or more")
+        elif self.rows_field is not None or self.fields is not None or self.tolerance is not None:
+            raise ValueError(f"rows_field/fields/tolerance only apply to the rules {list(CROSS_RULES)} "
+                             f"(on {self.field!r})")
         need = {"regex": "pattern", "one_of": "values", "exists": "check"}.get(self.rule)
         if need and getattr(self, need) is None:
             raise ValueError(f"rule {self.rule!r} on {self.field!r} needs '{need}'")
@@ -457,11 +696,23 @@ class Spec(_Strict):
     def _name(cls, v: str) -> str:
         return _check_ident(v, "spec name")
 
+    def has_rows(self) -> bool:
+        """contracts V18: every parser has `rows` (one record per row). Mixed specs are rejected."""
+        return all(p.rows is not None for p in self.extract.parsers)
+
     @model_validator(mode="after")
     def _references(self) -> "Spec":
         """Every field the pipeline uses must be extracted by every parser."""
-        common = set.intersection(*(set(p.fields) for p in self.extract.parsers))
+        parsers = self.extract.parsers
+        common = set.intersection(*(p.all_fields() for p in parsers))
         errors: list[str] = []
+        with_rows = [p.id for p in parsers if p.rows is not None]
+        if with_rows and len(with_rows) != len(parsers):
+            errors.append(f"extract.parsers: every parser has rows or none does (with rows: {with_rows}; "
+                          f"without: {[p.id for p in parsers if p.rows is None]})")
+        has_rows = len(with_rows) == len(parsers)
+        doc_common = set.intersection(*(set(p.fields) for p in parsers))
+        row_common = set.intersection(*(set(p.rows.fields) for p in parsers)) if has_rows else set()
 
         def check(ref: str, where: str) -> None:
             if ref.startswith(RECORD_PREFIX):
@@ -473,10 +724,28 @@ class Spec(_Strict):
                 )
 
         for rule in self.validate_:
+            where = f"validate[{rule.field}:{rule.rule}]"
             if rule.field.startswith(RECORD_PREFIX):
                 errors.append(f"validate[{rule.field}]: rules apply to extracted fields, not record.* fields")
+            elif rule.rule in CROSS_RULES:
+                if not has_rows:
+                    errors.append(f"{where}: cross-check rules only apply when every parser has rows")
+                    continue
+                if rule.rule == "product_equals" and rule.field not in row_common:
+                    errors.append(f"{where}: field {rule.field!r} is not a row field "
+                                  f"(row fields common to all parsers: {sorted(row_common)})")
+                if rule.rule != "product_equals" and rule.field not in doc_common:
+                    errors.append(f"{where}: field {rule.field!r} is not a document field "
+                                  f"(document fields common to all parsers: {sorted(doc_common)})")
+                if rule.rows_field is not None and rule.rows_field not in row_common:
+                    errors.append(f"{where}: rows_field {rule.rows_field!r} is not a row field "
+                                  f"(row fields common to all parsers: {sorted(row_common)})")
+                for name in rule.fields or []:
+                    if name not in row_common:
+                        errors.append(f"{where}: fields: {name!r} is not a row field "
+                                      f"(row fields common to all parsers: {sorted(row_common)})")
             else:
-                check(rule.field, f"validate[{rule.field}:{rule.rule}]")
+                check(rule.field, where)
         for key in self.dedupe.key:
             check(key, "dedupe.key")
         where = self.sink_values_key()
@@ -503,6 +772,8 @@ class Spec(_Strict):
             for fname, f in p.fields.items():
                 if f.reads_html:
                     users.append(f"extract.parsers[{p.id}].fields.{fname} ({'css' if f.css is not None else 'jsonld'})")
+            if p.rows is not None and p.rows.select.css is not None:
+                users.append(f"extract.parsers[{p.id}].rows.select (css)")
         if not users:
             return []
         return [f"source.html_field (the record field holding the page HTML) is required by {', '.join(users)}"]

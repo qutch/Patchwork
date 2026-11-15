@@ -7,12 +7,20 @@ import copy
 import pytest
 
 from runner.lib import Quarantine
+{% if has_rows %}
+from runner.pipeline import MemoryStore, process_document
+{% else %}
 from runner.pipeline import MemoryStore, process_record
+{% endif %}
 from runner.testing import FakeHttp
 
 from .conftest import GOLDEN
 
+{% if has_rows %}
+BASE = next(ex for ex in GOLDEN if "rows" in ex["expect"])
+{% else %}
 BASE = next(ex for ex in GOLDEN if "body" in ex["expect"])
+{% endif %}
 CASES = {{ negative_cases|py }}
 TEXT_FIELD = {{ spec.source.text_field|py }}
 HTML_FIELD = {{ spec.source.html_field|py }}
@@ -24,12 +32,21 @@ def _blank_page(record: dict) -> None:
     record[TEXT_FIELD] = ""
     if HTML_FIELD:
         record[HTML_FIELD] = ""
+{% if has_rows %}
+    if "tables" in record:
+        record["tables"] = []
+{% endif %}
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c["id"] for c in CASES])
 def test_validation_rule_quarantines(integ, case):
     record = copy.deepcopy(BASE["record"])
     _, fields = integ.extract(record)
+{% if has_rows %}
+    rows = fields.pop("__rows__")
+    fields = {**fields, **rows[0].fields}  # the first row's record (contracts V18)
+    record = {**record, "row_no": rows[0].no, "row_count": len(rows)}
+{% endif %}
     if case["op"] == "delete":
         fields.pop(case["field"], None)
     else:
@@ -39,6 +56,33 @@ def test_validation_rule_quarantines(integ, case):
         integ.validate(fields, record, http)
     assert exc.value.code == case["code"]
     assert http.sink_writes == []
+{% if has_rows %}
+
+
+def test_empty_text_is_parse_no_match(integ):
+    record = copy.deepcopy(BASE["record"])
+    _blank_page(record)
+    http = FakeHttp()
+    outs = process_document(integ, record, http, MemoryStore())
+    assert [(o.status, o.reason) for o in outs] == [("quarantined", "PARSE_NO_MATCH")]
+    assert http.sink_writes == []
+
+
+def test_unrouted_record_is_parse_no_match(integ):
+    if HAS_CATCH_ALL:
+        pytest.skip("spec has a catch-all parser")
+    record = copy.deepcopy(BASE["record"])
+    record[ROUTE_BY] = "__no_parser_for_this__"
+    if HTML_FIELD:
+        record[HTML_FIELD] = "<html><body><p>no platform marker</p></body></html>"  # no fingerprint either
+    outs = process_document(integ, record, FakeHttp(), MemoryStore())
+    assert [(o.status, o.reason) for o in outs] == [("quarantined", "PARSE_NO_MATCH")]
+
+
+def test_sink_rejection_is_sink_contract(integ):
+    outs = process_document(integ, copy.deepcopy(BASE["record"]), FakeHttp(sink_status=422), MemoryStore())
+    assert {(o.status, o.reason) for o in outs} == {("quarantined", "SINK_CONTRACT")}
+{% else %}
 
 
 def test_empty_text_is_parse_no_match(integ):
@@ -64,3 +108,4 @@ def test_unrouted_record_is_parse_no_match(integ):
 def test_sink_rejection_is_sink_contract(integ):
     out = process_record(integ, copy.deepcopy(BASE["record"]), FakeHttp(sink_status=422), MemoryStore())
     assert (out.status, out.reason) == ("quarantined", "SINK_CONTRACT")
+{% endif %}

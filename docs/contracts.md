@@ -910,3 +910,179 @@ A label-keyed sink (V14's shape) whose destination is a table in a local databas
 - Extension: `default_popup: popup.html` ("Send pages to" list + "Send this page", which messages the worker's
   `sendActiveTab()`); the toolbar click no longer sends directly. The choice is `integration` in
   `chrome.storage.local` (absent = default); the options page has the same list.
+
+## V18. Rows, `clean`, cross-check rules, per-row records (generalized input)
+
+One input document (an HTML table page, a CSV/XLSX sheet, the text lines of a PDF) becomes many checked records. All
+additions are optional: a spec without `rows`, `clean` or a cross-check rule validates, dumps, hashes and compiles
+exactly as before. Field names come only from the spec; the code knows no subject.
+
+### Spec (`spec/models.py`)
+
+- **`Parser.rows: Rows | None`**. `Rows = {select, fields, require?, hold?}`:
+  - `select`, exactly one of:
+    - `{table: {columns: [<header>, ...]}}` (`columns` not empty): the first table whose header contains every name
+      (whitespace-normalised, case-insensitive).
+    - `{css: "<selector>"}`: each match in the record's HTML is a row element (needs `source.html_field`).
+    - `{lines: {after?, before?, match, skip?}}` (regexes): the text lines strictly between the first line matching
+      `after` and the next line matching `before`. A line that `match`es is a row; its named groups are the row's
+      cells. A line `match` misses must be blank, a repeat of a line from before the window (above and including
+      the `after` line), or matched by `skip`.
+  - `fields: {<ident>: RowExtract}` (not empty). `RowExtract` = exactly one of `column` (a table header or a named
+    group of `lines.match`, case-insensitive), `index` (a cell or group position, from 0), `css` (inside the row
+    element; optional `attr`) or `regex` (on the row's text, group 1); a `regex` next to `column`/`index`/`css` is a
+    refine. Plus `cast` (`str` default) and `clean`. `column`/`index` need `select.table` or `select.lines`; `css`
+    needs `select.css`; a `column` with `select.lines` must be a named group of `match`.
+  - `require: [<row field>, ...]`: a subset of `fields`; when omitted it is filled with `[<first row field>]`.
+  - `hold: document | row` (default `document`).
+- **`Parser.all_fields()`** = document field names | row field names. A name in both is an error.
+- **Either every parser has `rows` or none does** (`Spec.has_rows()`). Field references (validate, dedupe, sink) are
+  checked against the intersection of `all_fields()`. `record.row_no` (from 1) and `record.row_count` are record
+  refs, valid like any `record.*`.
+- **`clean`** on `FieldExtract` and `RowExtract`: `money` | `{money: {decimal: "." | ","}}` | `number` |
+  `{number: {decimal}}` | `{date: [<strptime formats>, ...]}` (not empty) | `{split: {sep, part}}` | `strip` | `upper` |
+  `lower` (`runner.clean.CLEANERS`). Anything else is a spec error. `clean` runs on the raw value before `cast`.
+- **`FieldExtract`**: a `regex` next to `json_path` is now a refine (as next to `css`/`jsonld`), e.g.
+  `{json_path: "$.meta.subject", regex: 'Ref\s+(\S+)'}`.
+- **Cross-check rules** in `validate` (`spec.models.CROSS_RULES`), allowed only when every parser has `rows`:
+  - `{rule: sum_equals, rows_field: f, field: g, tolerance?}`: Σ of row field `f` equals document field `g`.
+  - `{rule: product_equals, fields: [a, b], field: c, tolerance?}`: on every row, `a × b` equals row field `c`.
+  - `{rule: count_equals, field: g}`: the number of rows equals document field `g`.
+  - `tolerance` defaults to `0.01` on these rules and is refused on any other rule (so other rules dump as before).
+    `rows_field` and `fields` must be row fields common to every parser; `field` is a document field (a row field for
+    `product_equals`).
+
+Two examples (one with document fields and a cross-check, one without):
+
+```yaml
+extract:
+  route_by: site
+  parsers:
+    - id: sender_a
+      match: {site: sender-a.example}
+      fields:
+        ref:   {json_path: "$.meta.subject", regex: 'Ref\s+(\S+)'}
+        total: {regex: 'Total\s+(\S+)', clean: money}
+      rows:
+        select: {lines: {after: '^Item\s+Qty', before: '^Total', match: '^(?P<item>.+?)\s+(?P<qty>\d+)\s+(?P<amount>\S+)$'}}
+        fields:
+          item:   {column: item}
+          qty:    {column: qty, cast: int}
+          amount: {column: amount, clean: money}
+validate:
+  - {rule: sum_equals, rows_field: amount, field: total}
+dedupe: {key: [ref, record.row_no]}
+```
+
+```yaml
+      rows:
+        select: {table: {columns: [Name, Email, Session]}}
+        hold: row
+        fields:
+          name:    {column: Name}
+          email:   {column: Email, clean: lower}
+          session: {column: Session}
+```
+
+### Rows engine and cleaners (`runner/rows.py`, `runner/clean.py`)
+
+One implementation, imported by compiled parsers and by the agents' checks. Both take plain dicts (the spec's
+`rows` block, `model_dump(exclude_none=True)` or hand-written), so a candidate can be tested without a model. Pure:
+stdlib and `runner/` only, no network, no AI, no subject words.
+
+- **`runner.clean.clean_value(value, spec, where) -> Any`** raises `Quarantine("VALIDATION_FAILED", "<where>: ...")`:
+  - `money` → float. Strips currency symbols (Unicode `Sc`) and a leading or trailing 3-letter ISO code. `(x)`, a
+    leading `-` or a trailing `-` make it negative (two signs are refused). With `decimal: "."` (default) `,` groups
+    thousands in groups of 3 only; with `decimal: ","` the marks swap. Anything else is refused, and the detail
+    names the other reading: `'1.299,00' is not a money amount with decimal '.'; with decimal ',' it would read
+    1,299.00`. A group never starts with 0 (`0,125` is not grouped). One mark followed by exactly 3 digits with no
+    grouping (`€1.299`, or `1,299` with `decimal: ","`) reads two ways, so it is refused too:
+    `'€1.299' is ambiguous: 1.299 with decimal '.' or 1,299.00 with decimal ','`.
+  - `number` → int when written without a fraction, else float; the same grouping rules, no currency, no `(x)`.
+  - `{date: [formats]}` → `YYYY-MM-DD`. Every format is tried: none fits → `does not match any of the date formats`;
+    two that read differently → `'03/04/2026' is ambiguous: 2026-03-04 or 2026-04-03` (never a guess).
+  - `{split: {sep, part}}` → the stripped part (`part` from 0; a missing part is refused). `strip`, `upper`, `lower`.
+- **`runner.clean.clean_cast(value, spec, to, where)`**: `clean` then `cast`. With a cleaner, `cast: str` (the
+  default) keeps what the cleaner returned (a money value stays a float); `cast: int` needs a whole number.
+- **`runner.clean.parse_amount(value) -> Decimal | None`**: a lenient, never-raising read of a numeric cell (used to
+  recognise aggregate rows).
+- **`runner.rows.Row`**: `no` (from 1, over the kept rows), `text`, `cells: {header or group name: text}`, `fields`.
+- **`runner.rows.select_rows(record, select, html_field="html", text_field="text", where="rows")`** → `[(text,
+  cells)]` for a table (cells by header), `[(text, element outer HTML)]` for css, `[(line, groups)]` for lines.
+- **`runner.rows.extract_rows(record, rows, where, html_field="html", text_field="text", skipped=None) -> [Row]`**:
+  - Tables come from `record["tables"]` (V17 `{header, rows, where}` dicts) when the key is present, else from the
+    teammate's `runner.documents.read_html(record[html_field], record.get("url", "")).tables` (a page record).
+    Cells and headers are whitespace-normalised; short rows are padded with `""`.
+  - A row's text is its non-empty cells joined by one space (table), the element's text (css) or the stripped line.
+  - Row fields: `column` / `index` read a cell (a lines `column` reads a named group); `css` the first match inside
+    the row element; `regex` group 1 of the row's text (on a lines row, a regex-only field named like a group of
+    `match` reads that group). An empty or unmatched value is `None`. A refine that misses is `PARSE_NO_MATCH`; a
+    value `clean`/`cast` refuses is `VALIDATION_FAILED` / `PARSE_NO_MATCH` naming `<where>: row N <field>`.
+  - A table row equal to the header is skipped ("header"). A row whose `require` fields are empty is skipped. Every
+    skipped row must pass `explain_skip`, else `PARSE_NO_MATCH "<where>: row N skipped but not blank, a header or an
+    aggregate: '<text>'"` (N counts the selected rows from 1). Zero kept rows → `PARSE_NO_MATCH`.
+  - A kept row that is the aggregate of the other kept rows (at least 2 others; `explain_skip`'s rule) holds the
+    document: `PARSE_NO_MATCH "<where>: row N ('<text>') adds up the other rows; a total is not a data row ..."`.
+    This catches a total whose label sits in a required column. A real row that equals the sum of the others is
+    held too (a person confirms it); it is never dropped.
+  - `lines`: `after` / `before` that match no line → `PARSE_NO_MATCH`. A line between them that `match` misses must
+    be blank, equal (normalised) to a line *before the window* (above and including the `after` line; nothing
+    when there is no `after`), or matched by `skip`; else `PARSE_NO_MATCH "<where>: line '<text>' is not a row and
+    not explained"`. This holds for lines above the first matched row too.
+  - With a `skipped` list, every skipped row (`{row, text, reason}`) and explained line (`{line, text, reason}`) is
+    appended, for the agents' "skipped and explained" report.
+  - A missing table → `no table has the columns [...]`; a `column` not in the chosen table's header → `PARSE_NO_MATCH`.
+- **`runner.rows.explain_skip(row_text, cells, header, kept) -> "blank" | "header" | "aggregate" | None`**: aggregate
+  = at least one numeric cell, and every numeric cell equals the sum of its column over the kept rows (each kept
+  cell numeric) within 0.01.
+- **`runner.rows.check_cross(rule, doc_fields, rows) -> str | None`** (`Decimal`; tolerance default 0.01): `None` when
+  the rule holds, else e.g. `sum_equals: the rows' amount add up to 3,205.00 but total is 3,215.00`,
+  `product_equals: row 2: qty × price = 3.75 but amount is 3.00`, `count_equals: 2 rows but n is 3`, or `... is not
+  a number: <value>`.
+
+### Runtime: one document → many records (`compiler/`, `runner/pipeline.py`, `runner/run.py`, `runner/store.py`)
+
+- **Compiled package.** Everything below is generated only under `has_rows` (every parser has `rows`). A spec without
+  `rows` compiles to byte-identical files (a doc-level `clean` only adds a `clean_cast` import and call).
+  - `parsers.py`: `ROWS_<ID> = {<the rows block as a literal dict>}`; `parse_<id>(record)` returns the document
+    fields plus `"__rows__": [runner.rows.Row]` from `extract_rows(record, ROWS_<ID>, '<id>.rows', HTML_FIELD,
+    TEXT_FIELD)`. When `extract_rows` raises, the exception carries the document fields (`q.fields`) and, for an
+    unexplained skipped row, the kept rows (`q.rows`).
+  - `integration.py`: `EMITS = "rows"`, `HOLDS = {<parser id>: "document" | "row"}`, `CROSS_RULES = [<rule dicts>]`
+    and `validate_document(fields, rows)`, which raises `VALIDATION_FAILED` with `check_cross`'s detail on the first
+    failing rule. `validate(fields, record, http)` is unchanged (cross-check rules are not in it) and runs per row.
+    Packages without rows have no `EMITS`.
+  - `manifest.json` gains `"emits": "rows"` (absent otherwise).
+  - Golden examples of a rows spec use `expect: {rows: [<body>, ...]}` (one body per kept row, in row order) or
+    `expect: {quarantine: <code>}`; `expect: {body}` is refused for a rows spec and `rows` for any other. The
+    generated tests (`test_golden`, `test_dedupe`, `test_negative`, `test_contract`) go through `process_document`;
+    negative cases mutate the first row's merged fields. Preflight's contract check also covers every row body.
+- **`runner.pipeline.process_document(integ, record, http, store) -> list[Outcome]`:**
+  1. Any `flags` entry → one `PARSE_NO_MATCH` Outcome with the document's id, never parsed: `no_text_layer` → "no
+     text layer: a scanned or image-only PDF; Patchwork reads text PDFs only", `encrypted` → "encrypted: the
+     document is password-protected; Patchwork cannot read it", `unreadable` → "unreadable: the document could not
+     be read" (plus `(meta.error)` when present); any other flag → "flagged <flag>".
+  2. Route and parse; a failure → one Outcome with the document's id (`parser` unset, `routed_by` set, as in
+     `process_record`). An unexplained skipped row whose kept rows also fail a cross-check is reported as the
+     cross-check: `VALIDATION_FAILED "<cross-check detail>; and <the unexplained row>"`.
+  3. `validate_document`; a failure → one `VALIDATION_FAILED` Outcome with the document's id. Nothing is written.
+  4. Per row: `rec_row = {**record, "row_no": n, "row_count": len(rows)}`, merged fields = document fields + row
+     fields; `validate`, then `dedupe_key`. Two rows of one document with the same key are `VALIDATION_FAILED` ("the
+     dedupe key must tell the rows apart"), never a silent duplicate. A key already processed → `duplicate`;
+     otherwise `build_body`.
+  5. `hold: document` (default): any failure in step 4 → one Outcome with the document's id (`row N: <detail>`), and
+     nothing is sent. Every row is validated and its body built before the first send. `hold: row`: that row's
+     Outcome is held and the others go on.
+  6. Each ready row is sent and verified → Outcome `"<id>#<row_no>"` (`success`, or held with the sink's reason).
+     Send failures are per row (each row is its own write; a replay re-sends only rows not yet processed).
+  Every detail is redacted (V13). `process_record` is unchanged.
+- **`runner.run.run`** calls `process_document` when `getattr(integ, "EMITS", None) == "rows"`, else
+  `process_record`. Every Outcome is stored (`records` table) with `raw` = the document; the run log gets one
+  `record` event per Outcome; counts are per Outcome. The cursor moves once per document. The circuit breaker counts
+  consecutive `SINK_CONTRACT` Outcomes and is checked after each document. `NEW_SOURCE_FORMAT` counts only
+  document-level (or record-level) `PARSE_NO_MATCH` Outcomes, as before.
+- **`Store.quarantined_raw(name, id_field="id")`** (the replay input) groups the latest live outcomes by the raw
+  record's `id_field` (record ids `<id>` and `<id>#<n>`) and returns each document once when any outcome of its
+  latest run is quarantined. `runner.run.run` passes `id_field=integ.RECORD_ID` (the spec's `source.record_id`).
+  Rows written by a later run supersede an earlier document-level hold. Records whose raw has no such field are one
+  group per record id, as before.

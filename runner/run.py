@@ -20,7 +20,7 @@ from runner.credentials import redact
 from runner.http import ConfigError, Http
 from runner.lib import AI_MODULES
 from runner.loader import load_integration
-from runner.pipeline import process_record
+from runner.pipeline import process_document, process_record
 from runner.store import Store, workspace_dir
 
 CIRCUIT_BREAKER_THRESHOLD = 3
@@ -66,8 +66,10 @@ def preflight(http: Http, vdir: Path, manifest: dict, integ: Any = None) -> tupl
     method, path = manifest["sink_call"]["method"], manifest["sink_call"]["path"]
     errors = []
     for ex in golden:
-        if "body" in ex["expect"]:
-            errors += [f"[{ex['name']}] {e}" for e in validate_body(current, method, path, ex["expect"]["body"])]
+        # a rows package's examples list one body per row (contracts V18)
+        bodies = [ex["expect"]["body"]] if "body" in ex["expect"] else ex["expect"].get("rows") or []
+        for body in bodies:
+            errors += [f"[{ex['name']}] {e}" for e in validate_body(current, method, path, body)]
     info["contract_errors"] = sorted(set(errors))
     info["current_openapi"] = current
     return not errors, info
@@ -170,7 +172,7 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
             return finish()
 
         try:
-            records = (store.quarantined_raw(name) if replay
+            records = (store.quarantined_raw(name, id_field=integ.RECORD_ID) if replay
                        else integ.list_records(http, store.get_cursor(name, scope)))
         except Exception as e:  # noqa: BLE001
             status, message = "failed", f"could not fetch source records: {e}"
@@ -178,21 +180,27 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
         if limit is not None:
             records = records[:limit]
         log(json.dumps({"event": "fetched", "run_id": run_id, "total": len(records)}))
-        streak, quarantined = 0, []
+        emits_rows = getattr(integ, "EMITS", None) == "rows"  # contracts V18: one document -> many records
+        streak, quarantined, unparsed = 0, [], []
         for rec in records:
-            out = process_record(integ, rec, http, _ScopedStore(store, name, scope, run_id))
-            store.add_record(run_id, out, rec)
-            jl.write(redact(json.dumps({"event": "record", **out.to_dict()})) + "\n")
-            jl.flush()
-            counts[out.status] += 1
-            if out.reason:
-                counts[f"quarantined:{out.reason}"] += 1
-                quarantined.append((out, rec))
+            scoped = _ScopedStore(store, name, scope, run_id)
+            outs = (process_document(integ, rec, http, scoped) if emits_rows
+                    else [process_record(integ, rec, http, scoped)])
+            for out in outs:  # every Outcome is stored with raw = the source record (the document)
+                store.add_record(run_id, out, rec)
+                jl.write(redact(json.dumps({"event": "record", **out.to_dict()})) + "\n")
+                jl.flush()
+                counts[out.status] += 1
+                if out.reason:
+                    counts[f"quarantined:{out.reason}"] += 1
+                    quarantined.append((out, rec))
+                    if out.reason == "PARSE_NO_MATCH" and out.record_id == str(rec.get(integ.RECORD_ID)):
+                        unparsed.append((out, rec))  # a record- or document-level miss, never a row's
+                streak = streak + 1 if out.reason == "SINK_CONTRACT" else 0
             if not replay and integ.CURSOR_FIELD and rec.get(integ.CURSOR_FIELD):
                 store.set_cursor(name, scope, str(rec[integ.CURSOR_FIELD]))
             if pace:
                 time.sleep(pace)
-            streak = streak + 1 if out.reason == "SINK_CONTRACT" else 0
             if streak >= CIRCUIT_BREAKER_THRESHOLD:
                 samples = [{"record_id": o.record_id, "detail": o.detail, "body": o.body}
                            for o, _ in quarantined[-CIRCUIT_BREAKER_THRESHOLD:]]
@@ -203,11 +211,11 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
                 status, message = "tripped", "circuit breaker: consecutive sink contract failures"
                 break
 
-        by_route = Counter(o.route_value for o, _ in quarantined if o.reason == "PARSE_NO_MATCH")
+        by_route = Counter(o.route_value for o, _ in unparsed)
         for route_value, n in by_route.items():
             if n >= QUARANTINE_THRESHOLD and incident_id is None and not replay:
                 samples = [{"record_id": o.record_id, "detail": o.detail, "record": r}
-                           for o, r in quarantined if o.reason == "PARSE_NO_MATCH" and o.route_value == route_value][:5]
+                           for o, r in unparsed if o.route_value == route_value][:5]
                 incident_id = store.open_incident(
                     name=name, version=v, run_id=run_id, type="NEW_SOURCE_FORMAT", reason_codes=["PARSE_NO_MATCH"],
                     summary=f"{n} records from {integ.ROUTE_BY}={route_value} matched no parser.", samples=samples)
