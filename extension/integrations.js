@@ -1,11 +1,13 @@
 // Shared by options.html and popup.html (docs/contracts.md V15): the integration a page is sent to.
 // GET {controlUrl}/api/extension -> {token, control_url, integrations: [{name, intent}], default_integration}.
 // The choice lives in chrome.storage.local as `integration` ('' or absent = Patchwork's default integration).
+// `controlUrl` 'auto' (or absent) = Patchwork is found by itself (discover.js, loaded before this file); anything
+// else is an address the person set.
 
-const PW_DEFAULTS = { controlUrl: 'http://127.0.0.1:8000', token: '', integration: '' };
+const PW_DEFAULTS = { controlUrl: 'auto', token: '', integration: '' };
 
 function pwCleanUrl(url) {
-  return String(url || '').trim().replace(/\/+$/, '') || PW_DEFAULTS.controlUrl;
+  return String(url || '').trim().replace(/\/+$/, '');
 }
 
 // {token, control_url, integrations, default_integration}, or throws (unreachable / HTTP error).

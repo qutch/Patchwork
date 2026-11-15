@@ -8,6 +8,17 @@ async function load() {
   const o = await chrome.storage.local.get(PW_DEFAULTS);
   const chosen = o.integration || '';
   pwFillSelect($('integration'), [], null, chosen);
+  if (pwIsAuto(o.controlUrl)) {  // found by itself: look now (pwConnection, discover.js)
+    const conn = await pwConnection({ rediscover: true });
+    if (!conn.url) {
+      say('Patchwork is not running. Start it with ./patchwork.');
+      return;
+    }
+    const body = conn.setup || {};
+    const integrations = Array.isArray(body.integrations) ? body.integrations.filter(i => i && i.name) : [];
+    pwFillSelect($('integration'), integrations, body.default_integration || null, chosen);
+    return;
+  }
   if (!o.token) {
     say('Set the token in the options first.');
     return;

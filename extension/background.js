@@ -8,8 +8,13 @@
 //
 // Badge: "…" sending / working, "✓" written by code, "AI" learned now, "dup" already in the tracker,
 // "!" held or failed (hover the button for why).
+//
+// Where Patchwork is: found by itself (discover.js: ports 38091-38110, the ones `./patchwork` uses), cached, and
+// found again once after a network failure or a 401. An address set in the options (Advanced) always wins.
 
-const DEFAULTS = { controlUrl: 'http://127.0.0.1:8000', token: '', integration: '' };
+importScripts('discover.js');
+
+const NOT_RUNNING = 'Patchwork is not running on this computer: start it with ./patchwork';
 const POLL_MS = 700;
 const POLL_LIMIT_MS = 30000;
 const BADGES = {
@@ -21,13 +26,9 @@ const BADGES = {
   failed: ['!', '#dc2626'],
 };
 
-async function getOptions() {
-  const o = await chrome.storage.local.get(DEFAULTS);
-  return {
-    controlUrl: String(o.controlUrl || DEFAULTS.controlUrl).trim().replace(/\/+$/, ''),
-    token: String(o.token || '').trim(),
-    integration: String(o.integration || '').trim(),
-  };
+async function chosenIntegration() {
+  const o = await chrome.storage.local.get({ integration: '' });
+  return String(o.integration || '').trim();
 }
 
 async function setBadge(tabId, state, title) {
@@ -65,12 +66,12 @@ function describe(state, row) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function pollOutcome(opts, pageId, tabId) {
+async function pollOutcome(conn, pageId, tabId) {
   const deadline = Date.now() + POLL_LIMIT_MS;
   let row = null;
   while (Date.now() < deadline) {
     try {
-      const r = await fetch(`${opts.controlUrl}/api/pages/${encodeURIComponent(pageId)}`);
+      const r = await fetch(`${conn.url}/api/pages/${encodeURIComponent(pageId)}`);
       if (r.ok) {
         row = (await r.json()).row;
         const state = outcomeOf(row);
@@ -94,11 +95,12 @@ async function sendActiveTab(tab) {
   if (!tab) return { ok: false, error: 'no active tab' };
   const tabId = tab.id;
   if (!/^https?:/i.test(tab.url || '')) return fail(tabId, 'only web pages can be sent');
-  const opts = await getOptions();
-  if (!opts.token) {
+  let conn = await pwConnection();
+  if (conn.mode === 'manual' && !conn.token) {
     chrome.runtime.openOptionsPage();
     return fail(tabId, 'set the token in the extension options first');
   }
+  if (!conn.url) return fail(tabId, NOT_RUNNING);
   await setBadge(tabId, 'sending', 'sending…');
 
   let page;
@@ -110,27 +112,39 @@ async function sendActiveTab(tab) {
   }
   if (!page || !page.html) return fail(tabId, 'could not read this page');
 
-  let resp;
-  try {
-    resp = await fetch(`${opts.controlUrl}/api/pages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Patchwork-Token': opts.token },
-      body: JSON.stringify({ url: page.url, title: page.title, html: page.html,
-                             ...(opts.integration ? { integration: opts.integration } : {}) }),
-    });
-  } catch (e) {
-    return fail(tabId, `Patchwork is not reachable at ${opts.controlUrl}`);
+  const integration = await chosenIntegration();
+  const body = JSON.stringify({ url: page.url, title: page.title, html: page.html,
+                                ...(integration ? { integration } : {}) });
+  const post = async c => {
+    try {
+      return await fetch(`${c.url}/api/pages`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Patchwork-Token': c.token }, body,
+      });
+    } catch (e) {
+      return null;  // not reachable
+    }
+  };
+  let resp = await post(conn);
+  if (conn.mode === 'auto' && (resp === null || resp.status === 401)) {
+    // Patchwork restarted on another port, or with another workspace (another token): find it again, once.
+    conn = await pwConnection({ rediscover: true });
+    if (!conn.url) return fail(tabId, NOT_RUNNING);
+    resp = await post(conn);
   }
-  if (resp.status === 401) return fail(tabId, 'token rejected: copy it again from Patchwork');
+  if (resp === null) return fail(tabId, `Patchwork is not reachable at ${conn.url}`);
+  if (resp.status === 401) {
+    return fail(tabId, conn.mode === 'auto' ? 'Patchwork rejected its own token: restart it with ./patchwork'
+                                            : 'token rejected: copy it again from Patchwork');
+  }
   if (resp.status === 413) return fail(tabId, 'page too large to send');
-  if (resp.status === 422 && opts.integration) {
-    return fail(tabId, `Patchwork has no integration ${opts.integration}: pick another one in the popup`);
+  if (resp.status === 422 && integration) {
+    return fail(tabId, `Patchwork has no integration ${integration}: pick another one in the popup`);
   }
   if (!resp.ok) return fail(tabId, `Patchwork answered HTTP ${resp.status}`);
   const created = await resp.json();
 
   await setBadge(tabId, 'sending', 'sent; waiting for the result…');
-  const { state, row } = await pollOutcome(opts, created.id, tabId);
+  const { state, row } = await pollOutcome(conn, created.id, tabId);
   if (!state) {
     await setBadge(tabId, 'sending', 'still working: see Patchwork');
     return { ok: true, id: created.id, state: null, row };
