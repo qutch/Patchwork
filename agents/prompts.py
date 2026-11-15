@@ -302,7 +302,9 @@ Four steps, one subagent at a time:
    other example site", "Compile and test", "Request deploy"; and, in the same turn, task(subagent_type="mapper") with
    the integration name and the first example page id.
 2. When the mapper reports, task(subagent_type="learner") ONCE with every other example page id and the integration
-   field names the mapper reported. Skip this step when there is only one example page.
+   field names the mapper reported. These are extracted fields, not destination labels. Sources using record.*,
+   today's date or constants apply to every site and need no site reader. Skip this step when there is only one
+   example page.
 3. task(subagent_type="builder") to compile spec.yaml and run its tests.
 4. request_deploy(version, summary) with the version the builder compiled. The person reviews every proposed value
    there, so keep the summary to one sentence.
@@ -327,6 +329,9 @@ Sources (exactly one per destination field):
   Prefer a JSON-LD value of the page's main object, then a heading that reads one value (lines without
   "(N values)"), then a meta tag. Add "regex" with one capture group to cut a value out of a longer one.
 - The page's address: {{"record": "canonical_url"}}. The date the page was sent: {{"today": true}}.
+- The outline is only a summary. Before skipping a field missing from it, call get_page(page_id="{first_page}",
+  search="<field name>") to look for its DOM values. Choose the main value, not a secondary offer or installment;
+  test_page_parser can check the reader. Use cast/clean (for example clean="money") when the destination is numeric.
 - A field the page does not show: {{"skip": true}}. A required field cannot be skipped: ask_user once with 2-3 options
   and dest_field="<that destination field>", then use {{"const": "<the answer>"}}.
 If propose_mapping answers REFUSED, fix only the fields it names and call it again (at most twice). Then reply with

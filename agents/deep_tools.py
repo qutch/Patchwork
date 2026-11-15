@@ -1197,7 +1197,8 @@ TOOL_DOCS: dict[str, str] = {
         "(sender, subject, file), its tables (`T<n> columns` and the first rows) and its numbered text lines "
         "(`L<n>`). Also the fields every parser of this integration must extract (and, when it reads many rows from "
         "one document, the row fields and how to select rows), its validation rules including the declared "
-        "cross-checks, and the parsers it already has."),
+        "cross-checks, and the parsers it already has. For a page, optional search focuses on short DOM values "
+        "whose labels or text match a field name; use it when the overview omits a needed field."),
     "test_page_parser": (
         "Test a candidate parser on the page or document: {\"id\": \"<site_name>\", \"fields\": {\"<field>\": "
         "{\"css\": \"h1\"}, \"<other field>\": {\"jsonld\": \"<path>\", \"jsonld_type\": \"<@type>\"}}}, one entry "
@@ -2077,7 +2078,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                 scope_note = f" (for {site} only: it misses {len(missed)} of {len(read) + len(missed)} other companies on {plat})"
         return p, checks, scope_note
 
-    def get_page(page_id: str = "") -> str:
+    def get_page(page_id: str = "", search: str = "") -> str:
         """The page to learn, as a compact outline (title, headings, meta tags, JSON-LD), each line with
         an extractor that reads it ({css: …}, {css: …, attr: content}, {jsonld: …}). Also the fields every
         parser of this integration must extract and the parsers it already has."""
@@ -2104,7 +2105,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                 pass
         doc = learn.is_document(rec) or _has_rows(spec)  # rows are read from tables and text lines, not JSON-LD
         outline = (learn.document_outline(rec) if doc
-                   else learn.page_outline(rec, prefer_types=learn.integration_jsonld_types(spec)))
+                   else learn.page_outline(rec, prefer_types=learn.integration_jsonld_types(spec), search=search))
         if _has_rows(spec):
             hint += _ROWS_HINT.replace("{row_fields}", ", ".join(_row_fields_wanted(spec)) or "?")
             shown = [f"{p['id']}: {json.dumps(p['rows'], ensure_ascii=False)[:600]}"

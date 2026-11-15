@@ -44,6 +44,20 @@ def test_outline_gives_working_extractors():
     assert '{css: "meta[property=\\"og:site_name\\"]", attr: content} → "Careers at Airbnb"' in branded
 
 
+def test_focused_outline_finds_value_after_long_navigation_without_choosing_an_offer():
+    from agents.learn import make_page_record
+    html = ('<h1>Example device</h1>' + '<h2>Navigation details</h2>' * 80
+            + '<div class="main-price"><span>$ 1,549 .99</span></div>'
+            + '<span class="other-price">$ 2,099 .99</span>'
+            + '<span class="other-price">$ 2,295 .99</span>')
+    rec = make_page_record('https://shop.example/device', html)
+    out = page_outline(rec, search="Price")
+    assert len(out) <= 4000
+    assert '{css: "div.main-price"} → "$ 1,549 .99"' in out
+    assert '$ 2,099 .99' in out and '(3 values)' in out
+    assert run_page_parser({'fields': {'price': {'css': 'div.main-price'}}}, rec) == {'price': '$ 1,549 .99'}
+
+
 @pytest.mark.parametrize("name", ALL)
 def test_evidence_ok_for_spike_readers(name):
     rec = page(name)

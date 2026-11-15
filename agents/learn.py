@@ -161,16 +161,47 @@ def with_jsonld_types(parser: dict, html: str) -> dict:
     return p
 
 
-def page_outline(record: dict, max_chars: int = 4000, prefer_types: list[str] | None = None) -> str:
+def page_outline(record: dict, max_chars: int = 4000, prefer_types: list[str] | None = None,
+                 search: str = "") -> str:
     """Title, h1-h3, og/twitter meta and JSON-LD leaves, each with the extractor that reads it, then
     the start of the visible text. Never the whole HTML (the learner's budget is ~8 model calls).
-    `prefer_types` (the JSON-LD types the integration already reads) are listed first."""
+    `prefer_types` (the JSON-LD types the integration already reads) are listed first.
+    `search` focuses on short DOM values whose semantic attributes or text contain the given words;
+    missing from the overview does not mean missing from the page."""
     html = record.get("html") or ""
     lines = [f"page {record.get('id')} · site {record.get('site')} · url {record.get('canonical_url') or record.get('url')}",
              f"document.title: {json.dumps(_clip(normalize_ws(record.get('title') or ''), 200))}"]
     head_title = next((v for v in css_all(html, "head title") if v), None)
     if head_title:
         lines.append(f"  {{css: \"head title\"}} → {json.dumps(_clip(head_title, 200))}")
+    if search.strip():
+        terms = re.findall(r"[\w-]+", search.casefold())[:8]
+        lines.append(f"focused DOM values for {json.dumps(_clip(search, 100))} (candidates, not selected answers):")
+        tree = LexborHTMLParser(html)
+        seen: set[tuple[str, str]] = set()
+        candidates = []
+        for node in tree.css("h1, h2, h3, span, div, p, li, dt, dd, td, th, strong, label, output"):
+            value = normalize_ws(node.text(deep=True, separator=" "))
+            if not value or len(value) > 160 or node.css_first("script, style, template, noscript, svg"):
+                continue
+            labels = " ".join(node.attributes.get(k) or "" for k in
+                              ("class", "id", "itemprop", "data-testid", "aria-label"))
+            if not any(term in (labels + " " + value).casefold() for term in terms):
+                continue
+            rank = 0 if any(term in labels.casefold() for term in terms) else 1
+            candidates.append((rank, node, value))
+        # Semantic labels precede navigation text; preserve page order among equally ranked candidates.
+        for _, node, value in sorted(candidates, key=lambda item: item[0]):
+            sel, count = css_path(html, node)
+            if (sel, value) in seen:
+                continue
+            seen.add((sel, value))
+            lines.append(f"  {{css: {json.dumps(sel)}}}{f' ({count} values)' if count > 1 else ''} → {json.dumps(value)}")
+            if len(seen) >= 12 or len("\n".join(lines)) >= max_chars - 100:
+                break
+        if not seen:
+            lines.append("  No short DOM values matched. Try another label; this is not proof the field is absent.")
+        return "\n".join(lines)[:max_chars]
     try:
         tree = LexborHTMLParser(html)
         heads = tree.css("h1, h2, h3")

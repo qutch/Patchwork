@@ -64,6 +64,14 @@ def test_get_page_names_the_integration_fields_and_every_jsonld_type(workspace, 
     assert not JOB_WORDS.search(out), JOB_WORDS.search(out)
 
 
+def test_get_page_can_find_a_dom_value_outside_the_overview(workspace, monkeypatch):
+    h = ProductHarness(monkeypatch)
+    out = h.tools["get_page"](search="cost")
+    assert '{css: "div.cost"} → "EUR 89.00"' in out
+    assert "fields to extract (exactly these): name, price, released, image" in out
+    assert "No short DOM values matched" in h.tools["get_page"](search="absent-field")
+
+
 def test_learn_prompts_have_no_job_wording_for_a_product_integration():
     from agents import prompts
     spec = yaml.safe_load(SPEC.read_text())

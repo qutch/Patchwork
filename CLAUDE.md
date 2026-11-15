@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-15, by the lead (Claude), after merging the placeholder-answer guard.
+Last updated: 2026-11-15, after the live Products-to-Airtable rehearsal and focused page-search fix.
 
 ## What Patchwork is
 
@@ -127,6 +127,11 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 
 ### Done (on `main`)
 
+- **Live Products rehearsal and focused page search:** Newegg and Adafruit examples mapped to Product name,
+  Price and Link, approved into the demo Airtable table; a third Adafruit product wrote automatically with no
+  model call and passed read-back verification. `get_page(search=...)` now finds short DOM values omitted by
+  the compact overview; TEACH searches before skipping a field and keeps record metadata separate from site readers.
+
 - **v1 and v2 base:**
   - pages → forms/Airtable;
   - LEARN for new sites (platform wildcards, e.g. `*.myworkdayjobs.com`);
@@ -191,7 +196,9 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 - **Placeholder-answer guard:** in TEACH, `ask_user` refuses AI-offered options that are empty or 0 (`$0.00`, `0,0`)
   for a number or required field (named in `dest_field`, or the one field named in the question). A person's own
   typed `0` is still accepted.
-- **Last full verification** (2026-11-15, placeholder guard on main): 962 passed, 15 skipped; smokes (form, new-integration x3) OK; web 130 tests, typecheck, build and mock smoke OK.
+- **Last full verification** (2026-11-15, focused page search): 963 passed, 15 skipped; 58 targeted agent checks
+  passed after the final prompt/test additions; form and Airtable smokes 9/9 each. Live Airtable rehearsal:
+  two approved examples plus one automatic third capture, all read back. No web changes; prior web checks unchanged.
 
 ### In progress
 
@@ -253,7 +260,8 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 - **Placeholder-answer guard covers TEACH from examples only:** other modes have no destination field types there.
   A question naming no field (or two) isn't checked.
 - **Pages without structured data are hard to teach:** e.g. Amazon product pages have no JSON-LD, and the first
-  `.a-offscreen` price span is empty. Prefer stores with JSON-LD `Product` data for demos.
+  `.a-offscreen` price span is empty. Focused DOM search now helps, but returns at most 12 candidates;
+  missing or ambiguous values still need review. Prefer stores with JSON-LD `Product` data for demos.
 - **Task 9 follow-ups:**
   - Capture words match without a date word ("Coupon Applied" → today; it is labelled AI).
   - Rename pairing can swap fields or pair on type alone; the deploy approval still gates this.
