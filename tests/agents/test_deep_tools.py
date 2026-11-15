@@ -109,3 +109,60 @@ def test_diff_openapi_maps_renames_and_suggests_the_question(apps, workspace):
     assert q["question"] == "Stockroom now requires warehouse_id. Always BOS, or by supplier?"
     assert q["options"][0] == "Always BOS"
     assert d["routed_values"] == {"sender_domain": ["acme.com", "globex.com", "initech.com"]}
+
+
+def _ask_ctx(monkeypatch, fields):
+    """ask_user with a stubbed destination: fields = {label: {type, required}}."""
+    import agents.deep_tools as dt
+    svc, t, ctx, tools = make_ctx()
+    monkeypatch.setattr(dt, "examples_dest_fields", lambda c, k: fields)
+    monkeypatch.setattr(ctx, "examples_mode", lambda: True)
+    monkeypatch.setattr(ctx, "dest_contract", lambda: {})
+    return svc, t, ctx, tools
+
+
+def _refused_without_asking(t, ctx, tools, options, field):
+    out = tools["ask_user"]("What should it be?", options, field)
+    assert out.startswith("REFUSED:")
+    assert t.pending is None and ctx.answers == {}
+    return out
+
+
+def _ask_in_thread(t, tools, options, field):
+    out = {}
+    th = threading.Thread(target=lambda: out.setdefault("r", tools["ask_user"]("Which?", options, field)))
+    th.start()
+    deadline = time.time() + 10
+    while t.pending is None and time.time() < deadline:
+        time.sleep(0.02)
+    return th, out
+
+
+def test_ask_user_refuses_zero_option_for_number_field(monkeypatch, apps, workspace):
+    svc, t, ctx, tools = _ask_ctx(monkeypatch, {"Price": {"type": "number", "required": False}})
+    for opts in (["0", "12.50"], ["$0.00"], ["0,0"]):
+        out = _refused_without_asking(t, ctx, tools, opts, "Price")
+        assert "Price" in out and "Leave it for me" in out
+
+
+def test_ask_user_refuses_empty_option_for_required_text_field(monkeypatch, apps, workspace):
+    svc, t, ctx, tools = _ask_ctx(monkeypatch, {"Name": {"type": "text", "required": True}})
+    _refused_without_asking(t, ctx, tools, ["Acme", "  "], "Name")
+
+
+def test_ask_user_allows_zero_for_optional_text_field(monkeypatch, apps, workspace):
+    svc, t, ctx, tools = _ask_ctx(monkeypatch, {"Note": {"type": "text", "required": False}})
+    th, out = _ask_in_thread(t, tools, ["0", "none"], "Note")
+    assert t.pending and t.pending["type"] == "ask_user"
+    svc.resume(t.id, t.pending["interrupt_id"], {"answer": "0"})
+    th.join(10)
+    assert out["r"] == "user answered: 0"
+
+
+def test_ask_user_real_options_interrupt_and_free_text_zero_is_accepted(monkeypatch, apps, workspace):
+    svc, t, ctx, tools = _ask_ctx(monkeypatch, {"Price": {"type": "number", "required": True}})
+    th, out = _ask_in_thread(t, tools, ["12.50", "Leave it for me to fill in at review"], "Price")
+    assert t.pending and t.pending["type"] == "ask_user"
+    svc.resume(t.id, t.pending["interrupt_id"], {"answer": "0"})  # the person's own free-text choice
+    th.join(10)
+    assert out["r"] == "user answered: 0" and ctx.answers == {"Price": "0"}

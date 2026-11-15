@@ -1822,11 +1822,40 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         sample = next((e["expect"]["body"] for e in examples if "body" in e.get("expect", {})), None)
         return f"rewrote {changed} expected bodies; e.g. {json.dumps(sample)}"
 
+    def _is_placeholder_option(opt: object) -> bool:
+        text = re.sub(r"[\s,$€£¥]", "", str(opt))
+        if not text:
+            return True
+        try:
+            return float(text) == 0
+        except ValueError:
+            return False
+
+    def _placeholder_refusal(dest_field: str, options: list[str] | None) -> str | None:
+        """Code check: options the AI offers for a number or required destination field must not be empty or 0."""
+        if not dest_field or not options or not ctx.examples_mode():
+            return None
+        try:
+            info = examples_dest_fields(ctx.examples_candidates() or {}, ctx.dest_contract()).get(str(dest_field))
+        except Exception:  # noqa: BLE001 - unknown destination: behave as before
+            return None
+        if not info or not (info.get("required") or info.get("type") in ("number", "integer")):
+            return None
+        bad = [o for o in options if _is_placeholder_option(o)]
+        if not bad:
+            return None
+        return (f"REFUSED: option(s) {[str(o) for o in bad]} would write a placeholder (empty or 0) into "
+                f"{dest_field!r}, a number or required field, on every row. Offer real values seen on the pages, "
+                "or an option such as 'Leave it for me to fill in at review'. Nothing was asked.")
+
     def ask_user(question: str, options: list[str] | None = None, dest_field: str = "") -> str:
         """Ask the human one short question (with 2-3 options) and wait for the answer. Use it to
         confirm inferred assumptions and for values that cannot be derived from the data. In TEACH from
         example pages, name the destination field the question is about in `dest_field`: a constant for
         that field equal to the answer then counts as the person's choice."""
+        refused = _placeholder_refusal(dest_field, options)
+        if refused:
+            return refused
         answer = ctx.interrupt("ask_user", question=question, options=list(options or []))
         if dest_field:
             ctx.answers[str(dest_field)] = str(answer.get("answer", ""))
