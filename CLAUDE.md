@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-14, by the lead (Claude), after the wizard started showing agent questions.
+Last updated: 2026-11-14, by the lead's agent (Claude), after `./patchwork` (one-command launcher).
 
 ## What Patchwork is
 
@@ -88,6 +88,8 @@ route → extract → validate → dedupe → map → send → verify.
 ## Commands
 
 ```bash
+./patchwork                         # start everything (API + UI on one port, 38091 or next free), opens the browser
+./patchwork --background | status | stop   # detached; --fresh, --workspace PATH, --port N, --no-open, --no-ai
 make setup                          # uv venv (Python 3.12) + deps + playwright chromium
 .venv/bin/python -m pytest -q       # full suite, ~6 min
 make smoke-v2-offline               # smoke into the demo form, in-process
@@ -96,7 +98,8 @@ cd web && npm run -s typecheck && npx vitest run && npm run -s build && node moc
 make web-mock                       # UI against the mock backend
 ```
 
-Don't run `make stage-v2` or anything else on port 38091 unless the owner asks.
+Don't run `make stage-v2`, a bare `./patchwork` or anything else on port 38091 unless the owner asks. Agents run
+`./patchwork --port <free high port> --workspace <tmp> --no-open`; tests set `PATCHWORK_PORT_RANGE` (e.g. 47100-47120).
 
 ## Plans and specs
 
@@ -160,8 +163,12 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   - cleaners;
   - cross-checks (`sum_equals`, `product_equals`, `count_equals`);
   - `process_document`: one document → many records, checks run before any write.
-- **Last full verification** (2026-11-14): 831 passed, 9 skipped; both smokes OK; web 129 tests, typecheck and build
-  OK.
+- **One command (`./patchwork`):** the control plane serves the built UI (`web/dist`) on its own port, the launcher
+  picks 38091 or the next free port (never 8000–8003/5180), rebuilds the UI when stale, and the extension finds
+  Patchwork and its token by itself (Advanced address still wins). `make stage-v2` = `./patchwork --port 38091`.
+  Spec: `specs/2026-11-14-one-command-launcher-design.md`.
+- **Last full verification** (2026-11-14, with `./patchwork`): 860 passed, 9 skipped; both smokes OK; web 130 tests,
+  typecheck and build OK.
 
 ### In progress
 
@@ -227,6 +234,16 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   `.a-offscreen` price span is empty. Prefer stores with JSON-LD `Product` data for demos.
 - **Web:** `new URL()` is stricter than Python's `urlsplit` for rare hosts (a port above 65535, an invalid IPv4).
 - **Delete:** destination rows can't be deleted yet; this waits on owner decision 6.
+- **Launcher:**
+  - The extension only probes 38091–38110. A `./patchwork --port N` outside that range needs the Advanced address.
+  - An extension that saved an address before this change keeps using it (a saved address wins). Click
+    **Find Patchwork** in its options once to switch to automatic.
+  - `--no-ai` saves AI off in the workspace's settings (the saved switch beats the env default); turn it back on in
+    the UI. A plain `./patchwork` keeps whatever the workspace saved.
+  - Port choice checks then binds, so another program can take the port in between (the launcher then says the
+    control plane exited; run it again).
+  - `GET /api/extension` (which hands out the token) needs no auth, as before; browsers' CORS keeps other sites'
+    pages from reading it, but any local program can.
 
 ## How to finish a task
 

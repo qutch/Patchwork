@@ -15,11 +15,23 @@ rehearsal and fix this file if the UI says something else.
 
 ## 0. Stage setup (before the slot, ~10 min)
 
+Start Patchwork with one command, at the repo root:
+
+```bash
+./patchwork        # the API and the UI on one port, workspace-v2/ (the saved baseline), deep agent, AI on
+```
+
+It prints one block that starts `Patchwork is running at http://127.0.0.1:38091` (or the next free port up to
+38110, if something else holds 38091) and opens that address. **Use the printed address everywhere below**
+(`<URL>`); `cat workspace-v2/patchwork.url` shows it again. Ctrl-C stops it. `./patchwork --background` starts it
+detached (`./patchwork status`, `./patchwork stop`). No `make up` and no separate UI server: the control plane serves
+the UI itself.
+
 Screen layout, 1280 px or wider, browser zoom 110 %:
 
 | Window / tab | What | Why |
 |---|---|---|
-| Chrome window A, tab 1 | Patchwork UI `http://127.0.0.1:5180/?present=1` (Tracker tab) | rows, labels, AI-calls counter, beat hints |
+| Chrome window A, tab 1 | Patchwork UI `<URL>/?present=1` (Tracker tab) | rows, labels, AI-calls counter, beat hints |
 | A, tab 2 | Patchwork UI Benchmark tab | proof chart |
 | Chrome window B, tabs 1–3 | three **known** postings: one Lever, one Greenhouse (job-boards.greenhouse.io), one Ashby | layouts visibly different |
 | B, tabs 4–5 | two postings from the **new** platform: careers.airbnb.com (branded Greenhouse) | learn once, then code |
@@ -37,17 +49,20 @@ rehearsal shows the learn works as well on SmartRecruiters (jobs.smartrecruiters
 
 Pre-flight (all must pass, in order):
 
-1. `make up` (owner's ports). Agent: `PATCHWORK_AGENT=deep make up` if step 4 is fast, else scripted (see §3).
-2. Extension loaded, shortcut set (`chrome://extensions/shortcuts`, default `Alt+Shift+P`), token pasted from the
-   Tracker tab's Extension card. Press it once on a known posting off camera: badge `✓`.
+1. `./patchwork` is running (above). It uses the deep agent; if step 4 is slow, restart it on the scripted agent
+   (see §3).
+2. Extension loaded, shortcut set (`chrome://extensions/shortcuts`, default `Alt+Shift+P`). Nothing to paste: it finds
+   Patchwork by itself (its options page says "Connected automatically to `<URL>`"). Press it once on a known posting
+   off camera: badge `✓`.
 3. Learned layouts panel shows exactly lever, greenhouse, ashby (learned earlier, off camera, with times) and **not**
    careers.airbnb.com. Settings: AI on, learn policy `auto`.
-4. `PATCHWORK_FORM=google make smoke-v2` once, 60–30 minutes before the slot (it resets, uses the demo Form/Sheet and
+4. `make smoke-v2-stage` once, 60–30 minutes before the slot (`STAGE_PORT=<port> make smoke-v2-stage` if `<URL>` is
+   not on 38091; it resets, uses the demo Form/Sheet and
    prints a timing per beat; it stops and waits for Enter when you must rename the Form question by hand).
    Note the learn beat's seconds. Then do the rehearsal reset (§4). It needs the saved baseline (I-2); on a fresh
    workspace add `--bootstrap` (`scripts/smoke_v2.py --bootstrap`: TEACH from `fixture-jobs`, learn Greenhouse and
    Ashby from one stored posting each, save the baseline). `make smoke-v2-offline` runs the same beats on its own
-   in-process stack (fixture form, scripted agent) without touching `make up`.
+   in-process stack (fixture form, scripted agent) without touching `./patchwork`.
 5. Model status: on Claude Haiku 5.5 the learn beat takes ~12 s and the repair ~22 s. If step 4's learn took > 20 s,
    present on the scripted agent (§3).
 
@@ -142,7 +157,7 @@ Footer: "Learns each new layout once. Holds anything it isn't sure of for a pers
 | Situation | Do | Say |
 |---|---|---|
 | Learn has not finished after ~15 s (slow model) | keep talking over the streaming events (todos, evidence); at 25 s switch to the backup video at the learn beat | "The model is slow today; here's the same step from our rehearsal." |
-| Model API down before the slot | `PATCHWORK_AGENT=scripted make up` (restart before going on stage, not during) | "This is the scripted agent: same checks, same compiler and runner, no model. The AI-calls column says 'scripted'." |
+| Model API down before the slot | Ctrl-C (or `./patchwork stop`), then `PATCHWORK_AGENT=scripted ./patchwork` (restart before going on stage, not during) | "This is the scripted agent: same checks, same compiler and runner, no model. The AI-calls column says 'scripted'." |
 | Presenting on the scripted agent | nothing to hide: the Tracker labels say `scripted`; the benchmark chart's per-learn calls come from a deep run (`measured (earlier run)`) | "The learn you just saw ran the scripted agent. The chart's AI calls per learn are from a real-model run earlier today." |
 | Extension badge `!` or nothing happens | press once more; then use the UI's paste-a-URL fallback if W4b ships one, else the backup video | "Let me send that again." |
 | Google Form submit slow (> 5 s) | wait; rows land in the Sheet < 1 s after submit (spike a) | "It's filling the real Google Form in a headless browser." |
@@ -160,15 +175,14 @@ AI off on stage (Settings → AI off) is also a fine thing to show if asked: an 
 1. Google Form editor: rename `Employer` back to `Company` (exact text, no trailing space).
 2. Google Sheet: select rows 2..N of "Form Responses 1" → right-click → Delete rows. Keep the header row.
    (A person does this; nothing in Patchwork deletes Sheet rows.)
-3. `curl -X POST http://127.0.0.1:8000/api/demo/v2/reset` (restores the saved baseline of `jobs_to_tracker`: lever,
-   greenhouse, ashby learned; clears pages, runs, records, processed keys, incidents and learn threads. Never touches
+3. `curl -X POST <URL>/api/demo/v2/reset`, with the address `./patchwork` printed (restores the saved baseline of
+   `jobs_to_tracker`: lever, greenhouse, ashby learned; clears pages, runs, records, processed keys, incidents and learn threads. Never touches
    `po_to_stockroom`). The baseline is saved once after the off-camera learns with `POST /api/demo/v2/save-baseline`.
 4. Check: Tracker empty; AI-calls counter 0; Learned layouts = lever, greenhouse, ashby; no open incident;
    `GET /api/settings` → `ai_enabled: true`, `learn_policy: auto`.
 5. Close and reopen the posting tabs (fresh DOM), keep the Form editor and Sheet open.
 
-`make smoke-v2` does steps 3–4 itself (and step 1 for the fixture form); with the Google Form it prints steps 1–2 and
-waits for Enter.
+`make smoke-v2-stage` does steps 3–4 itself; with the Google Form it prints steps 1–2 and waits for Enter.
 
 ---
 

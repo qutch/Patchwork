@@ -15,6 +15,17 @@ and repaired with approval. See [v2](#v2-job-postings--tracker-form) below and `
 ## Quick start
 
 ```bash
+./patchwork        # starts everything and opens the browser; Ctrl-C stops it
+```
+
+One process serves the API and the UI on one port (38091, else the next free one up to 38110; never 8000-8003 or
+5180). The Chrome extension (`extension/`) finds it by itself: no address or token to copy. The first run sets up
+Python (`.venv`, with uv) and builds the UI (npm). `./patchwork --background`, `./patchwork status` and
+`./patchwork stop` run it detached; `--fresh` uses a new, empty workspace; `./patchwork --help` lists the rest.
+
+The v1 command-line demo:
+
+```bash
 uv venv -p 3.12 .venv && uv pip install -p .venv/bin/python -r pyproject.toml --extra dev
 make test          # 29 tests, including an e2e run against real servers
 make apps          # terminal 1: Inbox :8001, Stockroom :8002, staging :8003
@@ -181,7 +192,7 @@ Chrome extension (Alt+Shift+P) --POST /api/pages--> page inbox --> run jobs_to_t
 make smoke-v2-offline      # the 2-minute script on its own in-process stack (fixture form, scripted agent), ~20 s
 make bench-v2              # 60 postings, 5 platforms -> bench/v2/results.json (GET /api/bench/v2), no model calls
 make smoke-v2              # the same script against `make up`; PATCHWORK_FORM=google for the demo Form + Sheet
-make stage-v2              # the stage control plane on :38091 (workspace-v2/, deep agent; baseline already built)
+make stage-v2              # ./patchwork on :38091: API + UI (workspace-v2/, deep agent; baseline already built)
 make smoke-v2-stage        # the 2-minute script against it on the demo Google Form + Sheet (pauses for the rename)
 ```
 
