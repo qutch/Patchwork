@@ -126,6 +126,20 @@ def test_second_site_gets_its_own_parser_never_catch_all(teach_ctx_mapped, shop_
     assert out.startswith("OK") and [p["match"] for p in teach_ctx_mapped.spec()["extract"]["parsers"]][1] == {"site": "lumen-supply.example.org"}
 
 
+def test_a_wildcard_match_off_a_platform_is_refused(teach_ctx_mapped, shop_b_pid):
+    """Only a known multi-tenant platform may share one parser across hosts (and only under the at-least-half
+    rule); `*.example.org` or `*.org` would quietly make two example sites share a parser."""
+    fields = {"name": {"css": "h2.name"}, "price": {"jsonld": "offers.price", "jsonld_type": "Product"}}
+    for site in ("*.example.org", "*.org"):
+        out = teach_ctx_mapped.call("add_site_parser", page_id=shop_b_pid, parser={"match": {"site": site}, "fields": fields})
+        assert out.startswith("REFUSED") and "not on a known platform" in out, out
+    out = teach_ctx_mapped.call("add_site_parser", page_id=shop_b_pid, parser={"match": {"site": "*"}, "fields": fields})
+    assert out.startswith("REFUSED"), out
+    assert len(teach_ctx_mapped.spec()["extract"]["parsers"]) == 1  # nothing was added
+    exact = {"match": {"site": "lumen-supply.example.org"}, "fields": fields}  # the page's own site is fine
+    assert teach_ctx_mapped.call("add_site_parser", page_id=shop_b_pid, parser=exact).startswith("OK")
+
+
 def test_required_field_skipped_is_refused(teach_ctx_required_store):
     out = teach_ctx_required_store.call("propose_mapping", mapping={"Store": {"skip": True}})
     assert "Store is required by the destination" in out
@@ -321,7 +335,58 @@ def test_a_constant_is_confirmed_only_when_a_person_gave_it(teach_ctx):
     m = {**FULL_MAPPING, "Store": {"const": "Acme Shop"}}
     assert teach_ctx.call("propose_mapping", mapping=m).startswith("OK")
     assert any(a["status"] == "unconfirmed" and "Acme Shop" in a["text"] for a in teach_ctx.spec()["assumptions"])
-    teach_ctx.ctx.answers.append("Acme Shop")
+    answer_for(teach_ctx, "Store", "Acme Shop")
     assert teach_ctx.call("propose_mapping", mapping=m).startswith("OK")
     assert not any(a["status"] == "unconfirmed" for a in teach_ctx.spec()["assumptions"])
     assert "Store" in teach_ctx.ctx.confirmed
+
+
+def answer_for(tc: TeachCtx, dest_field: str, answer: str) -> None:
+    """The mapper asks about `dest_field` (ask_user tool, as a model would call it); the person answers."""
+    import threading
+    import time
+    out: dict = {}
+    th = threading.Thread(target=lambda: out.setdefault("r", tc.call(
+        "ask_user", question=f"What should {dest_field} be?", options=[answer, "Something else"],
+        dest_field=dest_field)), daemon=True)
+    th.start()
+    deadline = time.time() + 10
+    while tc.t.pending is None and time.time() < deadline:
+        time.sleep(0.01)
+    tc.svc.resume(tc.t.id, tc.t.pending["interrupt_id"], {"answer": answer})
+    th.join(10)
+    assert out["r"] == f"user answered: {answer}"
+
+
+def test_an_answer_about_another_field_confirms_nothing(fake_airtable):
+    """An answer counts only for the field the question was about: "No" said about Product never makes the
+    AI's Store {"const": "No"} the person's choice."""
+    tc = _teach_ctx()
+    answer_for(tc, "Product", "No")
+    m = {**FULL_MAPPING, "Store": {"const": "No"}}
+    assert tc.call("propose_mapping", mapping=m).startswith("OK")
+    assert "Store" not in tc.ctx.confirmed
+    assert any(a["status"] == "unconfirmed" and "'No'" in a["text"] for a in tc.spec()["assumptions"])
+    assert tc.call("add_site_parser", page_id=tc.page_ids[1], parser={"fields": {
+        "name": {"jsonld": "name", "jsonld_type": "Product"},
+        "price": {"jsonld": "offers.price", "jsonld_type": "Product"}}}).startswith("OK")
+    store = {r["dest_field"]: r for r in _review_of(tc)}["Store"]
+    assert store["ai_proposed"] is True and store["status"] == "needs_you"
+
+
+def test_a_confirmation_is_dropped_when_the_source_changes(fake_airtable):
+    """The person gave Store's constant; the AI then re-proposes Store from a page reader. The review shows
+    that reader as AI-proposed, not as the person's choice."""
+    tc = _teach_ctx()
+    answer_for(tc, "Store", "Acme Shop")
+    assert tc.call("propose_mapping", mapping={**FULL_MAPPING, "Store": {"const": "Acme Shop"}}).startswith("OK")
+    assert "Store" in tc.ctx.confirmed
+    remapped = {**FULL_MAPPING, "Store": {"field": "store", "reader": {
+        "css": 'meta[property="og:site_name"]', "attr": "content"}}}
+    assert tc.call("propose_mapping", mapping=remapped).startswith("OK")
+    assert tc.call("add_site_parser", page_id=tc.page_ids[1], parser={"fields": {
+        "name": {"jsonld": "name", "jsonld_type": "Product"},
+        "price": {"jsonld": "offers.price", "jsonld_type": "Product"},
+        "store": {"css": 'meta[property="og:site_name"]', "attr": "content"}}}).startswith("OK")
+    store = {r["dest_field"]: r for r in _review_of(tc)}["Store"]
+    assert "reader" in store["source"] and store["ai_proposed"] is True

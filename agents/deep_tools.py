@@ -151,11 +151,12 @@ class ToolContext:
         self.deploy_result: dict | None = None
         self.last_version: dict | None = None
         self._interrupt_lock = threading.Lock()
-        # TEACH from examples: the review shown with request_deploy, and the destination fields a person decided
-        # (the scripted agent's questions); every other value in the review is labelled as proposed by AI.
+        # TEACH from examples: the review shown with request_deploy, and what a person decided per destination
+        # field: {field: source_key of the source they chose}. A row counts as the person's only while its source
+        # is still exactly that one (`person_chose`); every other value is labelled as proposed by AI.
         self.review: list[dict] | None = None
-        self.confirmed: set[str] = set()
-        self.answers: list[str] = []  # every ask_user answer: a constant equal to one was typed by a person
+        self.confirmed: dict[str, str] = {}
+        self.answers: dict[str, str] = {}  # destination field -> the person's ask_user answer about that field
         self._examples_c: dict | None = None
         self._contract: dict | None = None
 
@@ -823,6 +824,11 @@ def source_key(src: Any) -> str:
     return json.dumps(d, sort_keys=True, default=str)
 
 
+def person_chose(confirmed: dict[str, str], label: str, source: dict) -> bool:
+    """True when a person chose exactly this source for `label` (a changed source is AI-proposed again)."""
+    return label in confirmed and confirmed[label] == source_key(source)
+
+
 def apply_review_edits(spec: dict, review: list[dict], edits: list[dict]) -> dict:
     """A person's review edits applied to a spec, in code (no model). Each edit is `{dest_field, choice}` where
     `choice` is one of that row's `alternatives` (checked when the review was built), `{"const": <text>}` or
@@ -907,6 +913,33 @@ def apply_review_edits(spec: dict, review: list[dict], edits: list[dict]) -> dic
             raise ValueError("at least one destination field must be read from the page")
     new["validate"] = [r for r in new.get("validate") or [] if r.get("field") in used]
     return new
+
+
+def _edit_error(x: BaseException) -> str:
+    if isinstance(x, KeyError) and x.args:  # str(KeyError) is the key's repr
+        return f"unknown value {x.args[0]!r} in the edit"
+    return str(x)
+
+
+def review_edit_errors(review: list[dict], edits: Any, spec: dict | None = None) -> list[str]:
+    """Why `apply_review_edits` would refuse these edits, one message per refused edit (each names its field);
+    [] when every edit applies. Pure: the control plane calls it before resuming a request_deploy, so a bad
+    edit is answered with 422 and the review stays open. With the version's `spec`, also the edits together
+    (e.g. an edit set that leaves a parser reading nothing)."""
+    if not isinstance(edits, list):
+        return ["edits must be a list of {dest_field, choice}"]
+    errors = []
+    for e in edits:
+        try:
+            apply_review_edits({}, review, [e])
+        except (ValueError, KeyError, TypeError) as x:
+            errors.append(_edit_error(x))
+    if not errors and spec:
+        try:
+            apply_review_edits(spec, review, edits)
+        except (ValueError, KeyError, TypeError) as x:
+            errors.append(_edit_error(x))
+    return errors
 
 
 def normalize_intent(intent: Any) -> str:
@@ -1699,11 +1732,14 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         sample = next((e["expect"]["body"] for e in examples if "body" in e.get("expect", {})), None)
         return f"rewrote {changed} expected bodies; e.g. {json.dumps(sample)}"
 
-    def ask_user(question: str, options: list[str] | None = None) -> str:
+    def ask_user(question: str, options: list[str] | None = None, dest_field: str = "") -> str:
         """Ask the human one short question (with 2-3 options) and wait for the answer. Use it to
-        confirm inferred assumptions and for values that cannot be derived from the data."""
+        confirm inferred assumptions and for values that cannot be derived from the data. In TEACH from
+        example pages, name the destination field the question is about in `dest_field`: a constant for
+        that field equal to the answer then counts as the person's choice."""
         answer = ctx.interrupt("ask_user", question=question, options=list(options or []))
-        ctx.answers.append(str(answer.get("answer", "")))
+        if dest_field:
+            ctx.answers[str(dest_field)] = str(answer.get("answer", ""))
         return f"user answered: {answer.get('answer', '')}"
 
     def request_deploy(version: int, summary: str) -> str:
@@ -1865,6 +1901,9 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         # its own exact-host parser, which beats the platform's. Otherwise it is saved for this host only.
         plat = platform_of(site) if route_key == "site" else None
         wildcard = any("*" in v for v in p["match"].values())
+        if wildcard and not plat:  # only a known multi-tenant platform may share a parser across hosts
+            return (f"REFUSED: match {p['match']} is a wildcard, but {site or 'this page'} is not on a known "
+                    f"platform; a parser reads one site (omit match: the code uses {route_key}={rec.get(route_key, site)!r})")
         scope_note = ""
         if plat and (wildcard or not asked_match):
             taken = any(match_rank({"site": plat}, {"site": (x.get("match") or {}).get("site", "")}) == 2 for x in existing)
@@ -2179,10 +2218,10 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                 if problem:
                     refusals.append(f"{label}: the constant {value!r} does not fit ({problem})")
                     continue
-                if str(value).strip() in {a.strip() for a in ctx.answers}:
-                    ctx.confirmed.add(label)  # the person gave this value when asked
+                if label in ctx.answers and ctx.answers[label].strip() == str(value).strip():
+                    ctx.confirmed[label] = source_key({"const": value})  # the person gave this value for this field
                 mappings.append({"dest_field": label, "kind": "const", "value": value,
-                                 "confirmed": label in ctx.confirmed})
+                                 "confirmed": person_chose(ctx.confirmed, label, {"const": value})})
             else:
                 refusals.append(f"{label}: unknown source {src!r}")
         if not refusals and not readers:
@@ -2304,7 +2343,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             first_body = bodies.get(records[0].get("id")) if records else {}
             taken = {learn.normalize_ws(str(v)) for k, v in body_to_dotted(first_body or {}).items()
                      if k != label and v not in (None, "")}
-            decided = label in ctx.confirmed
+            decided = person_chose(ctx.confirmed, label, source)
             needs_you = (("skip" in source and info.get("type") != "array") or "const" in source) and not decided
             rows.append({"dest_field": label, "source": source, **({"readers": per_page} if per_page else {}),
                          "values": values, "ai_proposed": not decided and info.get("type") != "array",

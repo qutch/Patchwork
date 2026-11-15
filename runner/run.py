@@ -5,13 +5,15 @@ This process never calls an LLM. Every run summary carries llm_calls: 0.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sys
 import time
 from collections import Counter
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import yaml
 
@@ -81,14 +83,38 @@ def _pace_s() -> float:
         return 0.0
 
 
+@contextmanager
+def run_lock(name: str, scope: str) -> Iterator[None]:
+    """Exclusive across threads and processes: one run of `name` in `scope` ("live" | "staging") at a time.
+    The idempotency check and the mark of a record are separate steps, so two overlapping runs (say the
+    control plane's after-deploy run and a person's run) could both write one record. Runs wait here instead.
+    An OS file lock: released when the holder exits, even if it crashes."""
+    path = workspace_dir() / "locks" / f"run-{name}-{scope}.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
 def run(name: str, version: int | str = "active", *, dry_run: bool = False, limit: int | None = None,
         replay: bool = False, store: Store | None = None, log=print) -> dict[str, Any]:
     """Run an integration. With `replay=True` the records come from the DB instead of the source:
     raw records whose latest live outcome is quarantined. Idempotency keys keep that safe, and a
     replay never moves the cursor or opens a NEW_SOURCE_FORMAT incident.
 
+    Runs of one integration in one scope never overlap (`run_lock`), so a record is never written twice.
+
     The first line logged is {"event": "started", "run_id": N}; the last is the run summary.
     Every line logged or written to the run log passes through `redact` (contracts V13)."""
+    with run_lock(name, "staging" if dry_run else "live"):
+        return _run(name, version, dry_run=dry_run, limit=limit, replay=replay, store=store, log=log)
+
+
+def _run(name: str, version: int | str = "active", *, dry_run: bool = False, limit: int | None = None,
+         replay: bool = False, store: Store | None = None, log=print) -> dict[str, Any]:
     raw_log = log
 
     def log(line: str) -> None:

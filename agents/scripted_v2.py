@@ -198,7 +198,7 @@ class ScriptedV2Mixin:
         """The mapping a model would propose: the page's address for a url field, today for a date field, else
         `learn.guess_reader` on the first page. A field nothing fills becomes a question to the person, with the
         checked alternatives and "Skip this field" (skip is not offered for a required field)."""
-        from agents.deep_tools import _DATEISH, _URLISH, _field_name, review_alternatives
+        from agents.deep_tools import _DATEISH, _URLISH, _field_name, review_alternatives, source_key
         first = pages[0]
         mapping: dict[str, dict] = {}
         taken: set[str] = set()
@@ -227,16 +227,16 @@ class ScriptedV2Mixin:
             out = self._call(t, "mapper", fns, "ask_user",
                              question=f"Nothing on the first example page clearly fills {label!r} "
                                       f"({info.get('type') or 'text'}). Where should it come from?",
-                             options=options)
+                             options=options, dest_field=label)
             answer = out.removeprefix("user answered:").strip()
             chosen = next((a for a in alts if a["label"] == answer), None)
             if chosen is None and answer != SKIP_FIELD:
                 if info.get("required"):
                     raise RuntimeError(f"no source chosen for the required field {label!r}")
                 answer = SKIP_FIELD
-            ctx.confirmed.add(label)  # a person chose this source: it is not AI-proposed
             mapping[label] = ({"skip": True} if chosen is None else
                               {k: v for k, v in chosen.items() if k not in ("label", "values")})
+            ctx.confirmed[label] = source_key(mapping[label])  # a person chose this source: not AI-proposed
             self.emit(t, "message", agent="mapper", text=f"Recorded for {label}: {answer}")
         return mapping
 

@@ -263,8 +263,8 @@ Sources (exactly one per destination field):
   Prefer a JSON-LD value of the page's main object, then a heading that reads one value (lines without
   "(N values)"), then a meta tag. Add "regex" with one capture group to cut a value out of a longer one.
 - The page's address: {{"record": "canonical_url"}}. The date the page was sent: {{"today": true}}.
-- A field the page does not show: {{"skip": true}}. A required field cannot be skipped: ask_user once with 2-3 options,
-  then use {{"const": "<the answer>"}}.
+- A field the page does not show: {{"skip": true}}. A required field cannot be skipped: ask_user once with 2-3 options
+  and dest_field="<that destination field>", then use {{"const": "<the answer>"}}.
 If propose_mapping answers REFUSED, fix only the fields it names and call it again (at most twice). Then reply with
 one sentence: what each field reads, the integration field names, and the pages still to add (its "next" line).
 
