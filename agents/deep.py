@@ -36,8 +36,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from agents import prompts
+from agents import learn as learn_lib
 from agents.deep_tools import (FAIL_PREFIXES, ToolContext, build_tools, candidates_for, default_build_name,
-                               is_page_candidates, is_page_integration, seed_learn_workdir, seed_repair_workdir)
+                               examples_dest_fields, is_page_candidates, is_page_integration,
+                               seed_learn_workdir, seed_repair_workdir)
 from agents.learn import yload
 from agents.interface import ThreadCancelled, ThreadedAgentService, _Thread
 from agents.scripted import NAME, work_dir
@@ -77,6 +79,21 @@ LEARN_SUBAGENTS: dict[str, tuple[str, str, list[str]]] = {
                 ["get_page", "test_page_parser", "ask_user", "save_parser", "add_test_case"]),
 }
 LEARN_WRITABLE = ["/spec.yaml"]
+
+# TEACH from example pages (wizard approach A): the mapper maps every destination field on the first example page
+# (propose_mapping), the learner adds one parser per other example site (add_site_parser), the builder compiles.
+# The tools check every proposal in code; nobody edits files. The supervisor's only tool is request_deploy, bound
+# return_direct so the run ends when the person answers (no closing model call). The prompts carry the
+# destination fields and the pages' outlines, so the run takes 10 model calls with two example sites.
+EXAMPLES_SUPERVISOR_TOOLS = ["request_deploy"]
+EXAMPLES_SUBAGENTS: dict[str, tuple[str, str, list[str]]] = {
+    "mapper": (prompts.MAPPER_DESCRIPTION, prompts.MAPPER,  # formatted per thread in build_agent
+               ["get_candidates", "get_page", "test_page_parser", "propose_mapping", "ask_user"]),
+    "learner": (prompts.EXAMPLES_LEARNER_DESCRIPTION, prompts.EXAMPLES_LEARNER,  # formatted per thread
+                ["get_page", "test_page_parser", "add_site_parser"]),
+    "builder": (prompts.EXAMPLES_BUILDER_DESCRIPTION, prompts.EXAMPLES_BUILDER, ["compile_spec", "run_tests"]),
+}
+EXAMPLES_FS_TOOLS = ["ls", "read_file"]
 
 
 # ---- models --------------------------------------------------------------------------------
@@ -216,15 +233,17 @@ def _args_for_event(args: dict) -> dict:
 class EventMiddleware(AgentMiddleware):
     """Turns one agent's model turns and tool calls into interface events."""
 
-    def __init__(self, svc: ThreadedAgentService, t: _Thread, agent: str):
+    def __init__(self, svc: ThreadedAgentService, t: _Thread, agent: str, count_calls: bool = False):
         super().__init__()
-        self.svc, self.t, self.agent = svc, t, agent
+        self.svc, self.t, self.agent, self.count_calls = svc, t, agent, count_calls
 
     @property
     def name(self) -> str:  # unique per instance so subagent stacks don't collide
         return f"PatchworkEvents_{self.agent}"
 
     def after_model(self, state, runtime):
+        if self.count_calls:  # TEACH from examples: one event per model call (the wizard shows the count)
+            self.svc.emit(self.t, "model_call", agent=self.agent)
         msgs = state.get("messages") or []
         if msgs and isinstance(msgs[-1], AIMessage):
             text = _text(msgs[-1].content).strip()
@@ -282,8 +301,9 @@ def _no_general_purpose_subagent(model: BaseChatModel) -> None:
 
 
 def is_page_thread(t: _Thread, ctx: ToolContext) -> bool:
-    """LEARN, or an integration whose source is the page inbox (its goldens carry whole pages)."""
-    if t.mode == "learn":
+    """LEARN, TEACH from examples, or an integration whose source is the page inbox (its goldens carry whole
+    pages)."""
+    if t.mode == "learn" or ctx.examples_mode():
         return True
     try:
         if ctx.spec_path.exists():
@@ -306,6 +326,7 @@ class DeepAgentService(ThreadedAgentService):
         self.max_nudges = max_nudges
         self.max_learn_calls = int(os.environ.get("PATCHWORK_LEARN_MAX_CALLS", "12"))
         self.max_page_repair_calls = int(os.environ.get("PATCHWORK_PAGE_REPAIR_MAX_CALLS", "30"))
+        self.max_examples_calls = int(os.environ.get("PATCHWORK_EXAMPLES_MAX_CALLS", "16"))
         self.retry_base_delay = retry_base_delay
         self.model_calls: dict[str, int] = {}
 
@@ -339,7 +360,13 @@ class DeepAgentService(ThreadedAgentService):
         _no_general_purpose_subagent(model)
         tools = build_tools(ctx)
         learn = t.mode == "learn"
+        examples = not learn and ctx.examples_mode()
         sup_tools, subagent_defs = (LEARN_SUPERVISOR_TOOLS, LEARN_SUBAGENTS) if learn else (SUPERVISOR_TOOLS, SUBAGENTS)
+        sup_prompt = prompts.LEARN_SUPERVISOR if learn else prompts.SUPERVISOR
+        if examples:
+            sup_tools, subagent_defs, sup_prompt = EXAMPLES_SUPERVISOR_TOOLS, self.examples_subagents(ctx), \
+                prompts.TEACH_EXAMPLES_SUPERVISOR
+            tools["request_deploy"].return_direct = True  # the person's answer ends the run
         backend = FilesystemBackend(root_dir=str(ctx.wd), virtual_mode=True)
         permissions = [FilesystemPermission(operations=["write"], paths=LEARN_WRITABLE if learn else WRITABLE, mode="allow"),
                        FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")]
@@ -353,7 +380,8 @@ class DeepAgentService(ThreadedAgentService):
                                             lambda: self.check_cancelled(t), base_delay=self.retry_base_delay)
 
         def fs() -> FilesystemMiddleware:
-            return FilesystemMiddleware(backend=backend, tools=FS_TOOLS, permissions=permissions)
+            return FilesystemMiddleware(backend=backend, tools=EXAMPLES_FS_TOOLS if examples else FS_TOOLS,
+                                        permissions=permissions)
 
         subagents = []
         if learn:  # V15: the learner is told this integration's intent and fields, never a fixed domain
@@ -365,14 +393,14 @@ class DeepAgentService(ThreadedAgentService):
             subagents.append({
                 "name": sname, "description": desc, "system_prompt": prompt,
                 "tools": [tools[n] for n in tool_names],
-                "middleware": [fs(), EventMiddleware(self, t, sname), resilient()],
+                "middleware": [fs(), EventMiddleware(self, t, sname, examples), resilient()],
             })
         return create_deep_agent(
             model=model,
             tools=[tools[n] for n in sup_tools],
-            system_prompt=prompts.LEARN_SUPERVISOR if learn else prompts.SUPERVISOR,
+            system_prompt=sup_prompt,
             middleware=[FilesystemMiddleware(backend=backend, tools=READ_ONLY_FS_TOOLS, permissions=permissions),
-                        TodoListMiddleware(), EventMiddleware(self, t, "supervisor"), resilient()],
+                        TodoListMiddleware(), EventMiddleware(self, t, "supervisor", examples), resilient()],
             subagents=subagents,
             backend=backend,
             permissions=permissions,
@@ -380,16 +408,50 @@ class DeepAgentService(ThreadedAgentService):
             name="supervisor",
         )
 
+    def examples_subagents(self, ctx: ToolContext) -> dict[str, tuple[str, str, list[str]]]:
+        """EXAMPLES_SUBAGENTS with the mapper's and learner's prompts filled in for this thread: the destination
+        fields and the first page's outline (mapper), the other pages' outlines (learner)."""
+        c = ctx.examples_candidates() or {}
+        try:
+            dest = examples_dest_fields(c, ctx.dest_contract())
+        except Exception:  # noqa: BLE001 - the mapper can still call get_candidates / get_page
+            dest = {}
+        pages = []
+        for rec in ctx.example_records():
+            pages.append((str(rec.get("id")), str(rec.get("site") or "?"), learn_lib.page_outline(rec, max_chars=3000)))
+        if not pages:
+            return EXAMPLES_SUBAGENTS
+        out = dict(EXAMPLES_SUBAGENTS)
+        desc, _, tool_names = out["mapper"]
+        out["mapper"] = (desc, prompts.mapper_prompt(name=ctx.name, intent=c.get("intent") or "", dest=dest,
+                                                      pages=pages[:1]), tool_names)
+        desc, _, tool_names = out["learner"]
+        out["learner"] = (desc, prompts.examples_learner_prompt(name=ctx.name, pages=pages[1:]), tool_names)
+        return out
+
+    def examples_task(self, ctx: ToolContext) -> str:
+        c = ctx.examples_candidates() or {}
+        try:
+            dest = examples_dest_fields(c, ctx.dest_contract())
+        except Exception:  # noqa: BLE001
+            dest = {}
+        pages = [(str(ex.get("page_id")), str(ex.get("site") or "?")) for ex in c.get("examples") or []]
+        return prompts.teach_examples_task(name=ctx.name, intent=c.get("intent") or "", dest=dest, pages=pages,
+                                           recording_id=ctx.recording_id or "")
+
     def _drive(self, t: _Thread, ctx: ToolContext, first_message: str) -> dict[str, Any]:
         learn = t.mode == "learn"
+        examples = not learn and ctx.examples_mode()
         cap = self.max_learn_calls if learn else (self.max_page_repair_calls if t.mode == "repair" and is_page_thread(t, ctx)
                                                   else self.max_model_calls)
+        if examples:
+            cap = self.max_examples_calls
         budget = _Budget(min(self.max_model_calls, cap))
         agent = self.build_agent(t, ctx, budget)
         cfg = {"configurable": {"thread_id": t.id}, "recursion_limit": 200}
         t0 = time.monotonic()
         message = first_message
-        nudges = min(self.max_nudges, 1) if learn else self.max_nudges
+        nudges = min(self.max_nudges, 1) if (learn or examples) else self.max_nudges
 
         def finished() -> bool:
             return ctx.learn_result is not None if learn else (ctx.deploy_requested or ctx.stopped)
@@ -419,9 +481,11 @@ class DeepAgentService(ThreadedAgentService):
         return result
 
     def _run_build(self, t: _Thread, recording_id: str) -> Any:
-        name = t.integration or default_build_name(recording_id, self.name)
+        name = t.integration = t.integration or default_build_name(recording_id, self.name)
         ctx = ToolContext(self, t, name=name, recording_id=recording_id)
         work_dir(name)
+        if ctx.examples_mode():  # TEACH from example pages (wizard approach A)
+            return self._drive(t, ctx, self.examples_task(ctx))
         intent, fields = "", []
         try:
             c = candidates_for(recording_id)

@@ -97,6 +97,7 @@ class ResumeRequest(BaseModel):
     answer: str | None = None
     decision: Literal["approve", "reject"] | None = None
     comment: str | None = None
+    edits: list[dict[str, Any]] | None = None  # request_deploy review edits, applied by the agent's code (no model)
 
 
 class VersionBody(BaseModel):
@@ -363,6 +364,23 @@ async def agent_stream(thread_id: str, request: Request, after: int | None = Non
     return sse.stream(gen())
 
 
+def _review_edit_errors(status: dict[str, Any], pending: dict[str, Any], edits: list[dict[str, Any]]) -> list[str]:
+    """Review edits checked against the pending request_deploy's review rows and its version's spec, in code,
+    before the agent thread sees them (TEACH from example pages)."""
+    import yaml
+
+    from agents.deep_tools import review_edit_errors
+    review = pending.get("review") or []
+    if not review:
+        return ["this deploy request has no review to edit"]
+    spec = None
+    name, version = status.get("integration"), pending.get("version")
+    path = workspace_dir() / "integrations" / str(name) / f"v{version}" / "spec.yaml"
+    if name and version is not None and path.exists():
+        spec = yaml.safe_load(path.read_text())
+    return review_edit_errors(review, edits, spec)
+
+
 @api.post("/agent/{thread_id}/resume")
 def agent_resume(thread_id: str, body: ResumeRequest, request: Request) -> dict[str, Any]:
     svc = agent_service(request)
@@ -372,6 +390,12 @@ def agent_resume(thread_id: str, body: ResumeRequest, request: Request) -> dict[
         if body.decision is None:
             raise HTTPException(422, "request_deploy needs decision: approve | reject")
         payload: dict[str, Any] = {"decision": body.decision, "comment": body.comment or ""}
+        if body.edits:
+            if body.decision == "approve" and body.interrupt_id == pending.get("interrupt_id"):
+                errors = _review_edit_errors(status, pending, body.edits)
+                if errors:  # the interrupt stays pending: the person fixes the edit and approves again
+                    raise HTTPException(422, "; ".join(errors))
+            payload["edits"] = body.edits
     elif body.answer is not None:
         payload = {"answer": body.answer}
     elif body.decision is not None:

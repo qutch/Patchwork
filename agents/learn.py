@@ -13,6 +13,7 @@ same functions, so the guardrails are code whichever agent runs:
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from datetime import datetime, timezone
@@ -550,6 +551,184 @@ def ambiguity(record: dict, parser: dict, html_field: str = "html") -> dict[str,
     return out
 
 
+# ---- TEACH from example pages: readers a page offers, checked, and a name-similarity guess ----------
+# Domain-free: the destination's own field names are matched against the page's JSON-LD keys, meta tag names
+# and its single <h1>. Every reader returned has passed `check_reader` (evidence, type rule, literal capture,
+# ambiguity) on the page, so a guess is never a value that is not on the page.
+
+# Boilerplate JSON-LD objects: tried after the page's main object (a breadcrumb's `name` is not the item's name).
+_BOILERPLATE_TYPES = {"BreadcrumbList", "ListItem", "ItemList", "WebSite", "WebPage", "Organization", "SearchAction",
+                      "SiteNavigationElement", "ImageObject", "EntryPoint", "ReadAction", "Brand", "Offer", "Person"}
+_META_PREFIXES = ("og:", "twitter:", "citation_", "product:", "article:", "dc.", "DC.")
+_META_SKIP = re.compile(r"^(og:image.*|og:url|og:locale|og:type|twitter:card|twitter:image.*|twitter:site|"
+                        r"citation_pdf_url|citation_abstract_html_url)$")
+# Name similarity: words that name the same thing on most pages, whatever they are about.
+_CONCEPTS = {
+    "title": {"title", "name", "product", "item", "headline", "heading"},
+    "price": {"price", "cost", "amount"},
+    "year": {"year"},
+    "date": {"date", "published", "released", "release", "datepublished", "releasedate", "startdate", "publicationdate"},
+    "venue": {"venue", "journal", "conference", "periodical", "ispartof", "proceedings"},
+    "author": {"author", "authors", "creator", "byline"},
+    "image": {"image", "photo", "picture", "thumbnail"},
+    "description": {"description", "summary", "abstract"},
+    "brand": {"brand", "manufacturer", "maker"},
+}
+_GENERIC_LEAVES = {"name", "value", "text", "id", "title"}
+
+
+def _words(s: str) -> list[str]:
+    s = re.sub(r"([a-z])([A-Z])", r"\1 \2", str(s or ""))
+    return [w for w in re.split(r"[^a-z0-9]+", s.lower()) if w]
+
+
+def _key_of_path(path: str) -> str:
+    """`offers.price` -> price, `isPartOf.name` -> isPartOf name, `author[0].name` -> author name."""
+    parts = [re.sub(r"\[\d+\]", "", p) for p in path.split(".") if p]
+    if len(parts) >= 2 and parts[-1].lower() in _GENERIC_LEAVES:
+        return " ".join(parts[-2:])
+    return parts[-1] if parts else path
+
+
+def _concepts(words: list[str]) -> set[str]:
+    joined = "".join(words)
+    out = {c for c, syn in _CONCEPTS.items() if joined in syn or any(w in syn for w in words)}
+    if "year" in out:
+        out.discard("date")
+    return out
+
+
+def _dest_key_words(dest_field: str) -> list[str]:
+    """`venue.name` -> [venue] (the leaf `name` says little), `Date Added` -> [date, added]."""
+    parts = [p for p in re.split(r"\.", str(dest_field or "").replace("[]", "")) if p]
+    if len(parts) >= 2 and parts[-1].lower() in _GENERIC_LEAVES:
+        parts = parts[:-1]
+    return _words(" ".join(parts[-1:])) if parts else []
+
+
+def _json_leaves_all(obj: Any, prefix: str = "", depth: int = 0) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    if depth > 3:
+        return out
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k.startswith("@") or k in ("url", "image", "logo", "sameAs", "potentialAction", "target", "@id"):
+                continue
+            out += _json_leaves_all(v, f"{prefix}.{k}" if prefix else k, depth + 1)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj[:1]):  # the first entry only: a reader names one value
+            out += _json_leaves_all(v, f"{prefix}[{i}]", depth + 1)
+    elif isinstance(obj, str) and normalize_ws(obj):
+        out.append((prefix, normalize_ws(obj)))
+    elif isinstance(obj, (int, float)) and not isinstance(obj, bool):
+        out.append((prefix, str(obj)))
+    return out
+
+
+def reader_candidates(record: dict, html_field: str = "html") -> list[tuple[str, dict]]:
+    """Every reader the page offers, with the key it is named by: JSON-LD leaves (the main object first),
+    meta tags (og:, twitter:, citation_, product:, article:) and a single-valued <h1>. Unchecked."""
+    html = record.get(html_field) or ""
+    out: list[tuple[str, dict]] = []
+    objs = [o for o in jsonld_objects(html) if _types_of(o)]
+    objs.sort(key=lambda o: 1 if set(_types_of(o)) <= _BOILERPLATE_TYPES else 0)
+    seen_types: set[str] = set()
+    for obj in objs:
+        typ = _types_of(obj)[0]
+        if typ in seen_types:
+            continue  # a reader reads the first object of its type
+        seen_types.add(typ)
+        for path, value in _json_leaves_all(obj):
+            if value.startswith(("http://", "https://")) and not path.endswith(("url", "Url")):
+                continue
+            out.append((_key_of_path(path), {"jsonld": path, "jsonld_type": typ}))
+    try:
+        metas = LexborHTMLParser(html).css("meta")
+    except Exception:  # noqa: BLE001
+        metas = []
+    for m in metas:
+        attr_name = "property" if m.attributes.get("property") else "name"
+        key = m.attributes.get(attr_name) or ""
+        if not key.startswith(_META_PREFIXES) or _META_SKIP.match(key) or not normalize_ws(m.attributes.get("content") or ""):
+            continue
+        short = re.sub(r"^(og|twitter|citation|product|article|dc)[:_.]", "", key, flags=re.I)
+        out.append((short, {"css": 'meta[%s="%s"]' % (attr_name, key), "attr": "content"}))
+    if len(set(v for v in css_all(html, "h1") if v)) == 1:
+        out.append(("h1 heading title", {"css": "h1"}))
+    return out
+
+
+def check_reader(reader: dict, record: dict, rules: list[dict] | None = None, html_field: str = "html",
+                 text_field: str = "text") -> dict:
+    """One reader on one page: {ok, value, detail}. ok = it reads one value, the value occurs on the page and
+    passes `rules` (validate rules on the field name "value"), and a regex does not capture fixed text."""
+    probe = {"id": "probe", "fields": {"value": reader}}
+    out = run_page_parser(probe, record, html_field, text_field)
+    if "error" in out:
+        return {"ok": False, "value": None, "detail": out["error"]}
+    ev = evidence(record, out, rules or [], parser=probe, html_field=html_field, text_field=text_field)[0]
+    fixed = literal_capture(str(reader.get("regex") or ""))
+    if fixed is not None:
+        return {"ok": False, "value": out["value"], "detail": f"the regex captures the fixed text {fixed!r}"}
+    if not ev["ok"]:
+        return {"ok": False, "value": out["value"], "detail": ev.get("detail") or "no evidence"}
+    amb = ambiguity(record, probe, html_field)
+    if amb:
+        return {"ok": False, "value": out["value"], "detail": f"the reader reads several values: {amb['value'][:4]}"}
+    return {"ok": True, "value": out["value"], "detail": ""}
+
+
+def type_rules(field: str, kind: str, values: list | None = None) -> list[dict]:
+    """The validate rules that check a value fits a destination field's type (number, date, url, choices)."""
+    if kind in ("number", "integer"):
+        return [{"field": field, "rule": "number"}]
+    if kind == "date":
+        return [{"field": field, "rule": "date"}]
+    if kind == "url":
+        return [{"field": field, "rule": "url"}]
+    if kind == "one_of" and values:
+        return [{"field": field, "rule": "one_of", "values": list(values)}]
+    return []
+
+
+def _year_variant(reader: dict) -> dict:
+    return {**reader, "regex": r"(\d{4})"} if not reader.get("regex") else reader
+
+
+def guess_reader(dest_field: str, dest_type: str, page: dict) -> dict | None:
+    """A reader for a destination field, from the page's JSON-LD keys, meta tags and <h1>, matched by name
+    (Product/Name/Title -> name/og:title/h1; Price -> offers.price). The first candidate that passes
+    `check_reader` with the field's type rule wins; None when nothing on the page fits."""
+    words = _dest_key_words(dest_field)
+    if not words:
+        return None
+    want = _concepts(words)
+    key = "".join(words)
+    rules = type_rules("value", dest_type)
+    scored: list[tuple[int, int, dict]] = []
+    for i, (cand_key, reader) in enumerate(reader_candidates(page)):
+        cwords = _words(cand_key)
+        have = _concepts(cwords)
+        ckey = "".join(cwords)
+        if key == ckey:
+            score = 0
+        elif want & have:
+            score = 1
+        elif difflib.SequenceMatcher(None, key, ckey).ratio() >= 0.8:
+            score = 2
+        elif "year" in want and have & {"date"}:
+            reader, score = _year_variant(reader), 3  # a year read from a date (`2025-06-12` -> 2025)
+        else:
+            continue
+        if want == {"title"} and reader.get("css") == "h1":
+            score = 1
+        scored.append((score, i, reader))
+    for _, _, reader in sorted(scored, key=lambda x: (x[0], x[1])):
+        if check_reader(reader, page, rules)["ok"]:
+            return reader
+    return None
+
+
 # ---- D2 ------------------------------------------------------------------------------------------
 
 _PARSER_ADD = re.compile(r"^/extract/parsers/(\d+|-)$")
@@ -580,6 +759,6 @@ def d2_decision(*, policy: str, tests_passed: bool, evidence_ok: bool, all_corro
     return not reasons, reasons
 
 
-__all__ = ["integration_fields", "integration_jsonld_types", "known_readers", "rule_label", "page_outline", "jsonld_types", "infer_jsonld_type", "with_jsonld_types", "run_page_parser", "evidence", "corroborated", "ambiguity", "additive_parser_patch",
+__all__ = ["reader_candidates", "check_reader", "type_rules", "guess_reader", "integration_fields", "integration_jsonld_types", "known_readers", "rule_label", "page_outline", "jsonld_types", "infer_jsonld_type", "with_jsonld_types", "run_page_parser", "evidence", "corroborated", "ambiguity", "additive_parser_patch",
            "d2_decision", "make_page_record", "page_text", "extractor_label", "extract_field", "css_path",
            "corroboration_sources", "PAGE_METHODS"]

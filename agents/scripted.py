@@ -97,7 +97,7 @@ class ScriptedAgentService(ScriptedV2Mixin, ThreadedAgentService):
     # ---- BUILD ---------------------------------------------------------------------------
     def _run_build(self, t: _Thread, recording_id: str) -> Any:
         from agents.deep_tools import default_build_name
-        name = t.integration or default_build_name(recording_id, NAME)
+        name = t.integration = t.integration or default_build_name(recording_id, NAME)
         if name != NAME:  # v2: page -> form recordings (agents/scripted_v2.py)
             return self._build_pages(t, recording_id, name)
         rec = load_recording(recording_id)
@@ -356,7 +356,7 @@ class ScriptedAgentService(ScriptedV2Mixin, ThreadedAgentService):
         answer = self.interrupt(t, "request_deploy", name=NAME, version=built["version"], summary=summary,
                                 spec_diff=spec_diff or (workspace_dir() / "integrations" / NAME / f"v{built['version']}" / "spec.yaml").read_text(),
                                 code_diff=code_diff,
-                                tests={"passed": built["tests_passed"], "summary": built["tests_summary"]},
+                                tests={"passed": built["tests_passed"], "summary": built["tests_summary"]}, review=[],
                                 **({"spec_patch": patch} if patch else {}))
         if answer.get("decision") != "approve":
             self.emit(t, "message", agent="supervisor", text=f"Deploy of v{built['version']} rejected: {answer.get('comment', '')}")

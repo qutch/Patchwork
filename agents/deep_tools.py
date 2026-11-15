@@ -92,7 +92,7 @@ def is_label_keyed(spec: dict | None) -> bool:
 def sink_values(spec: dict) -> dict:
     """`sink.body` (API sinks) or `sink.fields` (form and Airtable sinks): what every reference check looks at."""
     sink = spec.get("sink") or {}
-    return sink.get("fields") if is_label_keyed(spec) else (sink.get("body") or {})
+    return sink.get("fields") if is_label_keyed(spec) else body_to_dotted(sink.get("body") or {})
 
 
 def sink_values_path(spec: dict) -> str:
@@ -151,6 +151,14 @@ class ToolContext:
         self.deploy_result: dict | None = None
         self.last_version: dict | None = None
         self._interrupt_lock = threading.Lock()
+        # TEACH from examples: the review shown with request_deploy, and what a person decided per destination
+        # field: {field: source_key of the source they chose}. A row counts as the person's only while its source
+        # is still exactly that one (`person_chose`); every other value is labelled as proposed by AI.
+        self.review: list[dict] | None = None
+        self.confirmed: dict[str, str] = {}
+        self.answers: dict[str, str] = {}  # destination field -> the person's ask_user answer about that field
+        self._examples_c: dict | None = None
+        self._contract: dict | None = None
 
     @property
     def mode(self) -> str:
@@ -272,6 +280,45 @@ class ToolContext:
     def learn_policy(self) -> str:
         return learn_policy()
 
+    # ---- TEACH from example pages ----------------------------------------------------------------
+    def examples_candidates(self) -> dict | None:
+        """The thread's candidates when they ask for TEACH from examples (`teach_mode: "examples"`), else None.
+        Read from the workspace only (never the matcher), so other modes pay nothing for the check."""
+        if self._examples_c is None and self.recording_id and self.t.mode == "build":
+            path = workspace_dir() / "recordings" / self.recording_id / "candidates.json"
+            try:
+                c = json.loads(path.read_text()) if path.exists() else {}
+            except (OSError, ValueError):
+                c = {}
+            self._examples_c = c if is_examples_candidates(c) else {}
+        return self._examples_c or None
+
+    def examples_mode(self) -> bool:
+        return self.examples_candidates() is not None
+
+    def example_records(self) -> list[dict]:
+        """The example pages, in the order the person sent them: the inbox's records (V1), or records rebuilt
+        from the draft's snapshots when the inbox no longer has a page."""
+        c = self.examples_candidates() or {}
+        out = []
+        for i, ex in enumerate(c.get("examples") or []):
+            try:
+                out.append(self.get_page_record(str(ex.get("page_id"))))
+            except KeyError:
+                html = snapshot_html(self.recording_id or "", ex["snapshot"])
+                rec = learn.make_page_record(ex.get("url") or "", html, seq=i + 1)
+                if ex.get("page_id"):
+                    rec["id"] = str(ex["page_id"])
+                out.append(rec)
+        return out
+
+    def dest_contract(self) -> dict:
+        """The destination's live contract (read once per thread)."""
+        if self._contract is None:
+            c = self.examples_candidates() or {}
+            self._contract = self.fetch_contract({"sink": destination_sink(c.get("sink") or {}, {})})
+        return self._contract
+
 
 # ---- data sources ----------------------------------------------------------------------
 
@@ -329,7 +376,7 @@ def default_build_name(recording_id: str, fallback: str) -> str:
         c = candidates_for(recording_id)
     except Exception:  # noqa: BLE001 - no candidates yet: the interpreter will report it
         return fallback
-    if not is_page_candidates(c):
+    if not is_page_candidates(c) and not is_examples_candidates(c):
         return fallback
     if recording_id == JOBS_RECORDING:
         return DEFAULT_PAGE_INTEGRATION
@@ -386,15 +433,22 @@ def _extractor_from_mapping(m: dict) -> dict | None:
 
 
 def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str,
-                    airtable: dict | None = None) -> tuple[dict, list[dict], list[str]]:
+                    airtable: dict | None = None, record: dict | None = None, contract: dict | None = None,
+                    kinds: dict[str, dict] | None = None) -> tuple[dict, list[dict], list[str]]:
     """V11 page->form candidates -> a V7/V5 spec with one taught parser, plus one golden example built from
     the snapshot (expected values are the recorded ones, independent of the parser). Returns
     (spec, examples, problems).
 
     `airtable` (V14 retarget): {base_id, table, credential, fields: {form label: Airtable field name or None},
     contract}: the sink becomes that table, each label keyed by its field name; a None drops the label (a
-    person chose to skip it). Golden values are typed per the table's fields."""
+    person chose to skip it). Golden values are typed per the table's fields.
+
+    TEACH from examples (`c.teach_mode == "examples"`, the mappings come from `propose_mapping`): a mapping may
+    name its integration `field`; the sink is the draft's destination (`c.sink`, any kind; API bodies nested
+    from dotted paths); `kinds` ({integration field: {type, values?}}) adds each field's type rule; the golden
+    example is `record` (the example page as stored) with values typed per `contract`."""
     src, sink = c["source"], c["sink"]
+    examples_mode = is_examples_candidates(c)
     site = src.get("site") or ""
     fields, form_fields, assumptions, problems = {}, {}, [], []
     record_values: dict[str, str] = {}
@@ -409,11 +463,16 @@ def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str,
             form_fields[label] = {"from": m["from"]}
             record_values[label] = m["from"]
             assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "observed",
-                                "text": f"{label} comes from the page record ({m['from']})"})
+                                "text": (f"{label} is the date the page was sent ({m['from']})" if m.get("today")
+                                         else f"{label} comes from the page record ({m['from']})")})
         elif kind == "const":
             form_fields[label] = {"const": m["value"]}
-            assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "inferred",
-                                "text": f"{label} is always {m['value']!r} (typed during the recording)"})
+            if m.get("confirmed") is False:  # proposed, not typed by a person: the review asks
+                assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "unconfirmed",
+                                    "text": f"{label} is always {m['value']!r} (proposed; a person confirms it in the review)"})
+            else:
+                assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "inferred",
+                                    "text": f"{label} is always {m['value']!r} (typed during the recording)"})
         else:
             f = _extractor_from_mapping(m)
             if f is None:
@@ -421,9 +480,11 @@ def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str,
                 continue
             if f.get("jsonld") is not None and not f.get("jsonld_type"):  # V15: readers carry their @type
                 f = learn.with_jsonld_types({"fields": {"f": f}}, html)["fields"]["f"]
-            fname = _field_name(label)
+            fname = m.get("field") or _field_name(label)
             fields[fname] = f
             form_fields[label] = {"from": fname}
+            if m.get("transform"):
+                form_fields[label]["transform"] = m["transform"]
             assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "observed",
                                 "text": f"{label} is read from the page ({learn.extractor_label(f)})"})
     for u in c.get("unexplained") or []:
@@ -431,8 +492,10 @@ def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str,
         assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "inferred",
                             "text": f"{u['dest_field']} is always {u['value']!r} (not found on the page)"})
     assumptions.append({"id": f"a{len(assumptions) + 1}", "status": "inferred",
-                        "text": "the page's canonical URL identifies it; pressing the hotkey twice is a duplicate"})
-    parser = {"id": site_parser_id(site), "match": {"site": site},
+                        "text": ("the page's canonical URL identifies it; sending the same page twice is a duplicate"
+                                 if examples_mode else
+                                 "the page's canonical URL identifies it; pressing the hotkey twice is a duplicate")})
+    parser = {"id": example_parser_id(site) if examples_mode else site_parser_id(site), "match": {"site": site},
               "origin": {"kind": "taught", "at": now(), "thread_id": thread_id, "approved_by": None},
               "fields": fields}
     spec = {
@@ -443,10 +506,26 @@ def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str,
         "extract": {"route_by": "site", "parsers": [parser]},
         "validate": [{"field": f, "rule": "required"} for f in fields],
         "dedupe": {"key": ["record.canonical_url"]},
-        "sink": {"kind": "form", "url": sink["url"], "fields": form_fields, "submit": sink.get("submit") or "Submit",
+        "sink": {"kind": "form", "url": sink.get("url") or "", "fields": form_fields, "submit": sink.get("submit") or "Submit",
                  **({"verify": {"confirmation_text": sink["confirmation_text"]}} if sink.get("confirmation_text") else {})},
         "on_error": "quarantine", "assumptions": assumptions,
     }
+    if kinds:  # TEACH from examples: each field's value must fit its destination field's type
+        for f in fields:
+            info = kinds.get(f) or {}
+            spec["validate"] += learn.type_rules(f, info.get("type") or "text", info.get("values"))
+    if examples_mode:
+        spec["sink"] = destination_sink(sink, form_fields)
+        rec = record or learn.make_page_record(src["url"], html, seq=1)
+        values = {vs["from"]: by_label[lab]["value"] for lab, vs in form_fields.items()
+                  if "from" in vs and not vs["from"].startswith("record.")}
+        try:
+            body = golden_body(spec, values, rec, contract)
+        except (Quarantine, KeyError, ValueError, TypeError) as e:
+            problems.append(f"golden example: {getattr(e, 'detail', None) or e}")
+            body = {}
+        parser = spec["extract"]["parsers"][0]
+        return spec, [{"name": f"example_{parser['id']}", "record": rec, "expect": {"body": body}}], problems
     if airtable is not None:
         names = airtable["fields"]
         form_fields = {names[lab]: vs for lab, vs in form_fields.items() if names.get(lab)}
@@ -481,6 +560,386 @@ def draft_page_spec(c: dict, *, name: str, thread_id: str, html: str,
             problems.append(f"golden example: {q.detail}")
     examples = [{"name": f"taught_{parser['id']}_1", "record": rec, "expect": {"body": body}}]
     return spec, examples, problems
+
+
+# ---- TEACH from example pages (wizard approach A) ------------------------------------------------------
+# The candidates have `teach_mode: "examples"`, no mappings, the example pages and the destination as `sink`
+# (its kind's own keys plus `labels`/`questions`). `propose_mapping` maps every destination field, checked in
+# code on the first example page; `add_site_parser` adds one parser per other example site; `request_deploy`
+# shows a review table and applies a person's edits in code (`apply_review_edits`).
+
+TEACH_EXAMPLES = "examples"
+RECORD_SOURCES = {"canonical_url": "record.canonical_url", "url": "record.url", "title": "record.title",
+                  "site": "record.site", "captured_date": "record.captured_date"}
+TODAY = "record.captured_date"  # "today's date": the day the page was sent (the runner is AI-free and replayable)
+_URLISH = {"link", "url", "address", "page", "permalink", "href", "source"}
+_DATEISH = {"date", "day", "added", "when", "captured", "saved", "sent"}
+
+
+def is_examples_candidates(c: dict | None) -> bool:
+    return isinstance(c, dict) and c.get("teach_mode") == TEACH_EXAMPLES
+
+
+def dotted_to_body(fields: dict[str, dict]) -> dict:
+    """`{"venue.name": {"from": "venue"}}` -> `{"venue": {"name": {"from": "venue"}}}` (an API sink's nested body)."""
+    out: dict = {}
+    for key, value in fields.items():
+        _set_path(out, key, value)
+    return out
+
+
+def body_to_dotted(body: dict, prefix: str = "") -> dict[str, dict]:
+    """The inverse of `dotted_to_body`: value sources keyed by their dotted path."""
+    out: dict[str, dict] = {}
+    for k, v in (body or {}).items():
+        if isinstance(v, dict) and v and not _is_value_source(v):
+            out.update(body_to_dotted(v, f"{prefix}{k}."))
+        else:
+            out[f"{prefix}{k}"] = v
+    return out
+
+
+def _is_value_source(v: Any) -> bool:
+    if not isinstance(v, dict) or not v or not set(v) <= {"from", "const", "transform", "args", "template"}:
+        return False
+    return "const" in v or any(isinstance(v.get(k), str) for k in ("from", "template", "transform"))
+
+
+def _set_path(tree: dict, dotted: str, value: Any) -> None:
+    parts = dotted.split(".")
+    node = tree
+    for p in parts[:-1]:
+        node = node.setdefault(p, {})
+    node[parts[-1]] = value
+
+
+def _get_path(tree: Any, dotted: str) -> Any:
+    node = tree
+    for p in dotted.split("."):
+        if not isinstance(node, dict) or p not in node:
+            return None
+        node = node[p]
+    return node
+
+
+def _del_path(tree: dict, dotted: str) -> None:
+    parts = dotted.split(".")
+    nodes = [tree]
+    for p in parts[:-1]:
+        nxt = nodes[-1].get(p)
+        if not isinstance(nxt, dict):
+            return
+        nodes.append(nxt)
+    nodes[-1].pop(parts[-1], None)
+    for i in range(len(parts) - 1, 0, -1):  # drop objects left empty
+        if not nodes[i]:
+            nodes[i - 1].pop(parts[i - 1], None)
+
+
+def eval_body(tree: dict, fields: dict, record: dict) -> dict:
+    """`eval_value` over a sink mapping, nested (API bodies) or flat."""
+    out: dict = {}
+    for k, v in tree.items():
+        out[k] = eval_body(v, fields, record) if isinstance(v, dict) and not _is_value_source(v) else \
+            eval_value(v, fields, record)
+    return out
+
+
+def dest_call(dest: dict) -> tuple[str, str]:
+    """(method, path) of a destination's write call in its contract document."""
+    kind = dest.get("kind") or "api"
+    if kind == "api":
+        op = dest.get("operation") or dest.get("call") or {}
+        return str(op.get("method") or "POST").lower(), str(op.get("path") or "/")
+    return sink_call({"sink": {"kind": kind}})
+
+
+def _field_kind(prop: dict) -> str:
+    if prop.get("enum"):
+        return "one_of"
+    t, fmt, x_input = prop.get("type"), prop.get("format"), prop.get("x-input")
+    if t == "integer":
+        return "integer"
+    if t == "number" or x_input == "number":
+        return "number"
+    if fmt == "date" or x_input == "date":
+        return "date"
+    if fmt in ("uri", "url") or x_input == "url":
+        return "url"
+    if t == "boolean":
+        return "boolean"
+    return "text"
+
+
+def contract_fields(contract: dict, method: str, path: str) -> dict[str, dict]:
+    """The destination's writable fields from its contract: {dotted name: {type, required, values?}}. Nested
+    objects become dotted paths (`venue.name`); an array is listed once as `<path>[]` and is never mapped."""
+    out: dict[str, dict] = {}
+
+    def walk(schema: dict, prefix: str, parent_required: bool) -> None:
+        schema = _resolve(contract, schema)
+        req = set(schema.get("required") or [])
+        for k, v in (schema.get("properties") or {}).items():
+            v = _resolve(contract, v)
+            options = v.get("anyOf") or v.get("oneOf")
+            if options:  # Optional[X] in OpenAPI 3.1: the non-null option
+                v = next((_resolve(contract, o) for o in options if _resolve(contract, o).get("type") != "null"), v)
+            name = f"{prefix}{k}"
+            required = parent_required and k in req
+            if v.get("type") == "object" or "properties" in v:
+                walk(v, name + ".", required)
+            elif v.get("type") == "array" and not v.get("x-airtable-type"):
+                out[name + "[]"] = {"type": "array", "required": False}
+            else:
+                out[name] = {"type": _field_kind(v), "required": required,
+                             **({"values": list(v["enum"])} if v.get("enum") else {})}
+
+    walk(request_schema(contract, method, path) or {}, "", True)
+    return out
+
+
+def _norm_type(t: Any, options: Any = None) -> str:
+    """A question's type as the review checks it: number, integer, date, url, one_of, boolean or text."""
+    s = str(t or "").lower()
+    if options:
+        return "one_of"
+    if s in ("integer", "int"):
+        return "integer"
+    if s in ("number", "float", "decimal", "currency", "percent", "rating", "duration"):
+        return "number"
+    if s in ("date",):
+        return "date"
+    if s in ("url", "uri", "link"):
+        return "url"
+    if s in ("boolean", "checkbox", "bool"):
+        return "boolean"
+    if s in ("singleselect", "select", "radio", "enum", "one_of"):
+        return "one_of"
+    return "text"
+
+
+def examples_dest_fields(c: dict, contract: dict | None) -> dict[str, dict]:
+    """Every destination field TEACH maps, in the destination's order: {label: {type, required, values?}}.
+    The contract decides types; the candidates' questions add `required` (a person or the destination said so)."""
+    sink = c.get("sink") or {}
+    from_contract = contract_fields(contract, *dest_call(sink)) if contract else {}
+    questions = {str(q.get("label") or q.get("name")): q for q in sink.get("questions") or [] if isinstance(q, dict)}
+    labels = list(sink.get("labels") or questions or from_contract)
+    out: dict[str, dict] = {}
+    for lab in labels:
+        q = questions.get(lab) or {}
+        info = dict(from_contract.get(lab) or {"type": _norm_type(q.get("type"), q.get("options")),
+                                               "required": False})
+        if q.get("options") and "values" not in info:
+            info["values"] = list(q["options"])
+        info["required"] = bool(info.get("required") or q.get("required"))
+        out[lab] = info
+    return out
+
+
+def destination_sink(dest: dict, fields: dict[str, dict]) -> dict:
+    """The spec's sink for a draft destination, with `fields` (label- or dotted-path-keyed value sources)."""
+    kind = dest.get("kind")
+    cred = dest.get("credential") or (dest.get("auth") or {}).get("credential")
+    if kind == "airtable":
+        return {"kind": "airtable", "base_id": dest["base_id"], "table": dest["table"],
+                "auth": {"scheme": "bearer", "credential": cred}, "fields": fields, "typecast": False,
+                "verify": {"read_back": True}}
+    if kind == "sqlite":
+        return {"kind": "sqlite", "path": dest["path"], "table": dest["table"], "fields": fields,
+                "verify": {"read_back": True}}
+    if kind == "form":
+        return {"kind": "form", "url": dest["url"], "fields": fields, "submit": dest.get("submit") or "Submit",
+                **({"verify": {"confirmation_text": dest["confirmation_text"]}} if dest.get("confirmation_text") else {})}
+    method, path = dest_call(dest)
+    return {"kind": "api", "base_url": dest["base_url"], "call": {"method": method.upper(), "path": path},
+            "body": dotted_to_body(fields), **({"auth": {"scheme": "bearer", "credential": cred}} if cred else {})}
+
+
+def golden_body(spec: dict, fields: dict, record: dict, contract: dict | None) -> dict:
+    """The body the compiled package sends for this page: values evaluated from the spec, then typed the way
+    the sink types them (forms: strings; Airtable/SQLite: per the table's fields). Raises Quarantine/KeyError."""
+    sink = spec.get("sink") or {}
+    tree = sink.get("fields") if is_label_keyed(spec) else (sink.get("body") or {})
+    body = eval_body(tree or {}, fields, record)
+    if sink_kind(spec) == "form":
+        return {k: (str(v) if v is not None else v) for k, v in body.items()}
+    typing = _typing_module(sink_kind(spec))
+    if typing is not None and contract:
+        body = typing.convert_body(contract, body, drop_empty=False)
+    return body
+
+
+def example_parser_id(site: str, taken: set[str] | list[str] = ()) -> str:
+    """A parser id for an example site, unique among `taken`: the registrable name (`jobs.lever.co` -> lever)
+    unless that is generic (`shop-a.example.com` -> shop_a), then `_2`, `_3`."""
+    pid = site_parser_id(site)
+    if pid in ("example", "www", "com", "co", "page", "localhost") or pid in taken:
+        first = [p for p in (site or "").lower().split(".") if p and p != "www"][:1]
+        alt = re.sub(r"[^a-z0-9]+", "_", first[0]).strip("_") if first else "site"
+        pid = alt if alt and alt[0].isalpha() else f"p_{alt or 'site'}"
+    base, n = pid, 2
+    while pid in taken:
+        pid, n = f"{base}_{n}", n + 1
+    return pid
+
+
+def clean_reader(reader: Any) -> Any:
+    """A reader as a person reads it: without the defaults the compiler writes back (`cast: str`)."""
+    if not isinstance(reader, dict):
+        return reader
+    return {k: v for k, v in reader.items() if v is not None and not (k == "cast" and v == "str")}
+
+
+def source_label(src: dict) -> str:
+    """A review row's source in words: `page: h1.product-title`, `the page's address`, `today's date`."""
+    if "reader" in src:
+        r = src.get("reader") or {}
+        if r.get("css") is not None:
+            what = r["css"] + (f" ({r['attr']})" if r.get("attr") else "")
+        else:
+            what = f"JSON-LD {r.get('jsonld')}" + (f" ({r['jsonld_type']})" if r.get("jsonld_type") else "")
+        return "page: " + what + (f", refined by /{r['regex']}/" if r.get("regex") else "")
+    if "record" in src:
+        return "the page's address" if src["record"] == "canonical_url" else f"the page's {src['record']}"
+    if src.get("today"):
+        return "today's date"
+    if "const" in src:
+        return f"always {src['const']!r}"
+    return "skip this field"
+
+
+def with_label(src: dict) -> dict:
+    return {**src, "label": source_label(src)}
+
+
+SOURCE_DISPLAY_KEYS = ("label", "values")  # on review sources/alternatives for the UI only
+
+
+def source_key(src: Any) -> str:
+    """A source compared without its label (and with reader defaults dropped)."""
+    if not isinstance(src, dict):
+        return json.dumps(src, sort_keys=True, default=str)
+    d = {k: (clean_reader(v) if k == "reader" else v) for k, v in src.items() if k not in SOURCE_DISPLAY_KEYS}
+    return json.dumps(d, sort_keys=True, default=str)
+
+
+def person_chose(confirmed: dict[str, str], label: str, source: dict) -> bool:
+    """True when a person chose exactly this source for `label` (a changed source is AI-proposed again)."""
+    return label in confirmed and confirmed[label] == source_key(source)
+
+
+def apply_review_edits(spec: dict, review: list[dict], edits: list[dict]) -> dict:
+    """A person's review edits applied to a spec, in code (no model). Each edit is `{dest_field, choice}` where
+    `choice` is one of that row's `alternatives` (checked when the review was built), `{"const": <text>}` or
+    `{"skip": true}`. Anything else raises ValueError, and so does skipping a required field. Readers no
+    destination field uses any more are dropped from every parser (with their rules)."""
+    new = json.loads(json.dumps(spec))
+    rows = {r["dest_field"]: r for r in review or []}
+    sink = new.setdefault("sink", {})
+    label_keyed = is_label_keyed(new)
+    tree = sink.setdefault("fields" if label_keyed else "body", {})
+    parsers = (new.get("extract") or {}).get("parsers") or []
+
+    def put(dest: str, value: dict | None) -> None:
+        if label_keyed:
+            if value is None:
+                tree.pop(dest, None)
+            else:
+                tree[dest] = value
+        elif value is None:
+            _del_path(tree, dest)
+        else:
+            _set_path(tree, dest, value)
+
+    def canon(x: Any) -> str:
+        return source_key(x)
+
+    for e in edits or []:
+        if not isinstance(e, dict):
+            raise ValueError(f"an edit must be an object with dest_field and choice, got {e!r}")
+        dest, choice = e.get("dest_field"), e.get("choice")
+        if isinstance(choice, dict):
+            # the UI echoes the alternative as shown: its display keys never change what is applied
+            choice = {k: v for k, v in choice.items() if k not in SOURCE_DISPLAY_KEYS}
+        row = rows.get(dest)
+        if row is None:
+            raise ValueError(f"{dest!r} is not a row of the review")
+        if not isinstance(choice, dict):
+            raise ValueError(f"{dest}: the choice must be an object, got {choice!r}")
+        kind = row.get("type") or "text"
+        if set(choice) == {"const"}:
+            if not isinstance(choice["const"], (str, int, float)) or isinstance(choice["const"], bool):
+                raise ValueError(f"{dest}: a constant must be text")
+            problem = learn._check_rules("value", choice["const"], learn.type_rules("value", kind, row.get("values_allowed")))
+            if problem:
+                raise ValueError(f"{dest}: the constant {choice['const']!r} does not fit the field ({problem})")
+            put(dest, {"const": choice["const"]})
+        elif choice == {"skip": True}:
+            if row.get("required"):
+                raise ValueError(f"{dest} is required by the destination; it cannot be skipped")
+            put(dest, None)
+        elif canon(choice) not in {canon(a) for a in row.get("alternatives") or []} | {canon(row.get("source"))}:
+            raise ValueError(f"{dest}: {choice!r} is not one of the offered choices")
+        elif "record" in choice:
+            put(dest, {"from": RECORD_SOURCES[choice["record"]]})
+        elif choice.get("today"):
+            put(dest, {"from": TODAY})
+        elif "field" in choice and "reader" in choice:
+            fname = str(choice["field"])
+            for p in parsers:
+                p.setdefault("fields", {})[fname] = json.loads(json.dumps(choice["reader"]))
+            vs: dict[str, Any] = {"from": fname}
+            if sink_kind(new) == "api" and kind in ("integer", "number"):
+                vs["transform"] = "int" if kind == "integer" else "float"
+            put(dest, vs)
+            rules = new.setdefault("validate", [])
+            for r in [{"field": fname, "rule": "required"}, *learn.type_rules(fname, kind, row.get("values_allowed"))]:
+                if not any(x.get("field") == fname and x.get("rule") == r["rule"] for x in rules):
+                    rules.append(r)
+        new.setdefault("assumptions", []).append(
+            {"id": f"a{len(new.get('assumptions') or []) + 1}", "status": "confirmed",
+             "text": f"{dest}: chosen by a person in the review ({canon(choice)})"})
+    used = set()
+    for vs in body_to_dotted(tree).values() if not label_keyed else tree.values():
+        if isinstance(vs, dict) and vs.get("from") and not str(vs["from"]).startswith("record."):
+            used.add(vs["from"])
+        for ref in re.findall(r"\{([A-Za-z_][A-Za-z0-9_.]*)\}", str((vs or {}).get("template") or "")):
+            used.add(ref)
+    used |= {k for k in (new.get("dedupe") or {}).get("key") or [] if not k.startswith("record.")}
+    for p in parsers:
+        p["fields"] = {k: v for k, v in (p.get("fields") or {}).items() if k in used}
+        if not p["fields"]:
+            raise ValueError("at least one destination field must be read from the page")
+    new["validate"] = [r for r in new.get("validate") or [] if r.get("field") in used]
+    return new
+
+
+def _edit_error(x: BaseException) -> str:
+    if isinstance(x, KeyError) and x.args:  # str(KeyError) is the key's repr
+        return f"unknown value {x.args[0]!r} in the edit"
+    return str(x)
+
+
+def review_edit_errors(review: list[dict], edits: Any, spec: dict | None = None) -> list[str]:
+    """Why `apply_review_edits` would refuse these edits, one message per refused edit (each names its field);
+    [] when every edit applies. Pure: the control plane calls it before resuming a request_deploy, so a bad
+    edit is answered with 422 and the review stays open. With the version's `spec`, also the edits together
+    (e.g. an edit set that leaves a parser reading nothing)."""
+    if not isinstance(edits, list):
+        return ["edits must be a list of {dest_field, choice}"]
+    errors = []
+    for e in edits:
+        try:
+            apply_review_edits({}, review, [e])
+        except (ValueError, KeyError, TypeError) as x:
+            errors.append(_edit_error(x))
+    if not errors and spec:
+        try:
+            apply_review_edits(spec, review, edits)
+        except (ValueError, KeyError, TypeError) as x:
+            errors.append(_edit_error(x))
+    return errors
 
 
 def normalize_intent(intent: Any) -> str:
@@ -670,10 +1129,71 @@ def _port_plus_one(url: str) -> str:
 
 # ---- the tools ---------------------------------------------------------------------------
 
+# Descriptions the tools are registered with (the model reads these). Domain-free: no field or subject is assumed.
+TOOL_DOCS: dict[str, str] = {
+    "propose_mapping": (
+        "Map EVERY destination field to where its value comes from, checked in code on the first example page. "
+        "`mapping` is {<destination field>: <source>}, one source per field:\n"
+        "- {\"field\": \"<short_name>\", \"reader\": {\"css\": \"...\", \"attr\"?: \"content\", \"regex\"?: \"...(one group)...\"}}"
+        " or {\"field\": \"<short_name>\", \"reader\": {\"jsonld\": \"<path>\", \"jsonld_type\": \"<@type>\"}}: read from the page"
+        " (short_name: lowercase letters, digits, _; it names the value every site's parser reads);\n"
+        "- {\"record\": \"canonical_url\"}: the page's address;\n"
+        "- {\"today\": true}: the date the page was sent;\n"
+        "- {\"const\": \"<text>\"}: the same value on every row (a person must confirm it in the review);\n"
+        "- {\"skip\": true}: leave the field empty (refused for a field the destination requires).\n"
+        "Every reader must read one value that is on the page and fits the field's type (number, date, url, "
+        "choices). Returns OK and writes /spec.yaml with the first example site's parser, or one "
+        "`REFUSED: <field>: <reason>` line per field to fix (then nothing is written)."),
+    "add_site_parser": (
+        "Add the parser for another example page's site, after propose_mapping. `parser` is {\"fields\": "
+        "{<each integration field propose_mapping named>: <reader>}} (optionally \"id\", or a \"match\" on that "
+        "page's exact site). The same code checks as for any learned parser run on that page: the value is on "
+        "the page, fits its rule, is not fixed text in a regex, and the reader reads one value. A parser for "
+        "every site (match {}) is always refused. Never compiles or deploys."),
+}
+
+
+def review_alternatives(label: str, info: dict, source: dict, records: list[dict], taken: set[str]) -> list[dict]:
+    """Choices a person may switch a review row to, each checked now on every example page. Page readers
+    come one per distinct value, never one that reads a value another field already gets (`taken`)."""
+    kind = info.get("type") or "text"
+    if kind == "array" or not records:
+        return []
+    rules_v = learn.type_rules("value", kind, info.get("values"))
+    fname = source.get("field") or _field_name(label)
+    out: list[dict] = []
+    seen_values: set[str] = set(taken)
+    words = set(learn._words(label))
+    cands = sorted(learn.reader_candidates(records[0]),
+                   key=lambda kr: 0 if learn._concepts(learn._words(kr[0])) & learn._concepts(list(words)) else 1)
+    for _, reader in cands:
+        if len(out) >= 4:
+            break
+        if reader == source.get("reader"):
+            continue
+        checked = [learn.check_reader(reader, r, rules_v) for r in records]
+        key = learn.normalize_ws(str(checked[0]["value"]))
+        if all(c["ok"] for c in checked) and key not in seen_values:
+            seen_values.add(key)
+            out.append({**with_label({"field": fname, "reader": reader}),
+                        "values": {r.get("id"): c["value"] for r, c in zip(records, checked)}})
+    if kind == "url" or words & _URLISH:
+        if all(not learn._check_rules("value", r.get("canonical_url"), rules_v) for r in records):
+            out.append({**with_label({"record": "canonical_url"}),
+                        "values": {r.get("id"): r.get("canonical_url") for r in records}})
+    if kind == "date" or words & _DATEISH:
+        out.append({**with_label({"today": True}), "values": {r.get("id"): r.get("captured_date") for r in records}})
+    if not info.get("required"):
+        out.append(with_label({"skip": True}))
+    cur = source_key(source)
+    return [a for a in out if source_key(a) != cur]
+
+
 def build_tools(ctx: ToolContext) -> dict[str, Any]:
     """Every tool by name as a langchain StructuredTool; agents.deep hands each agent its subset."""
     from langchain_core.tools import StructuredTool  # lazy: tool_functions() must not need langchain
-    return {name: StructuredTool.from_function(fn, name=name) for name, fn in tool_functions(ctx).items()}
+    return {name: StructuredTool.from_function(fn, name=name, description=TOOL_DOCS.get(name))
+            for name, fn in tool_functions(ctx).items()}
 
 
 def tool_functions(ctx: ToolContext) -> dict[str, Any]:
@@ -1212,10 +1732,14 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         sample = next((e["expect"]["body"] for e in examples if "body" in e.get("expect", {})), None)
         return f"rewrote {changed} expected bodies; e.g. {json.dumps(sample)}"
 
-    def ask_user(question: str, options: list[str] | None = None) -> str:
+    def ask_user(question: str, options: list[str] | None = None, dest_field: str = "") -> str:
         """Ask the human one short question (with 2-3 options) and wait for the answer. Use it to
-        confirm inferred assumptions and for values that cannot be derived from the data."""
+        confirm inferred assumptions and for values that cannot be derived from the data. In TEACH from
+        example pages, name the destination field the question is about in `dest_field`: a constant for
+        that field equal to the answer then counts as the person's choice."""
         answer = ctx.interrupt("ask_user", question=question, options=list(options or []))
+        if dest_field:
+            ctx.answers[str(dest_field)] = str(answer.get("answer", ""))
         return f"user answered: {answer.get('answer', '')}"
 
     def request_deploy(version: int, summary: str) -> str:
@@ -1254,10 +1778,19 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                                        tests={"passed": bool(v["tests_passed"]), "summary": v["tests_summary"]})
         if ctx.mode in ("repair", "learn") and patch is not None:
             payload["spec_patch"] = patch
+        # TEACH from examples: every destination field, its source and its value on each example page (contracts V10)
+        ctx.review = _review(int(version)) if ctx.examples_mode() else None
+        payload["review"] = ctx.review or []
         answer = ctx.interrupt("request_deploy", **payload)
         if answer.get("decision") != "approve":
             ctx.deploy_result = {"deployed": False, "version": int(version), "comment": answer.get("comment", "")}
             return f"REJECTED by the user: {answer.get('comment', '')}. Do not deploy; report and stop."
+        if answer.get("edits") and ctx.review is not None:  # applied by code, then compiled and tested: no model
+            edited = _apply_edits(int(version), ctx.review, list(answer["edits"]))
+            if isinstance(edited, str):
+                ctx.deploy_result = {"deployed": False, "version": int(version), "comment": edited}
+                return edited
+            version = edited
         try:
             result = ops.deploy(ctx.name, int(version))
         except ops.DeployRefused as e:
@@ -1328,6 +1861,76 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                              for i in checks.get("evidence", [])],
                      ok=bool(checks.get("evidence_ok")))
 
+    def _vet_parser(parser: Any, rec: dict, spec: dict, *, default_id: str) -> tuple[dict, dict, str] | str:
+        """The checks every parser for a page passes before it is written (save_parser, add_site_parser):
+        shape, id, a match that routes this page, fingerprint, exactly the integration's fields, the LEARN
+        checks on the page (`_check`: evidence, literal capture, corroboration, ambiguity) and the platform
+        rule. Returns (parser, checks, scope note) or a REFUSED string. Emits the evidence event."""
+        if not isinstance(parser, dict) or not isinstance(parser.get("fields"), dict):
+            return "REFUSED: parser must be an object with `fields`"
+        p = _typed(parser, rec, spec)  # V15: an explicit jsonld_type on every jsonld reader
+        site = rec.get("site") or ""
+        p.setdefault("id", default_id)
+        p["id"] = str(p["id"])
+        existing = (spec.get("extract") or {}).get("parsers") or []
+        if not _IDENT.match(p["id"]):
+            return f"REFUSED: parser id {p['id']!r} must match {_IDENT.pattern}"
+        if p["id"] in {x["id"] for x in existing}:
+            return f"REFUSED: parser id {p['id']!r} already exists; pick a new id (e.g. {p['id']}_2)"
+        route_key = (spec.get("extract") or {}).get("route_by") or "site"
+        asked_match = bool(p.get("match"))
+        p["match"] = {k: str(v) for k, v in (p.get("match") or {route_key: rec.get(route_key, site)}).items()}
+        if match_rank(p["match"], rec) == 0:
+            return f"REFUSED: match {p['match']} does not route this page ({route_key}={rec.get(route_key)!r})"
+        if p.get("fingerprint") and not fingerprint_present(rec.get(_fields_of(spec)[0]) or "", p["fingerprint"]):
+            return f"REFUSED: fingerprint {p['fingerprint']!r} is not on this page"
+        wanted = _fields_wanted(spec)
+        if sorted(p["fields"]) != sorted(wanted):
+            return (f"REFUSED: parser fields {sorted(p['fields'])} must be exactly the integration's fields "
+                    f"{sorted(wanted)} (every parser feeds the same destination fields)")
+        checks = _check(p, rec, spec)
+        if "error" in checks:
+            return f"REFUSED: the parser does not read this page: {checks['error']}"
+        _emit_evidence(rec, p, checks)
+        if not checks["evidence_ok"]:
+            bad = [f"{i['name']}={i['value']!r} ({i.get('detail')})" for i in checks["evidence"] if not i["ok"]]
+            return f"REFUSED: evidence check failed, nothing compiled: {'; '.join(bad)}"
+        # Platform or company? A tenant of a multi-tenant platform (visa.wd5.myworkdayjobs.com) gets the platform
+        # match (*.myworkdayjobs.com) if the parser also reads at least half of the other companies' stored pages
+        # there (newest page per host). A company it misses is held (PARSE_NO_MATCH, never a wrong row) and learns
+        # its own exact-host parser, which beats the platform's. Otherwise it is saved for this host only.
+        plat = platform_of(site) if route_key == "site" else None
+        wildcard = any("*" in v for v in p["match"].values())
+        if wildcard and not plat:  # only a known multi-tenant platform may share a parser across hosts
+            return (f"REFUSED: match {p['match']} is a wildcard, but {site or 'this page'} is not on a known "
+                    f"platform; a parser reads one site (omit match: the code uses {route_key}={rec.get(route_key, site)!r})")
+        scope_note = ""
+        if plat and (wildcard or not asked_match):
+            taken = any(match_rank({"site": plat}, {"site": (x.get("match") or {}).get("site", "")}) == 2 for x in existing)
+            by_host: dict[str, dict] = {}
+            for o in ([] if taken else ctx.platform_pages(plat, exclude=rec.get("id"), limit=50)):
+                if o.get("site") != site:
+                    by_host.setdefault(o.get("site") or "", o)  # newest first: keep each host's newest page
+            read, missed = [], []
+            for host, o in list(by_host.items())[:5]:
+                c = _check(p, o, spec)
+                (read if "error" not in c and c.get("evidence_ok") else missed).append(host)
+            generalises = not taken and len(read) >= len(missed)
+            if wildcard and not generalises:
+                return ("REFUSED: a platform match must read at least half of the other companies on " + plat + ": " +
+                        ("a parser for the platform already exists" if taken else
+                         f"it reads {len(read)} and misses {len(missed)} ({', '.join(missed[:3])})"))
+            if generalises:
+                p["match"] = {route_key: plat}
+                name = platform_name(plat)  # one parser for the whole platform: name it after the platform, not a company
+                if name and name not in {x["id"] for x in existing}:
+                    p["id"] = name
+                scope_note = (f" (platform {plat}: also reads {len(read)} other compan{'y' if len(read) == 1 else 'ies'}"
+                              + (f"; {len(missed)} that it misses will learn their own" if missed else "") + ")")
+            elif missed:
+                scope_note = f" (for {site} only: it misses {len(missed)} of {len(read) + len(missed)} other companies on {plat})"
+        return p, checks, scope_note
+
     def get_page(page_id: str = "") -> str:
         """The page to learn, as a compact outline (title, headings, meta tags, JSON-LD), each line with
         an extractor that reads it ({css: …}, {css: …, attr: content}, {jsonld: …}). Also the fields every
@@ -1345,21 +1948,28 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         plat = platform_of(rec.get("site") or "")
         hint = (f"\nplatform: {rec.get('site')} is one company on {plat}; every company there uses this layout, so pick "
                 "readers that work for any of them (never a company name written into a regex)") if plat else ""
-        intent = normalize_intent(spec.get("intent"))
+        intent = normalize_intent(spec.get("intent") or (ctx.examples_candidates() or {}).get("intent"))
+        if ctx.examples_mode():
+            try:
+                dest = examples_dest_fields(ctx.examples_candidates() or {}, ctx.dest_contract())
+                hint += "\ndestination fields: " + ", ".join(
+                    f"{k} ({v.get('type')}{', required' if v.get('required') else ''})" for k, v in dest.items())
+            except Exception:  # noqa: BLE001 - the outline is still useful without them
+                pass
         return (learn.page_outline(rec, prefer_types=learn.integration_jsonld_types(spec))
                 + f"\n\nintegration: {ctx.name}" + (f" ({intent})" if intent else "")
                 + f"\nfields to extract (exactly these): {', '.join(wanted) or '?'}"
                 f"\nvalidation: {', '.join(rules) or 'none'}\nexisting parsers: {', '.join(known) or 'none'}"
                 + (f"\nhow existing parsers read them: {readers}" if readers else "") + hint)
 
-    def test_page_parser(parser: dict) -> str:
+    def test_page_parser(parser: dict, page_id: str = "") -> str:
         """Test a candidate parser on the page: {"id": "<site_name>", "fields": {"<field>": {"css": "h1"},
         "<other field>": {"jsonld": "<path>", "jsonld_type": "<@type>"}}}, one entry per field get_page lists.
         Extractors: {css, attr?, regex?} | {jsonld, jsonld_type, regex?} (regex = refine, group 1). Returns each
         value with its evidence (where it occurs on the page), whether the page title/meta/JSON-LD corroborate
-        it, and ambiguous selectors."""
+        it, and ambiguous selectors. `page_id`: another page than the thread's (an example page)."""
         try:
-            rec = _page()
+            rec = _page(page_id)
         except KeyError as e:
             return f"ERROR: {e}"
         if not isinstance(parser, dict):
@@ -1407,66 +2017,13 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         active = _active()
         if active is None:
             return f"REFUSED: {ctx.name} has no active version to add a parser to (teach it first)"
-        if not isinstance(parser, dict) or not isinstance(parser.get("fields"), dict):
-            return "REFUSED: parser must be an object with `fields`"
-        p = _typed(parser, rec, active)  # V15: an explicit jsonld_type on every jsonld reader
         site = rec.get("site") or ""
-        p.setdefault("id", re.sub(r"[^a-z0-9]+", "_", site.split(".")[-2] if "." in site else site or "learned").strip("_") or "learned")
-        p["id"] = str(p["id"])
-        existing = (active.get("extract") or {}).get("parsers") or []
-        if not _IDENT.match(p["id"]):
-            return f"REFUSED: parser id {p['id']!r} must match {_IDENT.pattern}"
-        if p["id"] in {x["id"] for x in existing}:
-            return f"REFUSED: parser id {p['id']!r} already exists; pick a new id (e.g. {p['id']}_2)"
+        vetted = _vet_parser(parser, rec, active, default_id=re.sub(
+            r"[^a-z0-9]+", "_", site.split(".")[-2] if "." in site else site or "learned").strip("_") or "learned")
+        if isinstance(vetted, str):
+            return vetted
+        p, checks, scope_note = vetted
         route_key = (active.get("extract") or {}).get("route_by") or "site"
-        asked_match = bool(p.get("match"))
-        p["match"] = {k: str(v) for k, v in (p.get("match") or {route_key: rec.get(route_key, site)}).items()}
-        if match_rank(p["match"], rec) == 0:
-            return f"REFUSED: match {p['match']} does not route this page ({route_key}={rec.get(route_key)!r})"
-        if p.get("fingerprint") and not fingerprint_present(rec.get(_fields_of(active)[0]) or "", p["fingerprint"]):
-            return f"REFUSED: fingerprint {p['fingerprint']!r} is not on this page"
-        wanted = _fields_wanted(active)
-        if sorted(p["fields"]) != sorted(wanted):
-            return (f"REFUSED: parser fields {sorted(p['fields'])} must be exactly the integration's fields "
-                    f"{sorted(wanted)} (every parser feeds the same form fields)")
-        checks = _check(p, rec, active)
-        if "error" in checks:
-            return f"REFUSED: the parser does not read this page: {checks['error']}"
-        _emit_evidence(rec, p, checks)
-        if not checks["evidence_ok"]:
-            bad = [f"{i['name']}={i['value']!r} ({i.get('detail')})" for i in checks["evidence"] if not i["ok"]]
-            return f"REFUSED: evidence check failed, nothing compiled: {'; '.join(bad)}"
-        # Platform or company? A tenant of a multi-tenant platform (visa.wd5.myworkdayjobs.com) gets the platform
-        # match (*.myworkdayjobs.com) if the parser also reads at least half of the other companies' stored pages
-        # there (newest page per host). A company it misses is held (PARSE_NO_MATCH, never a wrong row) and learns
-        # its own exact-host parser, which beats the platform's. Otherwise it is saved for this host only.
-        plat = platform_of(site) if route_key == "site" else None
-        wildcard = any("*" in v for v in p["match"].values())
-        scope_note = ""
-        if plat and (wildcard or not asked_match):
-            taken = any(match_rank({"site": plat}, {"site": (x.get("match") or {}).get("site", "")}) == 2 for x in existing)
-            by_host: dict[str, dict] = {}
-            for o in ([] if taken else ctx.platform_pages(plat, exclude=rec.get("id"), limit=50)):
-                if o.get("site") != site:
-                    by_host.setdefault(o.get("site") or "", o)  # newest first: keep each host's newest page
-            read, missed = [], []
-            for host, o in list(by_host.items())[:5]:
-                c = _check(p, o, active)
-                (read if "error" not in c and c.get("evidence_ok") else missed).append(host)
-            generalises = not taken and len(read) >= len(missed)
-            if wildcard and not generalises:
-                return ("REFUSED: a platform match must read at least half of the other companies on " + plat + ": " +
-                        ("a parser for the platform already exists" if taken else
-                         f"it reads {len(read)} and misses {len(missed)} ({', '.join(missed[:3])})"))
-            if generalises:
-                p["match"] = {route_key: plat}
-                name = platform_name(plat)  # one parser for the whole platform: name it after the platform, not a company
-                if name and name not in {x["id"] for x in existing}:
-                    p["id"] = name
-                scope_note = (f" (platform {plat}: also reads {len(read)} other compan{'y' if len(read) == 1 else 'ies'}"
-                              + (f"; {len(missed)} that it misses will learn their own" if missed else "") + ")")
-            elif missed:
-                scope_note = f" (for {site} only: it misses {len(missed)} of {len(read) + len(missed)} other companies on {plat})"
         values = checks["fields"]
         ambiguous = {f: v for f, v in {**ctx.ambiguous, **checks["ambiguous"]}.items() if f in p["fields"]}
         for field, options in ambiguous.items():  # V10: ambiguous -> ask with the distinct values
@@ -1557,7 +2114,291 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                      reason=why + ("" if deployed else "; not approved"))
         return out
 
+
+    # ---- TEACH from example pages (wizard approach A) ----------------------------------------------
+    def _route(parsers: list[dict], rec: dict) -> dict | None:
+        ranked = [(match_rank({k: str(v) for k, v in (x.get("match") or {}).items()}, rec), i, x)
+                  for i, x in enumerate(parsers)]
+        best = max(ranked, key=lambda r: (r[0], -r[1]), default=None)
+        return best[2] if best and best[0] > 0 else None
+
+    def _examples_refusal() -> str | None:
+        if not ctx.examples_mode():
+            return "REFUSED: this tool is for TEACH from example pages (the draft's example pages and destination)"
+        return None
+
+    def _example_ids() -> list[str]:
+        return [str(ex.get("page_id")) for ex in (ctx.examples_candidates() or {}).get("examples") or []]
+
+    def _summary_of(src: dict, info: dict) -> str:
+        if "reader" in src:
+            return f"{src.get('field')} ({learn.extractor_label(src['reader'])})"
+        if "record" in src:
+            return "the page's address" if src["record"] == "canonical_url" else f"record.{src['record']}"
+        if src.get("today"):
+            return "today's date"
+        if "const" in src:
+            return f"always {src['const']!r} (needs a person's confirmation)"
+        return "skipped"
+
+    def propose_mapping(mapping: dict) -> str:
+        refused = _examples_refusal()
+        if refused:
+            return refused
+        if not isinstance(mapping, dict) or not mapping:
+            return "REFUSED: mapping must be {destination field: source}"
+        c = ctx.examples_candidates() or {}
+        pages = ctx.example_records()
+        if not pages:
+            return "REFUSED: the draft has no example pages"
+        first = pages[0]
+        contract = ctx.dest_contract()
+        dest = examples_dest_fields(c, contract)
+        refusals = [f"{k}: not a destination field (fields: {', '.join(dest)})" for k in mapping if k not in dest]
+        mappings: list[dict] = []
+        kinds: dict[str, dict] = {}
+        readers: dict[str, dict] = {}
+        skipped: list[str] = []
+        for label, info in dest.items():
+            src = mapping.get(label)
+            kind = info.get("type") or "text"
+            if src is None or (isinstance(src, dict) and src.get("skip")):
+                if info.get("required"):
+                    refusals.append(f"{label} is required by the destination")
+                skipped.append(label)
+                continue
+            if kind == "array":
+                refusals.append(f"{label}: a list field is not mapped; skip it")
+                continue
+            if not isinstance(src, dict):
+                refusals.append(f"{label}: a source is an object (reader, record, today, const or skip)")
+                continue
+            rules_v = learn.type_rules("value", kind, info.get("values"))
+            if "reader" in src:
+                fname = str(src.get("field") or _field_name(label))
+                reader = src.get("reader")
+                if not _IDENT.match(fname):
+                    refusals.append(f"{label}: field name {fname!r} must match {_IDENT.pattern}")
+                    continue
+                if not isinstance(reader, dict) or (reader.get("css") is None and reader.get("jsonld") is None):
+                    refusals.append(f"{label}: a reader needs css or jsonld")
+                    continue
+                reader = learn.with_jsonld_types({"fields": {"f": reader}}, first.get("html") or "")["fields"]["f"]
+                if fname in readers and readers[fname] != reader:
+                    refusals.append(f"{label}: field {fname!r} is already read differently for another destination field")
+                    continue
+                checked = learn.check_reader(reader, first, rules_v)
+                if not checked["ok"]:
+                    refusals.append(f"{label}: {learn.extractor_label(reader)} on {first.get('site')}: {checked['detail']}")
+                    continue
+                readers[fname] = reader
+                kinds[fname] = {"type": kind, **({"values": info["values"]} if info.get("values") else {})}
+                m = {"dest_field": label, "kind": "jsonld" if reader.get("jsonld") is not None else "css",
+                     "field": fname, "value": checked["value"], **reader}
+                if sink_kind({"sink": c.get("sink")}) == "api" and kind in ("integer", "number"):
+                    m["transform"] = "int" if kind == "integer" else "float"
+                mappings.append(m)
+            elif "record" in src or src.get("today"):
+                key = "captured_date" if src.get("today") else str(src.get("record"))
+                if key not in RECORD_SOURCES:
+                    refusals.append(f"{label}: record values are {sorted(RECORD_SOURCES)}")
+                    continue
+                problem = learn._check_rules("value", first.get(key), rules_v)
+                if problem:
+                    refusals.append(f"{label}: the page's {key} {first.get(key)!r} does not fit ({problem})")
+                    continue
+                mappings.append({"dest_field": label, "kind": "record", "from": RECORD_SOURCES[key],
+                                 **({"today": True} if src.get("today") else {})})
+            elif "const" in src:
+                value = src["const"]
+                if not isinstance(value, (str, int, float)) or isinstance(value, bool) or str(value).strip() == "":
+                    refusals.append(f"{label}: a constant is non-empty text")
+                    continue
+                problem = learn._check_rules("value", value, rules_v)
+                if problem:
+                    refusals.append(f"{label}: the constant {value!r} does not fit ({problem})")
+                    continue
+                if label in ctx.answers and ctx.answers[label].strip() == str(value).strip():
+                    ctx.confirmed[label] = source_key({"const": value})  # the person gave this value for this field
+                mappings.append({"dest_field": label, "kind": "const", "value": value,
+                                 "confirmed": person_chose(ctx.confirmed, label, {"const": value})})
+            else:
+                refusals.append(f"{label}: unknown source {src!r}")
+        if not refusals and not readers:
+            refusals.append("at least one destination field must be read from the page")
+        if refusals:
+            return "\n".join(f"REFUSED: {r}" for r in refusals) + "\nnothing was written; fix these and call propose_mapping again"
+        ex0 = ((c.get("examples") or [{}])[0]) or {}
+        c2 = {**c, "mappings": mappings, "unexplained": [],
+              "source": {"kind": "page", "url": first.get("url") or ex0.get("url"),
+                         "site": first.get("site") or ex0.get("site"), "snapshot": ex0.get("snapshot")}}
+        spec, examples, problems = draft_page_spec(c2, name=ctx.name, thread_id=ctx.t.id, html=first.get("html") or "",
+                                                   record=first, contract=contract, kinds=kinds)
+        if problems:
+            return "REFUSED (nothing written): " + "; ".join(problems)
+        text = _ydump(spec, sort_keys=False, width=200)
+        errors = ctx.validate_spec_text(text)
+        if errors:
+            return "REFUSED (nothing written):\n" + "\n".join(f"- {e}" for e in errors)
+        ctx.spec_path.write_text(text)
+        (ctx.wd / "examples.yaml").write_text(_ydump(examples, sort_keys=False, width=200))
+        ctx.samples = [first]
+        ctx.svc.emit(ctx.t, "artifact", kind="spec", name=ctx.name, version=None, path=str(ctx.spec_path))
+        parser = spec["extract"]["parsers"][0]
+        _emit_evidence(first, parser, _check(parser, first, spec))
+        lines = [f"{lab} <- " + _summary_of(mapping.get(lab) or {"skip": True}, dest[lab]) for lab in dest]
+        others = [(pid, rec.get("site")) for pid, rec in zip(_example_ids(), pages)][1:]
+        nxt = ("; ".join(f"add_site_parser(page_id={pid!r}) for {site}" for pid, site in others)
+               if others else "compile")
+        return (f"OK: wrote spec.yaml: parser {parser['id']} for {parser['match']['site']} reads "
+                f"{', '.join(parser['fields'])}; " + "; ".join(lines)
+                + f"\nintegration fields every parser must read: {', '.join(parser['fields'])}\nnext: {nxt}")
+
+    def add_site_parser(page_id: str, parser: dict) -> str:
+        refused = _examples_refusal()
+        if refused:
+            return refused
+        if not ctx.spec_path.exists():
+            return "REFUSED: no mapping yet; propose_mapping writes the first site's parser first"
+        ids = _example_ids()
+        if str(page_id) not in ids:
+            return f"REFUSED: {page_id!r} is not one of the example pages ({', '.join(ids)})"
+        if isinstance(parser, dict) and "match" in parser and not parser.get("match"):
+            return ("REFUSED: a parser that matches every site (match {}) is never allowed: each example site gets its "
+                    "own parser, and new sites are learned one by one")
+        rec = next(r for pid, r in zip(ids, ctx.example_records()) if pid == str(page_id))
+        spec = ctx.spec_dict()
+        parsers = (spec.get("extract") or {}).get("parsers") or []
+        owner = _route(parsers, rec)
+        if owner is not None:
+            return f"REFUSED: parser {owner['id']} already reads {rec.get('site')}; nothing to add"
+        site = rec.get("site") or ""
+        vetted = _vet_parser(parser, rec, spec, default_id=example_parser_id(site, {x["id"] for x in parsers}))
+        if isinstance(vetted, str):
+            return vetted
+        p, checks, scope_note = vetted
+        if checks["ambiguous"]:
+            return (f"REFUSED: ambiguous on {site}: {json.dumps(checks['ambiguous'], ensure_ascii=False)}; "
+                    "use a selector that reads one value")
+        p["origin"] = {"kind": "taught", "at": now(), "thread_id": ctx.t.id, "approved_by": None}
+        new = json.loads(json.dumps(spec))
+        new["extract"]["parsers"].append(p)
+        text = _ydump(new, sort_keys=False, width=200)
+        errors = ctx.validate_spec_text(text)
+        if errors:
+            return "REFUSED (nothing saved):\n" + "\n".join(f"- {e}" for e in errors)
+        try:
+            body = golden_body(new, checks["fields"], rec, ctx.dest_contract())
+        except (Quarantine, KeyError, ValueError, TypeError) as e:
+            return f"REFUSED: the values do not fit the destination: {getattr(e, 'detail', None) or e}"
+        ctx.spec_path.write_text(text)
+        ex_path = ctx.wd / "examples.yaml"
+        examples = (_yload(ex_path.read_text()) if ex_path.exists() else None) or []
+        ex_name = f"example_{p['id']}"
+        examples = [e for e in examples if e.get("name") != ex_name] + [{"name": ex_name, "record": rec, "expect": {"body": body}}]
+        ex_path.write_text(_ydump(examples, sort_keys=False, width=200))
+        ctx.svc.emit(ctx.t, "artifact", kind="spec", name=ctx.name, version=None, path=str(ctx.spec_path))
+        values = {k: v for k, v in checks["fields"].items()}
+        return (f"OK: added parser {p['id']} for {p['match'].get('site', site)}{scope_note}: "
+                f"{json.dumps(values, ensure_ascii=False, default=str)}. Not compiled or deployed.")
+
+    _alternatives = review_alternatives
+
+    def _review(version: int) -> list[dict]:
+        """One row per destination field: where its value comes from, the value on each example page, whether
+        AI proposed it, whether a person still has to decide, and the checked alternatives."""
+        vdir = workspace_dir() / "integrations" / ctx.name / f"v{version}"
+        spec = _yload((vdir / "spec.yaml").read_text())
+        golden = json.loads((vdir / "golden.json").read_text()) if (vdir / "golden.json").exists() else []
+        contract_path = vdir / "contract" / "openapi.json"
+        contract = json.loads(contract_path.read_text()) if contract_path.exists() else None
+        dest = examples_dest_fields(ctx.examples_candidates() or {}, contract)
+        sink = spec.get("sink") or {}
+        flat = sink.get("fields") if is_label_keyed(spec) else body_to_dotted(sink.get("body") or {})
+        parsers = (spec.get("extract") or {}).get("parsers") or []
+        records = [g["record"] for g in golden]
+        bodies = {g["record"].get("id"): (g.get("expect") or {}).get("body") or {} for g in golden}
+        rows = []
+        for label, info in dest.items():
+            vs = (flat or {}).get(label)
+            if vs is None:
+                source: dict = {"skip": True}
+            elif "const" in vs:
+                source = {"const": vs["const"]}
+            elif str(vs.get("from", "")) == TODAY:
+                source = {"today": True}
+            elif str(vs.get("from", "")).startswith("record."):
+                source = {"record": vs["from"].removeprefix("record.")}
+            else:
+                source = {"field": vs.get("from"),
+                          "reader": clean_reader((parsers[0].get("fields") or {}).get(vs.get("from")))}
+            source = with_label(source)
+            per_page = {}
+            if "field" in source:
+                for r in records:
+                    owner = _route(parsers, r)
+                    per_page[r.get("id")] = clean_reader(((owner or {}).get("fields") or {}).get(source["field"]))
+            values = {rid: (body.get(label) if is_label_keyed(spec) else _get_path(body, label))
+                      for rid, body in bodies.items()}
+            first_body = bodies.get(records[0].get("id")) if records else {}
+            taken = {learn.normalize_ws(str(v)) for k, v in body_to_dotted(first_body or {}).items()
+                     if k != label and v not in (None, "")}
+            decided = person_chose(ctx.confirmed, label, source)
+            needs_you = (("skip" in source and info.get("type") != "array") or "const" in source) and not decided
+            rows.append({"dest_field": label, "source": source, **({"readers": per_page} if per_page else {}),
+                         "values": values, "ai_proposed": not decided and info.get("type") != "array",
+                         "status": "needs_you" if needs_you else "checked",
+                         "alternatives": _alternatives(label, info, source, records, taken),
+                         "type": info.get("type") or "text", "required": bool(info.get("required")),
+                         **({"values_allowed": info["values"]} if info.get("values") else {})})
+        return rows
+
+    def _apply_edits(version: int, review: list[dict], edits: list[dict]) -> int | str:
+        """A person's review edits: patch the version's spec in code, rebuild the golden examples from the example
+        pages, compile and test the next version. Returns that version, or a REFUSED string (nothing deployed)."""
+        vdir = workspace_dir() / "integrations" / ctx.name / f"v{version}"
+        spec = _yload((vdir / "spec.yaml").read_text())
+        golden = json.loads((vdir / "golden.json").read_text())
+        contract_path = vdir / "contract" / "openapi.json"
+        contract = json.loads(contract_path.read_text()) if contract_path.exists() else None
+        try:
+            new = apply_review_edits(spec, review, edits)
+        except (ValueError, KeyError) as e:
+            return f"REFUSED: the review edits were not applied, nothing deployed: {e}"
+        html_field, text_field = _fields_of(new)
+        examples = []
+        for ex in golden:
+            rec = ex["record"]
+            owner = _route(new["extract"]["parsers"], rec)
+            out = learn.run_page_parser(owner, rec, html_field, text_field) if owner else {"error": "no parser routes it"}
+            if "error" in out:
+                return f"REFUSED: after the edits page {rec.get('id')} no longer reads: {out['error']}"
+            try:
+                body = golden_body(new, out, rec, contract)
+            except (Quarantine, KeyError, ValueError, TypeError) as e:
+                return f"REFUSED: after the edits page {rec.get('id')} does not fit: {getattr(e, 'detail', None) or e}"
+            examples.append({"name": ex["name"], "record": rec, "expect": {"body": body}})
+        text = _ydump(new, sort_keys=False, width=200)
+        errors = ctx.validate_spec_text(text)
+        if errors:
+            return "REFUSED: the edited spec is invalid, nothing deployed: " + "; ".join(errors)
+        ctx.spec_path.write_text(text)
+        (ctx.wd / "examples.yaml").write_text(_ydump(examples, sort_keys=False, width=200))
+        ctx.svc.emit(ctx.t, "artifact", kind="spec", name=ctx.name, version=None, path=str(ctx.spec_path))
+        try:
+            built = ctx.compile_and_test(ctx.spec_path)
+        except (CompileError, SpecError) as e:
+            return f"REFUSED: the edited spec did not compile, nothing deployed: {e}"
+        ctx.last_version = built
+        ctx.svc.emit(ctx.t, "artifact", kind="package", name=ctx.name, version=built["version"], path=built["path"])
+        if not built["tests_passed"]:
+            return f"REFUSED: v{built['version']} (with the review edits) failed its tests; nothing deployed"
+        return int(built["version"])
+
+    propose_mapping.__doc__ = TOOL_DOCS["propose_mapping"]
+    add_site_parser.__doc__ = TOOL_DOCS["add_site_parser"]
     fns = {
+        "propose_mapping": propose_mapping, "add_site_parser": add_site_parser,
         "get_page": get_page, "test_page_parser": test_page_parser, "save_parser": save_parser,
         "get_recording_summary": get_recording_summary, "get_candidates": get_candidates,
         "read_openapi": read_openapi, "fetch_source_samples": fetch_source_samples, "test_parser": test_parser,
