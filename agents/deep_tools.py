@@ -1831,14 +1831,21 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         except ValueError:
             return False
 
-    def _placeholder_refusal(dest_field: str, options: list[str] | None) -> str | None:
-        """Code check: options the AI offers for a number or required destination field must not be empty or 0."""
-        if not dest_field or not options or not ctx.examples_mode():
+    def _placeholder_refusal(question: str, dest_field: str, options: list[str] | None) -> str | None:
+        """Code check: options the AI offers for a number or required destination field must not be empty or 0.
+        Without `dest_field`, the one destination field named in the question (if exactly one) is checked."""
+        if not options or not ctx.examples_mode():
             return None
         try:
-            info = examples_dest_fields(ctx.examples_candidates() or {}, ctx.dest_contract()).get(str(dest_field))
+            fields = examples_dest_fields(ctx.examples_candidates() or {}, ctx.dest_contract())
         except Exception:  # noqa: BLE001 - unknown destination: behave as before
             return None
+        if not dest_field:
+            named = [f for f in fields if re.search(rf"(?<!\w){re.escape(str(f))}(?!\w)", question or "", re.I)]
+            if len(named) != 1:
+                return None
+            dest_field = named[0]
+        info = fields.get(str(dest_field))
         if not info or not (info.get("required") or info.get("type") in ("number", "integer")):
             return None
         bad = [o for o in options if _is_placeholder_option(o)]
@@ -1853,7 +1860,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         confirm inferred assumptions and for values that cannot be derived from the data. In TEACH from
         example pages, name the destination field the question is about in `dest_field`: a constant for
         that field equal to the answer then counts as the person's choice."""
-        refused = _placeholder_refusal(dest_field, options)
+        refused = _placeholder_refusal(question, dest_field, options)
         if refused:
             return refused
         answer = ctx.interrupt("ask_user", question=question, options=list(options or []))

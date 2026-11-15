@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-14, by the lead (Claude), after merging `./patchwork` onto main with PR #4.
+Last updated: 2026-11-15, by the lead (Claude), after merging the placeholder-answer guard.
 
 ## What Patchwork is
 
@@ -188,12 +188,13 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   picks 38091 or the next free port (never 8000–8003/5180), rebuilds the UI when stale, and the extension finds
   Patchwork and its token by itself (Advanced address still wins). `make stage-v2` = `./patchwork --port 38091`.
   Spec: `specs/2026-11-14-one-command-launcher-design.md`.
-- **Last full verification** (2026-11-14, launcher merged with PR #4): 957 passed, 15 skipped; smokes (form, Airtable, new-integration x3) OK; web 130 tests, typecheck, build and mock smoke OK.
+- **Placeholder-answer guard:** in TEACH, `ask_user` refuses AI-offered options that are empty or 0 (`$0.00`, `0,0`)
+  for a number or required field (named in `dest_field`, or the one field named in the question). A person's own
+  typed `0` is still accepted.
+- **Last full verification** (2026-11-15, placeholder guard on main): 962 passed, 15 skipped; smokes (form, new-integration x3) OK; web 130 tests, typecheck, build and mock smoke OK.
 
 ### In progress
 
-- **Placeholder answers (lead's agent):** `ask_user` refuses AI-offered placeholder options (`0`, empty) for number
-  and required fields.
 - **Satvik:** teammate Task 1 (`fixtures/emails/`) and Task 2 (`runner/documents.py`, which adds `pypdf` and
   `openpyxl`). G4–G7 are done against a stand-in reader (`tests/control/standin_readers.py`); once Task 2 lands, run
   `tests/control/test_rows_e2e.py` again: its real-reader variants, the `.xlsx` test and the HTML-table page test
@@ -249,9 +250,8 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   - The scripted heuristics are tuned to the fixtures.
   - A newer answer to the same question doesn't clear an older confirmation.
   - Approving with `needs_you` rows is blocked only in the UI, not on the server.
-- **TEACH questions can offer placeholder answers:** a live Haiku run asked "What should Price be?" with the option
-  `0`. Picking it would make the price 0 on every row (labelled as the person's choice). A tool-level check should
-  refuse placeholder options (`0`, empty) for number and required fields.
+- **Placeholder-answer guard covers TEACH from examples only:** other modes have no destination field types there.
+  A question naming no field (or two) isn't checked.
 - **Pages without structured data are hard to teach:** e.g. Amazon product pages have no JSON-LD, and the first
   `.a-offscreen` price span is empty. Prefer stores with JSON-LD `Product` data for demos.
 - **Task 9 follow-ups:**

@@ -166,3 +166,11 @@ def test_ask_user_real_options_interrupt_and_free_text_zero_is_accepted(monkeypa
     svc.resume(t.id, t.pending["interrupt_id"], {"answer": "0"})  # the person's own free-text choice
     th.join(10)
     assert out["r"] == "user answered: 0" and ctx.answers == {"Price": "0"}
+
+
+def test_ask_user_without_dest_field_checks_the_field_named_in_the_question(monkeypatch, apps, workspace):
+    svc, t, ctx, tools = _ask_ctx(monkeypatch, {"Price": {"type": "number", "required": False},
+                                                "Note": {"type": "text", "required": False}})
+    out = tools["ask_user"]("What should Price be?", ["0", "Leave it for me to fill in at review"])
+    assert out.startswith("REFUSED:") and "Price" in out
+    assert t.pending is None and ctx.answers == {}
