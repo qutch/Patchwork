@@ -282,7 +282,8 @@ class TableSelect(_Strict):
 
 class LineSelect(_Strict):
     """Text lines between `after` and `before` (both exclusive). Each line `match`es (a row; its named groups
-    are the row's cells) or is explained: blank, a repeat of a line from before the first row, or `skip`."""
+    are the row's cells) or is explained: blank, a repeat of a line from before the window (above and including
+    the `after` line), or `skip`."""
 
     after: str | None = None
     before: str | None = None

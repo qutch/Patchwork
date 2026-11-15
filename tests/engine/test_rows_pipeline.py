@@ -21,7 +21,7 @@ from runner.html import visible_text
 from runner.loader import load_integration
 from runner.pipeline import MemoryStore, Outcome, process_document
 from runner.store import Store
-from runner.testing import FakeHttp
+from runner.testing import FakeHttp, FakeResponse
 from spec import load_spec, parse_spec
 from tests.conftest import _Server
 
@@ -285,3 +285,80 @@ def test_quarantined_raw_replays_a_document_once(tmp_path):
     for n in (1, 2, 3):
         store.add_record(run2, Outcome(f"doc-000009#{n}", "duplicate" if n == 1 else "success"), raw)
     assert store.quarantined_raw("x") == [v1, {"no_id": True}]
+
+
+# ---- fix round 1 ---------------------------------------------------------------------------------------------
+
+class _FailSecondWrite(FakeHttp):
+    """The sink refuses the second write it ever receives (a 422), then accepts everything."""
+
+    def sqlite_submit(self, path, table, values):
+        self.n = getattr(self, "n", 0) + 1
+        if self.n == 2:
+            self.calls.append(("sink", "POST", "/rows", dict(values)))
+            return FakeResponse(422, {"error": "rejected once"})
+        return super().sqlite_submit(path, table, values)
+
+
+def test_partial_success_then_replay_writes_row_one_once(rows_pkg):
+    """Minor 2 / review focus 4: row 2's write fails, the document is replayed, and row 1 is written once."""
+    http, store = _FailSecondWrite(), MemoryStore()
+    first = process_document(rows_pkg, doc(TABLE), http, store)
+    assert [(o.record_id, o.status, o.reason) for o in first] == [
+        ("doc-000001#1", "success", None), ("doc-000001#2", "quarantined", "SINK_CONTRACT")]
+    again = process_document(rows_pkg, doc(TABLE), http, store)
+    assert [(o.record_id, o.status) for o in again] == [("doc-000001#1", "duplicate"), ("doc-000001#2", "success")]
+    assert [b["Item"] for b in http.rows] == ["Bolt", "Nut"]  # rows actually written: each exactly once
+
+
+def test_quarantined_raw_groups_by_the_record_id_field(tmp_path):
+    """Important 3: the document id field is the spec's source.record_id, not always `id`."""
+    store = Store(tmp_path / "p.db")
+    raw = {"doc_key": "K-9", "seq": 9}
+    run1 = store.start_run("x", 1, False)
+    store.add_record(run1, Outcome("K-9", "quarantined", "PARSE_NO_MATCH"), raw)  # an old document-level hold
+    run2 = store.start_run("x", 1, False)
+    store.add_record(run2, Outcome("K-9#1", "quarantined", "VALIDATION_FAILED"), raw)
+    store.add_record(run2, Outcome("K-9#2", "quarantined", "VALIDATION_FAILED"), raw)
+    assert store.quarantined_raw("x", id_field="doc_key") == [raw]
+    run3 = store.start_run("x", 1, False)
+    store.add_record(run3, Outcome("K-9#1", "success"), raw)
+    store.add_record(run3, Outcome("K-9#2", "success"), raw)
+    assert store.quarantined_raw("x", id_field="doc_key") == []  # the run-1 hold is superseded
+
+
+def test_replay_with_a_record_id_other_than_id_processes_the_document_once(workspace, monkeypatch):
+    from runner import sqlite_sink
+    from runner.run import run
+
+    with sqlite3.connect(workspace / "lines.db") as conn:
+        conn.execute(LINES_DDL)
+    raw_spec = _raw_spec(hold="row", extra_rules=[{"field": "qty", "rule": "positive_int"}])
+    raw_spec["source"]["record_id"] = "doc_key"
+    res = compile_spec(parse_spec(raw_spec), version=1, out_root=workspace / "integrations",
+                       sink_openapi=sqlite_sink.fetch_contract("lines.db", "lines"))
+    store = Store()
+    store.add_version("table_lines", 1, res.spec_hash, res.openapi_hash)
+    store.set_active("table_lines", 1)
+
+    def keyed(html: str) -> dict:
+        d = doc(html)
+        d["doc_key"] = d.pop("id").replace("doc-", "key-")
+        return d
+
+    bad = TABLE.replace("<td>2</td>", "<td>-2</td>").replace("<td>4</td>", "<td>-4</td>")  # both rows held
+    docs = [keyed(bad)]
+    app = FastAPI()
+
+    @app.get("/api/documents")
+    def documents(since: str = "", integration: str = ""):
+        return docs
+
+    with _Server(app) as server:
+        monkeypatch.setenv("PATCHWORK_CONTROL_URL", server.url)
+        summary = run("table_lines", store=store, log=lambda _: None)
+        assert summary["counts"] == {"quarantined": 2, "quarantined:VALIDATION_FAILED": 2}, summary
+        assert [r["record_id"] for r in store.records(summary["run_id"])] == ["key-000001#1", "key-000001#2"]
+        store.db.execute("UPDATE records SET raw=?", (json.dumps(keyed(TABLE)),))
+        replay = run("table_lines", replay=True, store=store, log=lambda _: None)
+        assert replay["counts"] == {"success": 2}, replay  # one pass over the document, not one per held row

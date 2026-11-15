@@ -926,7 +926,8 @@ exactly as before. Field names come only from the spec; the code knows no subjec
     - `{css: "<selector>"}`: each match in the record's HTML is a row element (needs `source.html_field`).
     - `{lines: {after?, before?, match, skip?}}` (regexes): the text lines strictly between the first line matching
       `after` and the next line matching `before`. A line that `match`es is a row; its named groups are the row's
-      cells. A line `match` misses must be blank, a repeat of a line from before the first row, or matched by `skip`.
+      cells. A line `match` misses must be blank, a repeat of a line from before the window (above and including
+      the `after` line), or matched by `skip`.
   - `fields: {<ident>: RowExtract}` (not empty). `RowExtract` = exactly one of `column` (a table header or a named
     group of `lines.match`, case-insensitive), `index` (a cell or group position, from 0), `css` (inside the row
     element; optional `attr`) or `regex` (on the row's text, group 1); a `regex` next to `column`/`index`/`css` is a
@@ -994,7 +995,9 @@ stdlib and `runner/` only, no network, no AI, no subject words.
     leading `-` or a trailing `-` make it negative (two signs are refused). With `decimal: "."` (default) `,` groups
     thousands in groups of 3 only; with `decimal: ","` the marks swap. Anything else is refused, and the detail
     names the other reading: `'1.299,00' is not a money amount with decimal '.'; with decimal ',' it would read
-    1,299.00`.
+    1,299.00`. A group never starts with 0 (`0,125` is not grouped). One mark followed by exactly 3 digits with no
+    grouping (`€1.299`, or `1,299` with `decimal: ","`) reads two ways, so it is refused too:
+    `'€1.299' is ambiguous: 1.299 with decimal '.' or 1,299.00 with decimal ','`.
   - `number` → int when written without a fraction, else float; the same grouping rules, no currency, no `(x)`.
   - `{date: [formats]}` → `YYYY-MM-DD`. Every format is tried: none fits → `does not match any of the date formats`;
     two that read differently → `'03/04/2026' is ambiguous: 2026-03-04 or 2026-04-03` (never a guess).
@@ -1018,9 +1021,14 @@ stdlib and `runner/` only, no network, no AI, no subject words.
   - A table row equal to the header is skipped ("header"). A row whose `require` fields are empty is skipped. Every
     skipped row must pass `explain_skip`, else `PARSE_NO_MATCH "<where>: row N skipped but not blank, a header or an
     aggregate: '<text>'"` (N counts the selected rows from 1). Zero kept rows → `PARSE_NO_MATCH`.
+  - A kept row that is the aggregate of the other kept rows (at least 2 others; `explain_skip`'s rule) holds the
+    document: `PARSE_NO_MATCH "<where>: row N ('<text>') adds up the other rows; a total is not a data row ..."`.
+    This catches a total whose label sits in a required column. A real row that equals the sum of the others is
+    held too (a person confirms it); it is never dropped.
   - `lines`: `after` / `before` that match no line → `PARSE_NO_MATCH`. A line between them that `match` misses must
-    be blank, equal (normalised) to a line before the first row, or matched by `skip`; else `PARSE_NO_MATCH
-    "<where>: line '<text>' is not a row and not explained"`.
+    be blank, equal (normalised) to a line *before the window* (above and including the `after` line; nothing
+    when there is no `after`), or matched by `skip`; else `PARSE_NO_MATCH "<where>: line '<text>' is not a row and
+    not explained"`. This holds for lines above the first matched row too.
   - With a `skipped` list, every skipped row (`{row, text, reason}`) and explained line (`{line, text, reason}`) is
     appended, for the agents' "skipped and explained" report.
   - A missing table → `no table has the columns [...]`; a `column` not in the chosen table's header → `PARSE_NO_MATCH`.
@@ -1073,7 +1081,8 @@ stdlib and `runner/` only, no network, no AI, no subject words.
   `record` event per Outcome; counts are per Outcome. The cursor moves once per document. The circuit breaker counts
   consecutive `SINK_CONTRACT` Outcomes and is checked after each document. `NEW_SOURCE_FORMAT` counts only
   document-level (or record-level) `PARSE_NO_MATCH` Outcomes, as before.
-- **`Store.quarantined_raw(name)`** (the replay input) groups the latest live outcomes by the raw record's `id`
-  (record ids `<id>` and `<id>#<n>`) and returns each document once when any outcome of its latest run is
-  quarantined. Rows written by a later run supersede an earlier document-level hold. Records whose raw has no `id`
-  are one group per record id, as before.
+- **`Store.quarantined_raw(name, id_field="id")`** (the replay input) groups the latest live outcomes by the raw
+  record's `id_field` (record ids `<id>` and `<id>#<n>`) and returns each document once when any outcome of its
+  latest run is quarantined. `runner.run.run` passes `id_field=integ.RECORD_ID` (the spec's `source.record_id`).
+  Rows written by a later run supersede an earlier document-level hold. Records whose raw has no such field are one
+  group per record id, as before.

@@ -172,7 +172,7 @@ def run(name: str, version: int | str = "active", *, dry_run: bool = False, limi
             return finish()
 
         try:
-            records = (store.quarantined_raw(name) if replay
+            records = (store.quarantined_raw(name, id_field=integ.RECORD_ID) if replay
                        else integ.list_records(http, store.get_cursor(name, scope)))
         except Exception as e:  # noqa: BLE001
             status, message = "failed", f"could not fetch source records: {e}"

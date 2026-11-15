@@ -19,8 +19,8 @@ CLEANERS = ("money", "number", "date", "split", "strip", "upper", "lower")  # co
 
 _CODE_HEAD = re.compile(r"^[A-Z]{3}(?![A-Za-z])")
 _CODE_TAIL = re.compile(r"(?<![A-Za-z])[A-Z]{3}$")
-_NUMBER = {".": re.compile(r"^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?$"),
-           ",": re.compile(r"^(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?$")}
+_NUMBER = {".": re.compile(r"^([1-9]\d{0,2}(?:,\d{3})+|\d+)(?:\.(\d+))?$"),  # a group never starts with 0
+           ",": re.compile(r"^([1-9]\d{0,2}(?:\.\d{3})+|\d+)(?:,(\d+))?$")}
 _MINUS = ("-", "−")
 
 
@@ -46,6 +46,12 @@ def _read_number(text: str, decimal: str, currency: bool) -> Decimal | None:
     """The amount in `text` with `decimal` as the decimal mark (the other mark groups thousands, in groups of
     3 only), or None when it is not exactly one amount. `currency` also strips symbols and ISO codes and reads
     (x) as negative. A sign may lead or trail: -5, 5-, (5)."""
+    got = _read_parts(text, decimal, currency)
+    return got[0] if got else None
+
+
+def _read_parts(text: str, decimal: str, currency: bool) -> tuple[Decimal, bool, int] | None:
+    """`_read_number`, plus whether thousands were grouped and how many fraction digits were written."""
     s = text.strip()
     if currency:
         s = _strip_currency(s)
@@ -63,9 +69,10 @@ def _read_number(text: str, decimal: str, currency: bool) -> Decimal | None:
     m = _NUMBER[decimal].match(s)
     if signs > 1 or m is None:
         return None
-    whole = m.group(1).replace("," if decimal == "." else ".", "")
+    group_mark = "," if decimal == "." else "."
+    whole = m.group(1).replace(group_mark, "")
     value = Decimal(whole + ("." + m.group(2) if m.group(2) else ""))
-    return -value if signs else value
+    return (-value if signs else value), group_mark in m.group(1), len(m.group(2) or "")
 
 
 def parse_amount(value: Any) -> Decimal | None:
@@ -87,13 +94,19 @@ def _amount(value: Any, args: Any, where: str, currency: bool) -> float | int:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value) if currency else value
     text = str(value if value is not None else "")
-    got = _read_number(text, decimal, currency)
-    if got is None:
-        other = "," if decimal == "." else "."
-        alt = _read_number(text, other, currency)
+    parts = _read_parts(text, decimal, currency)
+    other = "," if decimal == "." else "."
+    alt = _read_number(text, other, currency)
+    if parts is None:
         hint = f"; with decimal '{other}' it would read {alt:,.2f}" if alt is not None else ""
         what = "a money amount" if currency else "a number"
         raise _fail(where, f"{text!r} is not {what} with decimal '{decimal}'{hint}")
+    got, grouped, fraction = parts
+    # One mark followed by exactly 3 digits, with no grouping: 1.299 is 1.299 or 1,299 depending on the sender's
+    # mark. An amount is never guessed: hold it and name both readings.
+    if currency and not grouped and fraction == 3 and alt is not None and alt != got:
+        raise _fail(where, f"{text!r} is ambiguous: {got.normalize():f} with decimal '{decimal}' or {alt:,.2f} "
+                           f"with decimal '{other}'")
     if currency or got.as_tuple().exponent < 0:  # money is always a float; a number without a fraction is an int
         return float(got)
     return int(got)

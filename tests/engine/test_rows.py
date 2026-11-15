@@ -208,3 +208,62 @@ def test_no_subject_words_in_the_rows_engine():
         text = (Path(__file__).resolve().parents[2] / name).read_text().lower()
         for word in ("invoice", "vendor", "order"):
             assert word not in text, (name, word)
+
+
+# ---- fix round 1 ---------------------------------------------------------------------------------------------
+
+def test_lines_drift_at_the_top_of_the_window_is_held_not_dropped():
+    """Critical 1: an unmatched line before the first matched row is inside the window; it is not a repeat of
+    itself, so it must be explained like any other line."""
+    text = "Item Qty\nLamp 2.5\nShade (brass, large)\nDesk 1\nTotal 3"
+    with pytest.raises(Quarantine, match=r"line 'Lamp 2.5' is not a row and not explained") as exc:
+        extract_rows({"text": text}, LINES, "w")
+    assert exc.value.code == "PARSE_NO_MATCH"
+
+
+def test_lines_header_lines_before_the_window_still_explain_repeats():
+    text = "Report A\nItem Qty\n\nLamp 2\nReport A\nItem Qty\nDesk 1\nTotal 3"   # page header + heading repeated
+    skipped: list[dict] = []
+    rows = extract_rows({"text": text}, LINES, "w", skipped=skipped)
+    assert [r.fields["name"] for r in rows] == ["Lamp", "Desk"]
+    assert [s["reason"] for s in skipped] == ["repeated", "repeated"]
+
+
+def test_lines_without_after_explain_nothing_by_position():
+    """Without `after` the window starts at the first line: a preamble line must be blank or `skip`ped."""
+    spec = {"select": {"lines": {"before": "^Total", "match": r"^(?P<name>\S+) (?P<n>\d+)$"}},
+            "fields": {"name": {"column": "name"}}}
+    with pytest.raises(Quarantine, match="line 'Some heading' is not a row"):
+        extract_rows({"text": "Some heading\nLamp 2\nTotal 2"}, spec, "w")
+    spec["select"]["lines"]["skip"] = "^Some heading$"
+    assert [r.fields["name"] for r in extract_rows({"text": "Some heading\nLamp 2\nTotal 2"}, spec, "w")] == ["Lamp"]
+
+
+TOTAL_IN_ITEM = {"header": ["Item", "Qty", "Each", "Line"],
+                 "rows": [["Bolt", "2", "$1.50", "$3.00"], ["Nut", "4", "$0.25", "$1.00"],
+                          ["Total", "", "", "$4.00"]], "where": "t"}
+ROWS_ITEM = {"select": {"table": {"columns": ["Item", "Qty"]}},
+             "fields": {"item": {"column": "Item"}, "qty": {"column": "Qty", "cast": "int"},
+                        "line": {"column": "Line", "clean": "money"}}}
+
+
+def test_total_row_with_a_label_in_the_required_column_holds_the_document():
+    """Important 2: `Total | | | $4.00` has a required item, so it is kept; it is the column sum of the others."""
+    with pytest.raises(Quarantine, match=r"row 3 \('Total \$4.00'\) adds up the other rows") as exc:
+        extract_rows({"tables": [TOTAL_IN_ITEM]}, ROWS_ITEM, "w")
+    assert exc.value.code == "PARSE_NO_MATCH"
+
+
+def test_a_data_row_equal_to_the_sum_of_the_others_is_held_never_dropped():
+    t = {**TOTAL_IN_ITEM, "rows": [["Bolt", "2", "$1.50", "$3.00"], ["Nut", "4", "$0.25", "$1.00"],
+                                   ["Kit", "6", "$1.75", "$4.00"]]}
+    with pytest.raises(Quarantine, match="adds up the other rows"):
+        extract_rows({"tables": [t]}, ROWS_ITEM, "w")
+
+
+def test_total_check_needs_two_other_rows_and_every_numeric_cell():
+    two = {**TOTAL_IN_ITEM, "rows": [["Bolt", "2", "$1.50", "$3.00"], ["Pair", "2", "$1.50", "$3.00"]]}
+    assert len(extract_rows({"tables": [two]}, ROWS_ITEM, "w")) == 2       # equal rows, but only one other row
+    near = {**TOTAL_IN_ITEM, "rows": [["Bolt", "2", "$1.50", "$3.00"], ["Nut", "4", "$0.25", "$1.00"],
+                                      ["Kit", "6", "$2.00", "$4.00"]]}  # Each does not add up
+    assert len(extract_rows({"tables": [near]}, ROWS_ITEM, "w")) == 3

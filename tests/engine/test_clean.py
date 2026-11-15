@@ -86,6 +86,33 @@ def test_clean_then_cast():
         clean_cast("$3.50", "money", "int", "f")
 
 
+@pytest.mark.parametrize("raw,spec,readings", [
+    ("€1.299", "money", ("1.299", "1,299.00")),
+    ("1.299", {"money": {"decimal": "."}}, ("1.299", "1,299.00")),
+    ("1,299", {"money": {"decimal": ","}}, ("1.299", "1,299.00")),
+    ("-12,500 EUR", {"money": {"decimal": ","}}, ("-12.5", "-12,500.00")),
+])
+def test_money_with_three_fraction_digits_and_no_grouping_is_ambiguous(raw, spec, readings):
+    """Important 1: one mark followed by exactly 3 digits reads two ways; it is held, never guessed."""
+    with pytest.raises(Quarantine) as exc:
+        clean_value(raw, spec, "f")
+    assert exc.value.code == "VALIDATION_FAILED" and "ambiguous" in exc.value.detail
+    for reading in readings:
+        assert reading in exc.value.detail
+
+
+@pytest.mark.parametrize("raw,spec,want", [
+    ("1,299", "money", 1299.0),                              # grouped: unambiguous with decimal '.'
+    ("1.299", {"money": {"decimal": ","}}, 1299.0),          # grouped with decimal ','
+    ("1,299.000", "money", 1299.0),                          # grouped and a fraction
+    ("0.125", "money", 0.125), ("0,125", {"money": {"decimal": ","}}, 0.125),  # a leading 0 never groups
+    ("1234.567", "money", 1234.567),                         # 4 digits cannot be a thousands group
+    ("1.29", "money", 1.29), ("1.2990", "money", 1.299),
+])
+def test_money_readings_that_stay_unambiguous(raw, spec, want):
+    assert clean_value(raw, spec, "f") == want
+
+
 def test_parse_amount_is_lenient_and_never_raises():
     assert parse_amount("$4.00") == 4 and parse_amount("(1,000.50)") == -1000.5
     assert parse_amount("Sum") is None and parse_amount("") is None and parse_amount("2026-11-03") is None

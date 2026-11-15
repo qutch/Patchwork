@@ -12,7 +12,8 @@ A row is selected by one of:
 
 Rows are never dropped silently: a row skipped for a missing required field must be blank, a repeat of the header
 or an aggregate (its numbers are the column sums of the kept rows), and a line that is not a row must be blank, a
-repeat of a line from before the first row, or matched by the declared `skip`. Anything else holds the document.
+repeat of a line from before the window (a heading repeated on the next page), or matched by the declared `skip`.
+A kept row that adds up the other kept rows (a total with a label) holds the document. Anything else holds too.
 """
 
 from __future__ import annotations
@@ -129,8 +130,9 @@ def _select_lines(record: dict, lines_sel: dict, text_field: str | None, where: 
     match = re.compile(lines_sel["match"])
     skip = re.compile(lines_sel["skip"]) if lines_sel.get("skip") else None
     found = [(i, match.search(lines[i])) for i in range(start, end)]
-    first = next((i for i, m in found if m), end)
-    seen_before = {_norm(ln) for ln in lines[:first] if ln}
+    # A repeat is of a line before the window (the `after` line, a page header above it). The window's own lines
+    # are never "before the first row": one that `match` misses is explained or holds, wherever it sits.
+    seen_before = {_norm(ln) for ln in lines[:start] if ln}
     raws: list[_Raw] = []
     for i, m in found:
         line = lines[i]
@@ -282,7 +284,32 @@ def extract_rows(record: dict, rows: dict, where: str, html_field: str | None = 
             skipped.append({"row": raw.pos, "text": raw.text, "reason": reason})
     if not kept:
         raise Quarantine("PARSE_NO_MATCH", f"{where}: no rows ({len(raws)} selected, none with {require})")
+    total = _total_row(kept_cells)
+    if total is not None:  # held, never dropped: a real row can equal the sum of the others too
+        raise Quarantine("PARSE_NO_MATCH",
+                         f"{where}: row {kept[total].no} ('{kept[total].text}') adds up the other rows; a total "
+                         "is not a data row (if it is one, a person confirms this document)")
     return kept
+
+
+def _total_row(cells: list[list[str]]) -> int | None:
+    """The index of a kept row that is the aggregate of the others (`explain_skip` "aggregate" against them), when
+    at least 2 other rows exist; else None. Column sums are taken once, so this is linear in the cells."""
+    if len(cells) < 3:
+        return None
+    width = max(len(c) for c in cells)
+    amounts = [[parse_amount(c[i]) if i < len(c) and str(c[i]).strip() else None for i in range(width)]
+               for c in cells]
+    filled = [[i < len(c) and bool(str(c[i]).strip()) for i in range(width)] for c in cells]
+    numeric_col = [all(a[i] is not None for a, f in zip(amounts, filled) if f[i]) for i in range(width)]
+    sums = [sum((a[i] for a in amounts if a[i] is not None), Decimal(0)) for i in range(width)]
+    counts = [sum(1 for a in amounts if a[i] is not None) for i in range(width)]
+    for r, row in enumerate(amounts):
+        cols = [i for i in range(width) if row[i] is not None]
+        if cols and all(numeric_col[i] and counts[i] >= 2 and abs(sums[i] - row[i] - row[i]) <= Decimal("0.01")
+                        for i in cols):
+            return r
+    return None
 
 
 # ---- cross-check rules (validate: sum_equals | product_equals | count_equals) ------------------------------

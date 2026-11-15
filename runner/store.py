@@ -252,15 +252,16 @@ class Store:
             r["raw"] = json.loads(r["raw"])
         return rows
 
-    def quarantined_raw(self, name: str) -> list[dict]:
+    def quarantined_raw(self, name: str, id_field: str = "id") -> list[dict]:
         """Raw source records whose latest live outcome is quarantined (the input of a replay).
 
         contracts V18: a document gives one outcome per row (`<id>#<n>`) or one for the whole document (`<id>`),
-        all with the document as `raw`. They are grouped by the raw `id`, and the document is replayed once when
-        any outcome of its latest run is quarantined (so rows written later supersede an earlier hold)."""
+        all with the document as `raw`. They are grouped by the raw record's `id_field` (the integration's
+        `source.record_id`; the runner passes it), and the document is replayed once when any outcome of its
+        latest run is quarantined (so rows written later supersede an earlier hold)."""
         groups: dict[str, list[dict]] = {}
         for r in self.latest_outcomes(name):
-            raw_id = r["raw"].get("id") if isinstance(r["raw"], dict) else None
+            raw_id = r["raw"].get(id_field) if isinstance(r["raw"], dict) else None
             rid = str(r["record_id"])
             of_doc = raw_id is not None and (rid == str(raw_id) or rid.startswith(f"{raw_id}#"))
             groups.setdefault(str(raw_id) if of_doc else rid, []).append(r)
