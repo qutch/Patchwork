@@ -327,3 +327,14 @@ def test_get_page_shows_text_lines_for_a_page_when_the_integration_reads_rows(wo
     h = DocHarness(monkeypatch, page)
     out = h.tools["get_page"]()
     assert "kind page" in out and "L2: Item Qty Each Line" in out and "row fields (exactly these" in out
+
+
+# ---- a flagged document is never learned from, whoever asks ---------------------------------------------------
+
+@pytest.mark.parametrize("tool", ["test_page_parser", "save_parser"])
+def test_the_learn_tools_refuse_a_flagged_document(workspace, monkeypatch, tool):
+    set_learn_policy("auto")
+    h = DocHarness(monkeypatch, {**doc(), "flags": ["no_text_layer"]})
+    out = h.tools[tool](parser=GOOD)
+    assert out.startswith("REFUSED: this document is flagged (no_text_layer)") and "never learned" in out
+    assert Store().active_version(NAME) == 1 and h.events("learned") == [] and h.events("evidence") == []

@@ -172,8 +172,8 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   - G7: `fixtures/tables/` and `tests/control/test_rows_e2e.py`: a CSV becomes one row per data row (a re-upload
     writes nothing), a file or page that does not fit is held with nothing written, a new page layout is learned
     once and its rows written. Real control plane, compiler and runner subprocess, SQLite destination, no model.
-- **Last full verification** (2026-11-14): 831 passed, 9 skipped; both smokes OK; web 129 tests, typecheck and build
-  OK.
+- **Last full verification** (2026-11-14, PR #4 head): 921 passed, 15 skipped; both smokes 9/9 OK. The web checks were
+  not re-run (no `web/` change in that PR); the last web run was 129 tests, typecheck and build OK.
 
 ### In progress
 
@@ -217,8 +217,6 @@ If you need to change a file someone else owns, say so in your PR or commit mess
     `rows.py` cannot read a `table` select from a plain page record (a document record carries its `tables`).
   - The scripted agent proposes `table` and `lines` selects only, never `css`; a page record has no `tables`, so a page
     layout is learned through `lines` over its text (an HTML table puts one cell on each text line: needs the reader).
-  - `store.latest_outcomes` keys on record id, so one document can show both as held and as written rows. The
-    document inbox groups by document id, but the outcomes the tracker shows still do not.
   - Table selects have no `skip`, so "Tax"/"Shipping" footers hold the document.
   - A real row equal to the sum of the others is held.
   - `lines` without `after` needs blank or skipped lines above the first item.

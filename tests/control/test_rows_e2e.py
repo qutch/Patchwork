@@ -155,6 +155,10 @@ def outcomes(name: str) -> dict[str, list[dict]]:
     return out
 
 
+def tracker_rows(api: httpx.Client, name: str = "order_lines") -> dict[str, dict]:
+    return {r["page_id"]: r for r in api.get("/api/tracker", params={"integration": name}).json()["rows"]}
+
+
 def wait_rows(ws: Path, db: str, table: str, n: int, timeout: float = 90) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -244,10 +248,12 @@ def page_stack(workspace, control, spec: dict, first_url: str, first_file: str, 
 
 def test_a_new_layout_is_learned_once_and_its_rows_are_written(workspace, control):
     api = page_stack(workspace, control, blocks_variant(load("spec_html.yaml")), B_URL, "orders-b.html", ORDER_B)
-    assert post_page(api, B_URL, html_of("orders-b.html"), "order_lines").status_code == 201
+    b = post_page(api, B_URL, html_of("orders-b.html"), "order_lines")
+    assert b.status_code == 201
     wait_idle(api, "order_lines")
     assert table_rows(workspace, "lines.db", "Lines") == ORDER_B
     assert last_run("order_lines")["counts"] == {"success": 3}
+    assert tracker_rows(api)[b.json()["id"]]["status"] == "success"  # its rows are `<id>#<n>`: reported per page
 
     # site C lists its rows differently: no parser reads it, so the page is held and the scripted agent learns it
     c = post_page(api, C_URL, html_of("orders-c.html"), "order_lines")
@@ -264,11 +270,23 @@ def test_a_new_layout_is_learned_once_and_its_rows_are_written(workspace, contro
     assert seen[c.json()["id"]][0]["reason"] == "PARSE_NO_MATCH"  # held first
     assert [seen[f"{c.json()['id']}#{n}"][-1]["status"] for n in (1, 2, 3)] == ["success"] * 3  # then written
 
-    # the same pages again write nothing new
-    for url, file in ((B_URL, "orders-b.html"), (C_URL, "orders-c.html")):
-        assert post_page(api, url, html_of(file), "order_lines").status_code == 201
+    # the tracker reports each page, not each row id: both were written, C by the layout it learned
+    rows = tracker_rows(api)
+    counts = {"success": 3, "duplicate": 0, "quarantined": 0}
+    assert (rows[b.json()["id"]]["status"], rows[b.json()["id"]]["label"], rows[b.json()["id"]]["rows"]) == (
+        "success", "code", counts)
+    got = rows[c.json()["id"]]
+    assert (got["status"], got["label"], got["reason"], got["rows"]) == ("success", "learned_now", None, counts)
+    assert got["parser"] == learned["id"] and got["fields"]  # the values come from the first written row
+
+    # the same pages again write nothing new, and the tracker says so
+    again = [post_page(api, url, html_of(file), "order_lines").json()["id"]
+             for url, file in ((B_URL, "orders-b.html"), (C_URL, "orders-c.html"))]
     wait_idle(api, "order_lines")
     assert len(table_rows(workspace, "lines.db", "Lines")) == 6
+    rows = tracker_rows(api)
+    assert [(rows[i]["status"], rows[i]["label"], rows[i]["rows"]["duplicate"]) for i in again] == [
+        ("duplicate", "duplicate", 3)] * 2
 
 
 def test_a_page_whose_total_does_not_add_up_is_held_and_writes_nothing(workspace, control, monkeypatch):

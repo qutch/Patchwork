@@ -1892,6 +1892,13 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
     def _page(page_id: str = "") -> dict:
         return ctx.get_page_record(page_id or ctx.page_id or "")
 
+    def _flag_refusal(rec: dict) -> str | None:
+        """A flagged document (no text layer, encrypted, unreadable) is held for a person and never learned from,
+        whoever asks: `maybe_learn` skips it, and so do the tools (contracts V17)."""
+        flags = [str(f) for f in rec.get("flags") or []]
+        return (f"REFUSED: this document is flagged ({', '.join(flags)}): it is held for a person and never learned "
+                "from") if flags else None
+
     def _active() -> dict | None:
         text = ctx.active_spec_text()
         return _yload(text) if text else None
@@ -2075,6 +2082,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             return f"ERROR: {e}"
         if not isinstance(parser, dict):
             return "ERROR: parser must be an object with `fields`"
+        if _flag_refusal(rec):
+            return _flag_refusal(rec)
         spec = _page_spec()
         parser = _typed({"id": "candidate", **parser}, rec, spec)
         checks = _check(parser, rec, spec)
@@ -2125,6 +2134,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             rec = _page()
         except KeyError as e:
             return f"ERROR: {e}"
+        if _flag_refusal(rec):
+            return _flag_refusal(rec)
         active = _active()
         if active is None:
             return f"REFUSED: {ctx.name} has no active version to add a parser to (teach it first)"

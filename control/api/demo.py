@@ -139,7 +139,7 @@ async def accuracy(integration: str | None = None) -> dict[str, Any]:
     names = [integration] if integration else [i["name"] for i in store.integrations()]
     if integration and store.version(integration, store.latest_version(integration)) is None:
         raise HTTPException(404, f"integration {integration} not found")
-    records = [r for n in names for r in store.latest_outcomes(n)]
+    records = [r for n in names for r in store.latest_document_outcomes(n)]  # V18: one outcome per document
     truth, source = await ground_truth()
     return {"integration": integration, "truth_source": source, **score(records, truth)}
 

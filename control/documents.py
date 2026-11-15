@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS documents (
   is_leaf INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS documents_sha ON documents(integration, sha256, parent_seq);
+CREATE UNIQUE INDEX IF NOT EXISTS documents_one_parent ON documents(integration, sha256) WHERE parent_seq IS NULL;
 CREATE TABLE IF NOT EXISTS learns (
   page_id TEXT PRIMARY KEY,
   thread_id TEXT NOT NULL,
@@ -116,11 +117,15 @@ def _table_dict(t: Any) -> dict[str, Any]:
 
 
 def _flags(meta: dict[str, Any]) -> list[str]:
+    """The fixed flag names (V17), from the reader's meta. A reader that marks a broken attachment instead of raising
+    sets `meta.unreadable == "true"` or leaves a non-empty `meta.error`; either way it is held, not parsed."""
     flags = []
     if str(meta.get("no_text_layer")).lower() == "true":
         flags.append("no_text_layer")
     if str(meta.get("encrypted")).lower() == "true":
         flags.append("encrypted")
+    if str(meta.get("unreadable")).lower() == "true" or str(meta.get("error") or "").strip():
+        flags.append("unreadable")
     return flags
 
 
@@ -205,7 +210,7 @@ class DocumentInbox:
         parent record plus `leaves: [ids]` and `duplicate`. The same bytes for one integration return the
         existing record with `duplicate: true`. A file that cannot be read is kept as one record flagged
         `unreadable` (its error in `meta.error` and `meta.problem`), so a person can see it."""
-        name = Path(name or "upload").name or "upload"
+        name = Path((name or "upload").replace("\x00", "")).name[:255] or "upload"
         sha = hashlib.sha256(data).hexdigest()
         existing = self._by_sha(sha, integration)
         if existing is not None:
@@ -230,18 +235,30 @@ class DocumentInbox:
             if meta:
                 r["meta"] = {**r["meta"], **meta}
         self.originals_dir.mkdir(parents=True, exist_ok=True)
-        (self.originals_dir / f"{sha[:16]}-{name}").write_bytes(data)
+        (self.originals_dir / f"{sha[:16]}-{name[:100]}").write_bytes(data)  # a long name never reaches the filesystem
         seqs: list[int] = []
-        with self._conn() as db:
-            for r in records:
-                parent = seqs[r["parent_index"]] if r["parent_index"] is not None else None
-                row = {**{k: r[k] for k in COLUMNS if k not in ("seq", "parent_seq", *_JSON, "is_leaf")},
-                       "parent_seq": parent, "is_leaf": int(r["is_leaf"]),
-                       **{k: json.dumps(r[k]) for k in _JSON}}
-                cols = list(row)
-                cur = db.execute(f"INSERT INTO documents({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
-                                 [row[c] for c in cols])
-                seqs.append(int(cur.lastrowid))
+        try:
+            with self._conn() as db:
+                db.execute("BEGIN IMMEDIATE")  # the parent and its children are stored together or not at all
+                try:
+                    for r in records:
+                        parent = seqs[r["parent_index"]] if r["parent_index"] is not None else None
+                        row = {**{k: r[k] for k in COLUMNS if k not in ("seq", "parent_seq", *_JSON, "is_leaf")},
+                               "parent_seq": parent, "is_leaf": int(r["is_leaf"]),
+                               **{k: json.dumps(r[k]) for k in _JSON}}
+                        cols = list(row)
+                        cur = db.execute(f"INSERT INTO documents({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                                         [row[c] for c in cols])
+                        seqs.append(int(cur.lastrowid))
+                    db.execute("COMMIT")
+                except BaseException:
+                    db.execute("ROLLBACK")
+                    raise
+        except sqlite3.IntegrityError:  # another upload of the same bytes won the race: that one is the document
+            existing = self._by_sha(sha, integration)
+            if existing is None:
+                raise
+            return {**existing, "leaves": self._leaf_ids(existing["id"]), "duplicate": True}
         parent_rec = self.get(doc_id(seqs[0]))
         assert parent_rec is not None
         return {**parent_rec, "leaves": self._leaf_ids(parent_rec["id"]), "duplicate": False}

@@ -6,8 +6,6 @@ import csv
 import io
 import sys
 import types
-from dataclasses import dataclass, field
-from typing import Any
 
 import pytest
 
@@ -16,28 +14,11 @@ from control.documents import DocumentInbox, SENDER_KEY, sender_domain, to_recor
 from control.inboxes import inbox_for
 from control.pages import PageInbox
 from control.page_hooks import PageHooks
+from tests.control.standin_readers import Document, Table
 from tests.control.v2_fakes import (NAME, make_page_integration,  # noqa: F401
                                     page_spec, v2agent, v2api, fake_runner)
 
 DOC_NAME = "doc_int"
-
-
-@dataclass
-class Table:
-    header: list[str]
-    rows: list[list[str]]
-    where: str = ""
-
-
-@dataclass
-class Document:
-    kind: str
-    name: str
-    text: str = ""
-    html: str | None = None
-    tables: list[Table] = field(default_factory=list)
-    meta: dict[str, Any] = field(default_factory=dict)
-    children: list["Document"] = field(default_factory=list)
 
 
 def fake_read_any(data: bytes, name: str, content_type: str = "") -> Document:
@@ -276,3 +257,73 @@ def test_flagged_document_never_learned(workspace, readers, doc_integration):
     assert hooks.maybe_learn(doc_integration, [clean]) == [f"learn-{clean}"]  # the control: unflagged is learned
     assert box.learns(doc_integration)[clean]["thread_id"] == f"learn-{clean}"
     assert hooks.maybe_learn(doc_integration, [clean]) == []  # and at most once
+
+
+# ---- review fixes: flags, one transaction, a race, odd file names -----------------------------------------------
+
+def test_a_reader_that_marks_a_broken_attachment_gets_it_flagged_unreadable():
+    broken = Document(kind="pdf", name="a.pdf", meta={"error": "bad xref table"})
+    flagged = Document(kind="pdf", name="b.pdf", meta={"unreadable": "true"})
+    fine = Document(kind="pdf", name="c.pdf", meta={})
+    mail = Document(kind="email", name="m", meta={SENDER_KEY: "a@x.example"}, children=[broken, flagged, fine])
+    recs = to_records(mail, integration="i", received_at="2026-11-14T00:00:00+00:00", sha256="h")
+    assert [r["flags"] for r in recs[1:]] == [["unreadable"], ["unreadable"], []]
+    assert recs[1]["meta"]["error"] == "bad xref table"
+
+
+def test_parent_and_children_are_stored_together_or_not_at_all(workspace, readers, monkeypatch):
+    box = DocumentInbox()
+    real = box._conn
+    calls = {"n": 0}
+
+    class Boom(Exception):
+        pass
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def failing_second_insert():
+        with real() as db:
+            class Wrapped:
+                def execute(self, sql, *a, **k):
+                    if sql.startswith("INSERT INTO documents"):
+                        calls["n"] += 1
+                        if calls["n"] == 2:
+                            raise Boom()
+                    return db.execute(sql, *a, **k)
+
+            yield Wrapped()
+
+    monkeypatch.setattr(box, "_conn", failing_second_insert)
+    with pytest.raises(Boom):
+        box.add_bytes(b"raw-eml", "m.eml", "message/rfc822", "i")  # a parent and one attachment
+    monkeypatch.setattr(box, "_conn", real)
+    assert box.count() == 0  # no parent without its leaf
+    again = box.add_bytes(b"raw-eml", "m.eml", "message/rfc822", "i")  # so a retry is a new document, not a partial one
+    assert again["duplicate"] is False and len(again["leaves"]) == 1
+
+
+def test_two_uploads_of_the_same_bytes_at_once_make_one_document(workspace, readers):
+    import threading
+
+    box = DocumentInbox()
+    results, barrier = [], threading.Barrier(4)
+
+    def go():
+        barrier.wait()
+        results.append(box.add_bytes(b"Name\nAda\n", "p.csv", "text/csv", "i"))
+
+    threads = [threading.Thread(target=go) for _ in range(4)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert box.count() == 1 and len({r["id"] for r in results}) == 1
+    assert sorted(r["duplicate"] for r in results) == [False, True, True, True]
+
+
+@pytest.mark.parametrize("name", ["x" * 400 + ".csv", "bad\x00name.csv", "../../etc/passwd.csv", "a\\b\\c.csv"])
+def test_odd_file_names_are_stored_safely(workspace, readers, name):
+    box = DocumentInbox()
+    d = box.add_bytes(b"Name\nAda\n", name, "text/csv", "i")
+    assert d["duplicate"] is False and "\x00" not in d["name"] and "/" not in d["name"] and len(d["name"]) <= 255
+    stored = list(box.originals_dir.iterdir())
+    assert len(stored) == 1 and stored[0].parent == box.originals_dir and len(stored[0].name) <= 120

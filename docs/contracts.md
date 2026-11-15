@@ -929,7 +929,8 @@ is_leaf}`. Ids are `doc-%06d` (`seq` is an AUTOINCREMENT, so an id is never reus
   override it (`add_bytes(..., site=)`, used by table connectors).
 - A child inherits its parent's `meta` keys that it does not have.
 - `flags`, fixed names: `no_text_layer` (from `meta.no_text_layer == "true"`), `encrypted` (from
-  `meta.encrypted == "true"`), `unreadable` (the inbox sets it when `read_any` raises). A flagged document is held by
+  `meta.encrypted == "true"`), `unreadable` (the inbox sets it when `read_any` raises, and the adapter sets it when
+  a reader marks an attachment with `meta.unreadable == "true"` or a non-empty `meta.error` instead of raising). A flagged document is held by
   `runner.pipeline.process_document` with a plain reason and is **never sent to LEARN**
   (`PageHooks.maybe_learn`). For `unreadable` the error text is in `meta.error` (what the pipeline reads) and
   `meta.problem`.
@@ -941,7 +942,10 @@ is_leaf}`. Ids are `doc-%06d` (`seq` is an AUTOINCREMENT, so an id is never reus
 - Store `$PATCHWORK_WORKSPACE/documents.db`; originals under `$PATCHWORK_WORKSPACE/documents/` (never logged).
 - `add_bytes(data, name, content_type, integration, received_at=None, site=None, meta=None)` reads, stores the parent
   and children in one transaction and returns the parent record plus `leaves: [ids]` and `duplicate`. The same
-  bytes (`sha256`) for one integration return the existing record with `duplicate: true` and store nothing.
+  bytes (`sha256`) for one integration return the existing record with `duplicate: true` and store nothing; a unique
+  index on `(integration, sha256)` for parents makes two simultaneous uploads one document. The insert is one
+  transaction (`BEGIN IMMEDIATE`), so a parent never exists without its leaves. The stored file name is bounded (no
+  directory part, no NUL, at most 100 characters on disk).
 - `list(since, limit, integration, leaves_only=True)`, `get`, `summaries`, `count`, `clear(integration=None)`,
   `add_learn`/`learns` (learn threads of documents, keyed by document id).
 - `control.inboxes.inbox_for(record_id)` returns the page inbox for `pg-…` and the document inbox for `doc-…`
@@ -1138,8 +1142,20 @@ stdlib and `runner/` only, no network, no AI, no subject words.
   `record` event per Outcome; counts are per Outcome. The cursor moves once per document. The circuit breaker counts
   consecutive `SINK_CONTRACT` Outcomes and is checked after each document. `NEW_SOURCE_FORMAT` counts only
   document-level (or record-level) `PARSE_NO_MATCH` Outcomes, as before.
-- **`Store.quarantined_raw(name, id_field="id")`** (the replay input) groups the latest live outcomes by the raw
-  record's `id_field` (record ids `<id>` and `<id>#<n>`) and returns each document once when any outcome of its
-  latest run is quarantined. `runner.run.run` passes `id_field=integ.RECORD_ID` (the spec's `source.record_id`).
-  Rows written by a later run supersede an earlier document-level hold. Records whose raw has no such field are one
-  group per record id, as before.
+- **Outcomes per document.** `runner.store.document_key(record_id)` maps `<id>#<n>` to `<id>` (any other id is its
+  own document). `Store.latest_outcomes_by_document(name, id_field="id")` groups the latest live outcomes by document
+  (the raw record's `id_field` when it has one, else `document_key`) and keeps only the outcomes of the document's
+  **latest run**: rows written later supersede an earlier document-level hold, and a later hold supersedes earlier
+  rows. `summarize_document(rows)` turns one document's outcomes into one record with the document's id: `status`
+  `quarantined` (with the first held row's reason, and detail `row <n>: …`) when any row is held, else `duplicate`
+  when every row is a duplicate, else `success`, plus `rows: {success, duplicate, quarantined}`; a plain record
+  (`<id>`) is returned unchanged, so one-record pages and v1 read exactly as before.
+  `Store.latest_document_outcomes` is that, per document (the bench accuracy endpoint scores it).
+- **The tracker** (`control/tracker.py`) reports a page's row from `summarize_document`: a page whose rows were all
+  written is `success` (label `code`, or `learned_now` when the parser was learned from it), all duplicates is
+  `duplicate`, any held row or a document-level hold is `held`; the tracker row gains `rows: {success, duplicate,
+  quarantined}` for a document with rows (absent otherwise).
+- **`Store.quarantined_raw(name, id_field="id")`** (the replay input) uses `latest_outcomes_by_document` and returns
+  each document once when any outcome of its latest run is quarantined. `runner.run.run` passes
+  `id_field=integ.RECORD_ID` (the spec's `source.record_id`). Records whose raw has no such field are grouped by
+  `document_key`.
