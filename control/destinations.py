@@ -9,6 +9,7 @@ here, never shown: errors carry the credential's name and the destination's own 
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -253,9 +254,18 @@ def airtable_tables(base_id: str, credential: str) -> list[dict[str, str]]:
     return [{"id": t.get("id"), "name": t.get("name")} for t in tables]
 
 
+# Airtable's token list shows a token's ID (pat + 14 characters). The token itself is that ID, a dot and a secret,
+# and Airtable shows it only once, when the token is created or regenerated.
+_AIRTABLE_TOKEN_ID = re.compile(r"^pat[A-Za-z0-9]{14}$")
+
+
 def _airtable_message(code: str, detail: str, credential: str) -> str:
     detail = _safe(detail, credential)
     if code == "AUTH":
+        if _AIRTABLE_TOKEN_ID.match((os.environ.get(credential or "") or "").strip()):
+            return (f"{detail}. {credential} looks like the token's ID, not the token: copy the full value (it has a "
+                    "dot and a long secret after the ID) that Airtable shows when you create or regenerate the token, "
+                    "then set it again under Credentials.")
         return f"{detail}. Check the token's value and that it can read this base's schema (scope schema.bases:read)."
     if code == "SINK_CONTRACT":
         return f"{detail}. Check the base and table names."

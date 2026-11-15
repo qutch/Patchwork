@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-14, by the lead (Claude), after the G4–G7 handoff.
+Last updated: 2026-11-14, by the lead (Claude), after the Airtable token-ID hint.
 
 ## What Patchwork is
 
@@ -150,6 +150,9 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 - **Plan A, wizard lane 3 (Tasks 10–11):** Home, IntegrationPage, NewIntegration wizard, ReviewTable,
   CredentialsDrawer. The review table hides Skip on required fields, picks choices from a list, and checks typed
   numbers, dates and links the way the backend does.
+- **Airtable token-ID hint:** if Airtable rejects `AIRTABLE_TOKEN` and the stored value is only the token's ID
+  (`pat` + 14 characters, no dot), the destination check says so. Airtable's token list shows the ID; the token
+  itself (ID, dot, secret) is shown only once, when the token is created or regenerated.
 - **Generalized input G1–G3 (lane G, contracts V18):**
   - the `rows` parser shape (table, css and lines selects);
   - cleaners;

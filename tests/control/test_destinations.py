@@ -112,6 +112,23 @@ def test_rejected_credential_says_what_to_do(fake_airtable_rejecting, client, dr
     assert client.get(f"/api/integrations/{draft}/draft").json()["destination"] is None
 
 
+def test_a_token_id_instead_of_the_token_is_named(fake_airtable_rejecting, client, draft, monkeypatch):
+    # Airtable's token list shows the token's ID (pat + 14 characters); the token itself adds a dot and a secret
+    monkeypatch.setenv("AIRTABLE_TOKEN", "patAbCdEfGhIjKlMn")
+    r = put_destination(client, draft, {"kind": "airtable", "base_id": BASE_ID, "table": TABLE,
+                                        "credential": "AIRTABLE_TOKEN"})
+    detail = r.json()["detail"]
+    assert r.status_code == 422 and "looks like the token's ID" in detail and "patAbCdEfGhIjKlMn" not in detail
+    r = client.get(f"/api/destinations/airtable/tables?base_id={BASE_ID}&credential=AIRTABLE_TOKEN")
+    assert r.status_code == 422 and "looks like the token's ID" in r.json()["detail"]
+
+
+def test_a_full_token_that_is_rejected_gets_no_id_hint(fake_airtable_rejecting, client, draft):
+    r = put_destination(client, draft, {"kind": "airtable", "base_id": BASE_ID, "table": TABLE,
+                                        "credential": "AIRTABLE_TOKEN"})
+    assert r.status_code == 422 and "token's ID" not in r.json()["detail"]
+
+
 def test_missing_table_names_the_tables(fake_airtable, client, draft):
     r = put_destination(client, draft, {"kind": "airtable", "base_id": BASE_ID, "table": "Nope",
                                         "credential": "AIRTABLE_TOKEN"})
