@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-14, by the lead (Claude), after the wizard started showing agent questions.
+Last updated: 2026-11-14, by Satvik's agent, after G4–G7 (documents inbox, LEARN on documents, tables proof).
 
 ## What Patchwork is
 
@@ -160,6 +160,18 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   - cleaners;
   - cross-checks (`sum_equals`, `product_equals`, `count_equals`);
   - `process_document`: one document → many records, checks run before any write.
+- **Generalized input G4–G7 (contracts V17, V18):**
+  - G4: the document inbox (`control/documents.py`, `control/inboxes.py`, `POST/GET /api/documents`, SSE stream; a
+    multipart upload parsed with the stdlib, so no new dependency). `is_document_spec`; the page hooks, run on
+    arrival and the learn trigger work for either inbox; a flagged document is never learned.
+  - G5: LEARN checks for documents and rows (`document_outline`, `run_document_parser`, `rows_checks`, document
+    evidence, `check_candidate`, per-row golden `expect.rows`). A document auto-deploys only when a declared
+    cross-check passed on it.
+  - G6: the document prompt, the scripted `propose_rows_parser` (table, else `lines`), `TOOL_DOCS` for the learn
+    tools, `tests/test_no_domain_words.py`.
+  - G7: `fixtures/tables/` and `tests/control/test_rows_e2e.py`: a CSV becomes one row per data row (a re-upload
+    writes nothing), a file or page that does not fit is held with nothing written, a new page layout is learned
+    once and its rows written. Real control plane, compiler and runner subprocess, SQLite destination, no model.
 - **Last full verification** (2026-11-14): 831 passed, 9 skipped; both smokes OK; web 129 tests, typecheck and build
   OK.
 
@@ -167,7 +179,10 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 
 - **Plan A Task 9** (lead's agent): the three-domain end-to-end smoke. Products → Airtable, events → a form,
   papers → an API, via `smoke_v2.py --new-integration <domain>`. Not on `main` yet.
-- **Satvik:** teammate Task 1 (`fixtures/emails/`), Task 2 (`runner/documents.py`), then **G4–G7**.
+- **Satvik:** teammate Task 1 (`fixtures/emails/`) and Task 2 (`runner/documents.py`, which adds `pypdf` and
+  `openpyxl`). G4–G7 are done against a stand-in reader (`tests/control/standin_readers.py`); once Task 2 lands, run
+  `tests/control/test_rows_e2e.py` again: its real-reader variants, the `.xlsx` test and the HTML-table page test
+  skip until then and have never been run.
 
 ### Next
 
@@ -198,8 +213,12 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 ## Known gaps (deferred; fix when you touch the area)
 
 - **Rows and documents:**
-  - `store.latest_outcomes` keys on record id, so one document can show both as held and as written rows. Group by
-    document (G4).
+  - `runner/documents.py` does not exist yet (teammate Task 2). `POST /api/documents` answers 503 without it, and
+    `rows.py` cannot read a `table` select from a plain page record (a document record carries its `tables`).
+  - The scripted agent proposes `table` and `lines` selects only, never `css`; a page record has no `tables`, so a page
+    layout is learned through `lines` over its text (an HTML table puts one cell on each text line: needs the reader).
+  - `store.latest_outcomes` keys on record id, so one document can show both as held and as written rows. The
+    document inbox groups by document id, but the outcomes the tracker shows still do not.
   - Table selects have no `skip`, so "Tax"/"Shipping" footers hold the document.
   - A real row equal to the sum of the others is held.
   - `lines` without `after` needs blank or skipped lines above the first item.

@@ -1,0 +1,38 @@
+spec_version: 1
+name: people_rows
+intent: "Copy every row of an uploaded sheet into the People table"
+source:
+  kind: api
+  base_url: patchwork://control
+  list: {method: GET, path: /api/documents, params: {since: "{cursor}", integration: people_rows}}
+  record_id: id
+  text_field: text
+  html_field: html
+  cursor_field: seq
+extract:
+  route_by: site
+  parsers:
+    - id: sheet
+      match: {site: upload}
+      fields:
+        file: {json_path: "$.name"}
+      rows:
+        select: {table: {columns: [Name, Team]}}
+        fields:
+          name: {column: Name}
+          team: {column: Team}
+          age: {column: Age, cast: int}
+validate:
+  - {field: file, rule: required}
+  - {field: age, rule: positive_int}
+dedupe: {key: [name, team]}
+sink:
+  kind: sqlite
+  path: people.db
+  table: People
+  fields:
+    Name: {from: name}
+    Team: {from: team}
+    Age: {from: age}
+    File: {from: file}
+  verify: {read_back: true}
