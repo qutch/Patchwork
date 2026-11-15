@@ -1704,16 +1704,21 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             except Exception:  # noqa: BLE001 - untyped goldens fail the compile's contract test, said there
                 typed_props = {}
         by_field = {vs["from"]: k for k, vs in old_body.items() if "from" in vs and "transform" not in vs}
+        by_source = {source_key(vs): k for k, vs in old_body.items()}  # the same source under a new name (a rename)
         examples = _yload(path.read_text()) or []
         changed, problems = 0, []
+        nested = not is_label_keyed(new_spec)  # an API body: compare by dotted path, write it nested again
         for ex in examples:
             body = ex.get("expect", {}).get("body")
             if body is None:
                 continue
+            flat = body_to_dotted(body) if nested else body
             out = {}
             for k, vs in new_body.items():
-                if "from" in vs and "transform" not in vs and vs["from"] in by_field and by_field[vs["from"]] in body:
-                    out[k] = body[by_field[vs["from"]]]
+                if by_source.get(source_key(vs)) in flat:
+                    out[k] = flat[by_source[source_key(vs)]]
+                elif "from" in vs and "transform" not in vs and vs["from"] in by_field and by_field[vs["from"]] in flat:
+                    out[k] = flat[by_field[vs["from"]]]
                 else:
                     try:
                         out[k] = eval_value(vs, {}, ex["record"])
@@ -1723,6 +1728,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                             out[k] = typing.convert_values(typed_props, {k: out[k]}, drop_empty=False)[k]
                     except (Quarantine, KeyError, ValueError, TypeError) as e:
                         problems.append(f"{ex['name']}.{k}: {e}")
+            if nested:
+                out = dotted_to_body(out)
             if out != body:
                 ex["expect"]["body"] = out
                 changed += 1
@@ -2061,6 +2068,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             except (KeyError, ValueError, TypeError, Quarantine) as e:
                 return f"ERROR: cannot compute {k} for the golden example: {e}"
             body[k] = str(v) if sink_kind(new) == "form" and v is not None else v
+        if not is_label_keyed(new):  # an API body is nested: `venue.name` is sent as {"venue": {"name": ...}}
+            body = dotted_to_body(body)
         if _typing_module(sink_kind(new)) is not None:  # typed per the active version's table snapshot (V14, V16)
             try:
                 convert_body = _typing_module(sink_kind(new)).convert_body

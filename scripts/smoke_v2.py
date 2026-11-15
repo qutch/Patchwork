@@ -26,6 +26,16 @@ repair -> approve -> the held posting is written -> rows confirmed in the form. 
 Pages are posted from fixtures/postings exactly as the extension would send them (URL, document.title, rendered DOM).
 With --in-process (or --bootstrap) it first builds the baseline the stage needs: TEACH from `fixture-jobs` (Lever),
 learn Greenhouse and Ashby from one posting each, save it with /api/demo/v2/save-baseline.
+
+    python scripts/smoke_v2.py --new-integration products --in-process   # plan A Task 9: one wizard flow, three
+    python scripts/smoke_v2.py --new-integration events --in-process     # unrelated domains (products -> fake
+    python scripts/smoke_v2.py --new-integration papers --in-process     # Airtable, events -> fixture form,
+                                                                         # papers -> fake papers API)
+
+--new-integration walks the New integration wizard over HTTP on an own stack (scripted agent, fakes, free ports):
+1 new draft -> 2 destination -> 3 post 2 example pages from two sites -> 4 teach -> 5 approve the review -> 6 rows
+confirmed in the destination -> 7 a page from a third site is learned by LEARN -> 8 a destination field is renamed:
+the next page is held before any write, repaired, approved and written under the new name.
 """
 
 from __future__ import annotations
@@ -350,6 +360,414 @@ class Smoke:
         self.beat("9 rows confirmed", confirm)
 
 
+# ---- the New integration wizard, three unrelated domains (plan A Task 9) ----------------------------------------
+
+def _dotted(row: dict, path: str) -> Any:
+    cur: Any = row
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def _same(got: Any, want: Any) -> bool:
+    if isinstance(want, (int, float)) or isinstance(got, (int, float)):
+        try:
+            return float(got) == float(want)
+        except (TypeError, ValueError):
+            return False
+    return _norm(got) == _norm(want)
+
+
+class WizardDestination:
+    """A fake destination the smoke reads back and changes: `rows()` as dicts (nested for an API), `rename()` one
+    field the way its owner would."""
+    kind = ""
+
+    def __init__(self, url: str):
+        self.url = url.rstrip("/")
+
+    def destination(self) -> dict:
+        raise NotImplementedError
+
+    def rows(self) -> list[dict]:
+        raise NotImplementedError
+
+    def rename(self, old: str, new: str) -> None:
+        raise NotImplementedError
+
+    def _post(self, path: str, body: dict) -> None:
+        r = httpx.post(self.url + path, json=body, timeout=10)
+        check(r.status_code == 200, f"{self.kind} {path} -> {r.status_code} {r.text[:200]}")
+
+
+class AirtableWizardDestination(WizardDestination):
+    kind = "fake Airtable"
+
+    def destination(self) -> dict:
+        from demo_apps.fake_airtable.app import BASE_ID, TABLE
+        return {"kind": "airtable", "base_id": BASE_ID, "table": TABLE, "credential": "AIRTABLE_TOKEN"}
+
+    def rows(self) -> list[dict]:
+        from demo_apps.fake_airtable.app import TABLE
+        return httpx.get(f"{self.url}/admin/records", params={"table": TABLE}, timeout=10).json()
+
+    def rename(self, old: str, new: str) -> None:
+        from demo_apps.fake_airtable.app import TABLE
+        self._post("/admin/rename", {"table": TABLE, "from": old, "to": new})
+
+
+class FormWizardDestination(WizardDestination):
+    kind = "fixture form"
+
+    def destination(self) -> dict:
+        return {"kind": "form", "url": self.url + "/"}
+
+    def rows(self) -> list[dict]:
+        return httpx.get(f"{self.url}/admin/rows", timeout=10).json()
+
+    def rename(self, old: str, new: str) -> None:
+        self._post("/admin/rename", {"from": old, "to": new})
+
+
+class ApiWizardDestination(WizardDestination):
+    kind = "fake papers API"
+
+    def destination(self) -> dict:
+        return {"kind": "api", "base_url": self.url, "operation": {"method": "POST", "path": "/papers"}}
+
+    def rows(self) -> list[dict]:
+        return httpx.get(f"{self.url}/papers", timeout=10).json()
+
+    def rename(self, old: str, new: str) -> None:
+        self._post("/admin/rename", {"from": old, "to": new})
+
+
+class Domain:
+    """One domain of the wizard smoke: its fixture pages, the destination they go to, what each row must hold,
+    which destination field gets renamed, and how a person answers TEACH's questions."""
+
+    def __init__(self, key: str, *, intent: str, fixtures: str, teach: list[str], learn: str, after_rename: str,
+                 rename: tuple[str, str], expect: Callable[[dict], dict[str, Any]], answers: dict[str, str] | None = None):
+        self.key, self.intent, self.fixtures = key, intent, fixtures
+        self.teach, self.learn, self.after_rename, self.rename = teach, learn, after_rename, rename
+        self.expect_of, self.answers = expect, answers or {}
+
+    @property
+    def pages(self) -> Any:
+        import importlib
+        return importlib.import_module(f"fixtures.{self.fixtures}.pages")
+
+    def page(self, file: str) -> dict[str, str]:
+        """The body the extension sends: URL, document.title, rendered DOM."""
+        from runner.html import css_first
+        html = self.pages.html(file)
+        return {"url": self.pages.PAGES[file]["url"], "title": css_first(html, "title") or "", "html": html}
+
+    def expect(self, file: str, renamed: bool = False) -> dict[str, Any]:
+        want = self.expect_of(self.pages.PAGES[file]["expected"])
+        old, new = self.rename
+        return {(new if renamed and k == old else k): v for k, v in want.items()}
+
+    def answer(self, question: str, options: list[str]) -> tuple[str, str]:
+        """A person answering TEACH's question: the option the domain names for that field, else skip it."""
+        for field, want in self.answers.items():
+            if f"'{field}'" in question:
+                for o in options:
+                    if want in o:
+                        return o, f"picked the option reading {want}"
+        if "Skip this field" in options:
+            return "Skip this field", "skipped it"
+        return (options[0], "first option") if options else ("Skip this field", "skipped it")
+
+    def start(self) -> Any:
+        """Context manager: the fake destination on a free port (and its credential for Airtable)."""
+        import contextlib
+
+        from bench.stack import Server
+
+        @contextlib.contextmanager
+        def run() -> Any:
+            old = {k: os.environ.get(k) for k in ("PATCHWORK_AIRTABLE_API_URL", "AIRTABLE_TOKEN")}
+            try:
+                if self.key == "products":
+                    from demo_apps.fake_airtable.app import TOKEN, create_app
+                    with Server(create_app(fields=self.pages.AIRTABLE_FIELDS)) as srv:
+                        os.environ["PATCHWORK_AIRTABLE_API_URL"] = srv.url + "/v0"
+                        os.environ["AIRTABLE_TOKEN"] = TOKEN  # the control plane's .env; never printed
+                        yield AirtableWizardDestination(srv.url)
+                elif self.key == "events":
+                    from demo_apps.tracker_form.app import create_app as form_app
+                    p = self.pages
+                    with Server(form_app(questions=p.FORM_QUESTIONS, title=p.FORM_TITLE, blurb=p.FORM_BLURB)) as srv:
+                        yield FormWizardDestination(srv.url)
+                else:
+                    from demo_apps.fake_papers_api.app import create_app as api_app
+                    with Server(api_app()) as srv:
+                        yield ApiWizardDestination(srv.url)
+            finally:
+                for k, v in old.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+
+        return run()
+
+
+DOMAINS: dict[str, Domain] = {
+    "products": Domain(
+        "products", intent="Track product prices", fixtures="products",
+        teach=["shop-a.html", "shop-b.html"], learn="shop-c.html", after_rename="shop-a-2.html",
+        rename=("Product", "Product Name"),
+        expect=lambda e: {"Product": e["name"], "Price": float(e["price"])}),
+    "events": Domain(
+        "events", intent="Collect events I want to go to", fixtures="events",
+        teach=["city-hall.html", "riverside-arts.html"], learn="night-owl.html", after_rename="city-hall-2.html",
+        rename=("Event Name", "Event Title"),
+        expect=lambda e: {"Event Name": e["name"], "Starts": e["starts"], "Location": e["location"]},
+        answers={"Starts": "startDate"}),
+    "papers": Domain(
+        "papers", intent="Collect papers to read", fixtures="papers",
+        teach=["archive-a.html", "proceedings-b.html"], learn="preprints-c.html", after_rename="archive-a-2.html",
+        rename=("title", "paper_title"),
+        expect=lambda e: {"title": e["title"], "year": e["year"], "venue.name": e["venue"]}),
+}
+
+
+class NewIntegrationSmoke(Smoke):
+    """The wizard flow for one domain, over HTTP like the UI and the extension: every beat asserted."""
+
+    def __init__(self, c: Control, dest: WizardDestination, domain: Domain, *, timeout: float):
+        self.c, self.dest, self.domain, self.timeout, self.agent = c, dest, domain, timeout, "scripted"
+        self.timings = []
+        self.name = ""
+        self.links: dict[str, str] = {}
+        self.sites: set[str] = set()
+
+    # -- helpers --------------------------------------------------------------------------------
+    def post(self, file: str) -> dict:
+        resp = self.c.post_page({**self.domain.page(file), "integration": self.name})
+        check(resp.get("integration") == self.name, f"{file}: page not routed to {self.name}: {resp}")
+        self.links[file] = resp.get("canonical_url") or ""
+        return resp
+
+    def events(self, tid: str) -> list[dict]:
+        """A finished agent thread's events (read from its event stream, as the UI does)."""
+        import json
+        out: list[dict] = []
+        with self.c.api.stream("GET", f"/api/agent/{tid}/stream", params={"after": 0}, timeout=30) as r:
+            for line in r.iter_lines():
+                if line.startswith("data: "):
+                    out.append(json.loads(line[6:]))
+        return out
+
+    def result(self, tid: str) -> dict:
+        """The `done` event's result of a finished agent thread."""
+        return next((e.get("result") or {} for e in reversed(self.events(tid)) if e.get("type") == "done"), {})
+
+    def why(self, row: dict) -> str:
+        """What the row's learn thread said when it ended without a parser (for a failing beat)."""
+        tid = row.get("learn_thread_id")
+        if not tid:
+            return "no learn thread was started"
+        errs = [e.get("message") for e in self.events(tid) if e.get("type") == "error"]
+        return f"learn thread {tid}: " + ("; ".join(map(str, errs)) or self.c.thread(tid).get("state", "?"))
+
+    def wait_thread(self, tid: str, want: set[str]) -> dict:
+        try:
+            return self.c.wait_thread(tid, want, self.timeout)
+        except Fail:
+            errs = [str(e.get("message")) for e in self.events(tid) if e.get("type") == "error"]
+            raise Fail(f"agent thread {tid} failed: {'; '.join(errs) or 'no error event'}") from None
+
+    def drive(self, tid: str, asked: list | None = None) -> dict:
+        """Answer the agent like a person (Domain.answer) and approve its deploy request."""
+        for _ in range(12):
+            s = self.wait_thread(tid, {"waiting", "done"})
+            if s["state"] == "done":
+                res = self.result(tid)
+                return {"version": res.get("version"), "approved_by": "auto", "result": res}
+            p = s["pending"]
+            if p["type"] == "ask_user":
+                ans, how = self.domain.answer(p.get("question", ""), p.get("options") or [])
+                if asked is not None:
+                    asked.append((p.get("question"), ans, how))
+                self.c.post(f"/api/agent/{tid}/resume", {"interrupt_id": p["interrupt_id"], "answer": ans}, ok=(200,))
+                continue
+            tests = p.get("tests") or {}
+            check(tests.get("passed", True), f"generated tests failed: {tests}")
+            self.c.post(f"/api/agent/{tid}/resume", {"interrupt_id": p["interrupt_id"], "decision": "approve"}, ok=(200,))
+            self.wait_thread(tid, {"done"})
+            return {"version": p.get("version"), "approved_by": "human", "review": p.get("review") or [],
+                    "result": self.result(tid)}
+        raise Fail(f"thread {tid}: too many questions")
+
+    def find(self, file: str, renamed: bool = False) -> dict:
+        """The destination row that holds this page's values (and its address, where the destination keeps it)."""
+        want = self.domain.expect(file, renamed)
+        rows = self.dest.rows()
+        hits = [r for r in rows if all(_same(_dotted(r, k), v) for k, v in want.items())]
+        check(hits, f"{file}: no {self.dest.kind} row holds {want}; rows: {rows}")
+        row = hits[-1]
+        if "Link" in row:
+            check(_norm(row["Link"]) == _norm(self.links[file]), f"{file}: Link {row['Link']!r} != {self.links[file]!r}")
+        return row
+
+    def written(self, file: str, page_id: str) -> dict:
+        row = self.c.wait_row(page_id, timeout=self.timeout, until={"success", "failed", "duplicate"})
+        check(row["status"] == "success", f"{file}: status {row['status']} ({row.get('reason')}: {row.get('detail')})")
+        return row
+
+    # -- the beats ------------------------------------------------------------------------------
+    def run(self) -> None:
+        d, state = self.domain, {}
+
+        def new() -> str:
+            out = self.c.post("/api/integrations/new", {"intent": d.intent}, ok=(201,))
+            self.name = out["name"]
+            check(out.get("state") == "draft", f"new integration is {out.get('state')!r}, want 'draft'")
+            return f"draft {self.name!r} from intent {d.intent!r}"
+
+        self.beat("1 new integration", new)
+
+        def destination() -> str:
+            got = self.c.put(f"/api/integrations/{self.name}/destination", self.dest.destination())
+            fields = [f["name"] for f in got.get("fields") or []]
+            check(fields, f"the destination lists no fields: {got}")
+            return f"{got.get('kind')} {got.get('title')!r}: {', '.join(fields)}"
+
+        self.beat("2 destination", destination)
+
+        def pages() -> str:
+            posted = [self.post(f) for f in d.teach]
+            state["examples"] = [p["id"] for p in posted]
+            sites = [p.get("site") for p in posted]
+            check(len(set(sites)) == len(d.teach), f"example pages are not from {len(d.teach)} sites: {sites}")
+            self.sites = set(sites)
+            draft = self.c.get(f"/api/integrations/{self.name}/draft")
+            return f"{len(state['examples'])} pages ({', '.join(sites)}); draft {draft.get('state')}"
+
+        self.beat("3 post 2 example pages", pages)
+
+        def teach() -> str:
+            state["thread"] = self.c.post(f"/api/integrations/{self.name}/teach",
+                                          {"page_ids": state["examples"]}, ok=(200,))["thread_id"]
+            draft = self.c.get(f"/api/integrations/{self.name}/draft")
+            check(draft.get("state") == "teaching", f"draft is {draft.get('state')!r} after teach, want 'teaching'")
+            return f"thread {state['thread']}"
+
+        self.beat("4 teach from the examples", teach)
+
+        def approve() -> str:
+            asked: list = []
+            out = self.drive(state["thread"], asked)
+            check(out["approved_by"] == "human", f"TEACH deployed without a person's approval: {out}")
+            review = out.get("review") or []
+            check(review, "the deploy request has no review rows")
+            res = out.get("result") or {}
+            check(res.get("deployed") is True, f"TEACH did not deploy: {res}")
+            check((res.get("model_calls") or 0) == 0, f"scripted TEACH reported {res.get('model_calls')} model calls")
+            draft = self.c.get(f"/api/integrations/{self.name}/draft")
+            check(draft.get("state") == "live", f"draft is {draft.get('state')!r} after deploy, want 'live'")
+            mapped = [r["dest_field"] for r in review if not (r.get("source") or {}).get("skip")]
+            said = "".join(f"; asked {q!r} -> {a!r}" for q, a, _ in asked)
+            return f"v{out['version']} approved; {len(review)} review rows, mapped {', '.join(mapped)}{said}"
+
+        self.beat("5 approve", approve)
+
+        def confirmed() -> str:
+            for f, pid in zip(d.teach, state["examples"]):
+                self.written(f, pid)
+                self.find(f)
+            n = len(self.dest.rows())
+            check(n == len(d.teach), f"{n} rows in the {self.dest.kind}, want {len(d.teach)}")
+            return f"{n} rows in the {self.dest.kind}: " + "; ".join(
+                ", ".join(f"{k}={v!r}" for k, v in d.expect(f).items()) for f in d.teach)
+
+        self.beat("6 rows confirmed", confirmed)
+
+        def learned() -> str:
+            resp = self.post(d.learn)
+            asked: list = []
+
+            def on_pending(tid: str, s: dict) -> None:
+                asked.append((s.get("pending") or {}).get("type"))
+                self.drive(tid)
+
+            row = self.c.wait_row(resp["id"], timeout=self.timeout, on_pending=on_pending)
+            check(row["status"] == "success", f"{d.learn}: status {row['status']} ({row.get('reason')}: "
+                                              f"{row.get('detail')}); {self.why(row)}")
+            check(row.get("label") == "learned_now", f"label {row.get('label')!r}, want 'learned_now'")
+            check(row.get("learn_thread_id"), "no learn thread on the learned row")
+            check((row.get("ai_calls") or 0) == 0, f"scripted LEARN reported {row.get('ai_calls')} AI calls")
+            self.find(d.learn)
+            n = len(self.dest.rows())
+            check(n == len(d.teach) + 1, f"{n} rows after the learned page, want {len(d.teach) + 1}")
+            o = row.get("parser_origin") or {}
+            check(resp.get("site") not in self.sites, f"{d.learn} is from a site TEACH already saw: {resp.get('site')}")
+            return (f"{resp.get('site')} learned_now, 0 AI calls, "
+                    f"parser {row.get('parser')} v{row.get('version')} approved_by {o.get('approved_by')}"
+                    + (f"; asked a person: {asked}" if asked else ""))
+
+        self.beat("7 a third site: learned by LEARN", learned)
+
+        def renamed() -> str:
+            old, new = d.rename
+            before = len(self.dest.rows())
+            self.dest.rename(old, new)
+            resp = self.post(d.after_rename)
+            row = self.c.wait_row(resp["id"], timeout=self.timeout)
+            check(row["status"] == "held", f"status {row['status']} ({row.get('reason')}), want held before any write")
+            check(len(self.dest.rows()) == before, "a row was written after the rename; want none before the repair")
+            inc_id = row.get("incident_id")
+            if not inc_id:
+                incs = [i for i in self.c.get("/api/incidents", params={"status": "open"})
+                        if i.get("type") == "CONTRACT_CHANGED" and i.get("integration") == self.name]
+                check(incs, "no open CONTRACT_CHANGED incident")
+                inc_id = incs[0]["id"]
+            inc = self.c.get(f"/api/incidents/{inc_id}")
+            check(inc.get("type") == "CONTRACT_CHANGED", f"incident #{inc_id} is {inc.get('type')}")
+            errs = (inc.get("detail") or {}).get("contract_errors") or []
+            check(any(old in e for e in errs), f"incident #{inc_id} does not name {old!r}: {errs}")
+            tid = self.c.post(f"/api/incidents/{inc_id}/repair", {}, ok=(200,))["thread_id"]
+            fixed = self.drive(tid)
+            row = self.written(d.after_rename, resp["id"])
+            self.find(d.after_rename, renamed=True)
+            check(len(self.dest.rows()) == before + 1, f"{len(self.dest.rows()) - before} rows after the repair, want 1")
+            return (f"{old!r} -> {new!r}: held (incident #{inc_id}), repaired to v{fixed.get('version')} "
+                    f"({fixed['approved_by']} approved), written under {new!r}")
+
+        self.beat("8 rename a destination field: held, repaired, written", renamed)
+
+
+def _in_process_new_integration(args: argparse.Namespace) -> int:
+    import shutil
+    import tempfile
+
+    from bench.v2.stack import V2Stack, missing
+
+    gaps = missing()
+    if gaps:
+        print("smoke-v2 --new-integration needs the integrated stack:", *gaps, sep="\n  - ", file=sys.stderr)
+        return 2
+    domain = DOMAINS[args.new_integration]
+    ws = args.workspace or Path(tempfile.mkdtemp(prefix="patchwork-smoke-new-"))
+    t0 = time.monotonic()
+    try:
+        with domain.start() as dest, V2Stack(ws) as st:
+            c = Control(st.control, timeout=120)
+            print(f"smoke-v2 new integration ({domain.key}): control {st.control}, {dest.kind} {dest.url}, "
+                  "scripted agent")
+            NewIntegrationSmoke(c, dest, domain, timeout=args.timeout).run()
+    finally:
+        if args.workspace is None:
+            shutil.rmtree(ws, ignore_errors=True)
+    print(f"\nsmoke-v2 new integration ({domain.key}) OK in {time.monotonic() - t0:.1f}s")
+    return 0
+
+
 def _agent_kind(c: Control) -> str:
     s = c.get("/api/settings")
     return "scripted" if (s.get("agent") or "scripted") == "scripted" else "deep"
@@ -371,10 +789,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--bootstrap", action="store_true", help="teach + learn the baseline first (implied by --in-process)")
     ap.add_argument("--workspace", type=Path, default=None)
     ap.add_argument("--timeout", type=float, default=float(os.environ.get("PATCHWORK_SMOKE_TIMEOUT", "120")))
+    ap.add_argument("--new-integration", choices=tuple(DOMAINS), default=None,
+                    help="walk the New integration wizard for one domain (needs --in-process)")
     args = ap.parse_args(argv)
 
     t0 = time.monotonic()
     try:
+        if args.new_integration:
+            if not args.in_process:
+                print("--new-integration runs on its own stack: add --in-process", file=sys.stderr)
+                return 2
+            return _in_process_new_integration(args)
         if args.in_process:
             return _in_process(args)
         c = Control(args.control)

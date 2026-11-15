@@ -84,24 +84,32 @@ class ScriptedV2Mixin:
     # ---- LEARN -------------------------------------------------------------------------------
     def propose_parser(self, rec: dict, spec: dict) -> dict | None:
         """The extractors a model would pick: per wanted field, the first candidate whose value is
-        evidenced, corroborated and unambiguous on this page. None if a field has no such candidate."""
+        evidenced, corroborated and unambiguous on this page; failing that, the first evidenced and unambiguous
+        one (its value is on the page but nowhere else, e.g. only in a `citation_*` meta tag: save_parser's D2
+        rule then has a person decide). None if a field has no evidenced, unambiguous candidate."""
         from agents.deep_tools import site_parser_id
         parsers = (spec.get("extract") or {}).get("parsers") or []
         wanted = [f for f in (parsers[0]["fields"] if parsers else {}) if all(f in p["fields"] for p in parsers)]
         html_field = (spec.get("source") or {}).get("html_field") or "html"
         fields = {}
         for name in wanted:
+            fallback = None
             for cand in CANDIDATES.get(name) or generic_candidates(name, spec, rec):
                 probe = {"id": "probe", "fields": {name: cand}}
                 out = learn.run_page_parser(probe, rec, html_field)
                 if "error" in out:
                     continue
                 ev = learn.evidence(rec, out, spec.get("validate") or [], parser=probe, html_field=html_field)
-                if ev[0]["ok"] and learn.corroborated(rec, out[name], html_field) and not learn.ambiguity(rec, probe, html_field):
+                if not ev[0]["ok"] or learn.ambiguity(rec, probe, html_field):
+                    continue
+                if learn.corroborated(rec, out[name], html_field):
                     fields[name] = cand
                     break
+                fallback = fallback or cand
             else:
-                return None
+                if fallback is None:
+                    return None
+                fields[name] = fallback
         return {"id": site_parser_id(rec.get("site") or ""), "fields": fields}
 
     def _run_learn(self, t: _Thread, page_id: str, integration: str) -> Any:
@@ -323,9 +331,11 @@ class ScriptedV2Mixin:
         return {"model_calls": 0, "seconds": round(time.monotonic() - t0, 1),
                 **(ctx.deploy_result or {"deployed": False, "version": version})}
 
-    # ---- REPAIR (form question renamed) --------------------------------------------------------
+    # ---- REPAIR (a destination field renamed) ----------------------------------------------------
     @staticmethod
     def _is_form_integration(name: str) -> bool:
+        """True when a CONTRACT_CHANGED incident of `name` is repaired by following renamed destination fields:
+        a form, Airtable or SQLite sink (V14, V16), or a page integration's API sink (the wizard's)."""
         import yaml
 
         from runner.store import Store, workspace_dir
@@ -333,11 +343,13 @@ class ScriptedV2Mixin:
         path = workspace_dir() / "integrations" / name / f"v{active}" / "spec.yaml"
         if not active or not path.exists():
             return False
-        from agents.deep_tools import is_label_keyed
-        return is_label_keyed(yaml.safe_load(path.read_text()) or {})  # form or Airtable (V14): same repair
+        from agents.deep_tools import is_label_keyed, is_page_integration
+        spec = yaml.safe_load(path.read_text()) or {}
+        return is_label_keyed(spec) or is_page_integration(spec)
 
     def _repair_form(self, t: _Thread, inc: dict) -> Any:
-        from agents.deep_tools import ToolContext, seed_repair_workdir, tool_functions
+        from agents.deep_tools import (ToolContext, _ptr, is_label_keyed, seed_repair_workdir, sink_kind,
+                                       sink_values_path, tool_functions)
         name = inc["integration"]
         seed_repair_workdir(name)
         ctx = ToolContext(self, t, name=name, incident_id=inc["id"])
@@ -347,13 +359,22 @@ class ScriptedV2Mixin:
                  {"content": "Compile and test the new version", "status": "pending"},
                  {"content": "Request deploy", "status": "pending"}]
         self.emit(t, "todos", todos=todos)
-        kind = (ctx.spec_dict().get("sink") or {}).get("kind", "form")
-        dest = {"airtable": "Airtable table", "sqlite": "SQLite table"}.get(kind, "form")
+        spec = ctx.spec_dict()
+        kind = sink_kind(spec)
+        dest = {"airtable": "Airtable table", "sqlite": "SQLite table", "api": "API"}.get(kind, "form")
         self.emit(t, "subagent_start", name="repairer", task=f"Incident #{inc['id']}: {inc['type']} ({kind})")
         self._call(t, "repairer", fns, "get_incident", incident_id=inc["id"])
         d = json.loads(self._call(t, "repairer", fns, "diff_openapi"))
         patch = list(d.get("patch_hint") or [])
-        base = "/sink/fields"
+        base = sink_values_path(spec)
+        if not is_label_keyed(spec):  # an API body: follow the renamed properties, ask nothing
+            if d.get("suggested_questions"):
+                raise RuntimeError("the API changed more than a rename: "
+                                   + "; ".join(q["question"] for q in d["suggested_questions"]))
+            values = d.get("current_sink_body") or {}
+            ptr = lambda dotted: base + "".join("/" + _ptr(p) for p in dotted.split("."))  # noqa: E731
+            patch = [{"op": "move", "from": ptr(old), "path": ptr(new)}
+                     for old, new in (d.get("likely_renames") or {}).items() if old in values]
         for q in d.get("suggested_questions") or []:
             ans = str(self.interrupt(t, "ask_user", question=q["question"], options=q.get("options") or []).get("answer", ""))
             old = q["field"]
@@ -368,8 +389,9 @@ class ScriptedV2Mixin:
         if not patch:
             raise RuntimeError("diff_openapi found nothing to patch")
         renames = ", ".join(f"{op['from'].rsplit('/', 1)[-1]} → {op['path'].rsplit('/', 1)[-1]}" for op in patch if op["op"] == "move")
-        what = {"airtable": "a field", "sqlite": "a column"}.get(kind, "a question")
-        self.emit(t, "message", agent="repairer", text=f"The {dest} renamed {what} ({renames or 'see patch'}). Patching sink.fields.")
+        what = {"airtable": "a field", "sqlite": "a column", "api": "a body field"}.get(kind, "a question")
+        self.emit(t, "message", agent="repairer", text=f"The {dest} renamed {what} ({renames or 'see patch'}). "
+                                                       f"Patching {base.strip('/').replace('/', '.')}.")
         todos[0]["status"], todos[1]["status"] = "completed", "in_progress"
         self.emit(t, "todos", todos=todos)
         out = self._call(t, "repairer", fns, "propose_spec_patch", patch=patch, reason="follow the form's question rename")
