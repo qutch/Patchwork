@@ -203,10 +203,11 @@ class ScriptedV2Mixin:
 
     # ---- TEACH from example pages (wizard approach A) -------------------------------------------
     def _map_examples(self, t: _Thread, ctx: Any, fns: dict, dest: dict[str, dict], pages: list[dict]) -> dict[str, dict]:
-        """The mapping a model would propose: the page's address for a url field, today for a date field, else
-        `learn.guess_reader` on the first page. A field nothing fills becomes a question to the person, with the
-        checked alternatives and "Skip this field" (skip is not offered for a required field)."""
-        from agents.deep_tools import _DATEISH, _URLISH, _field_name, review_alternatives, source_key
+        """The mapping a model would propose: the page's address for a url field, today for the date the person
+        did something (`Date Added`), else `learn.guess_reader` on the first page. A field nothing fills becomes a
+        question to the person, with the checked alternatives (today's date among them for a date field) and
+        "Skip this field" (skip is not offered for a required field)."""
+        from agents.deep_tools import _CAPTURE_WORDS, _URLISH, _field_name, review_alternatives, source_key
         first = pages[0]
         mapping: dict[str, dict] = {}
         taken: set[str] = set()
@@ -217,7 +218,7 @@ class ScriptedV2Mixin:
                 mapping[label] = {"skip": True}
             elif kind == "url" or words & _URLISH:
                 mapping[label] = {"record": "canonical_url"}
-            elif kind == "date" or words & _DATEISH:
+            elif words & _CAPTURE_WORDS:  # never a date printed on the page (a start, a release): read or ask
                 mapping[label] = {"today": True}
             else:
                 reader = learn.guess_reader(label, kind, first)

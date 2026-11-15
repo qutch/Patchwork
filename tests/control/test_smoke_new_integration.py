@@ -37,6 +37,9 @@ def test_new_integration_smoke(domain, tmp_path, capsys):
     assert "FAIL" not in captured.out
     assert f"new integration ({domain}) OK" in captured.out
     assert "learned_now, 0 AI calls" in ok[6]
+    # D2: the papers site's values are only in citation_* meta (not corroborated), so a person approves its parser;
+    # the product and event sites corroborate every value, so their parsers deploy automatically.
+    assert ok[6].split(" approved_by ")[1].split(";")[0] == ("human" if domain == "papers" else "auto"), ok[6]
     assert "held (incident #" in ok[7] and "written under" in ok[7]
 
 
@@ -47,7 +50,7 @@ def test_new_integration_needs_in_process(capsys):
 
 def test_teach_asks_and_the_person_picks_the_named_option():
     events = _smoke().DOMAINS["events"]
-    q = "Nothing on the first example page clearly fills 'Starts' (text). Where should it come from?"
+    q = "Nothing on the first example page clearly fills 'Start Date' (text). Where should it come from?"
     opts = ['page: meta[property="og:site_name"] (content)', "page: JSON-LD startDate (Event)", "Skip this field"]
     assert events.answer(q, opts)[0] == "page: JSON-LD startDate (Event)"
     other = "Nothing on the first example page clearly fills 'Store' (text). Where should it come from?"

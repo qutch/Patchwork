@@ -526,8 +526,8 @@ DOMAINS: dict[str, Domain] = {
         "events", intent="Collect events I want to go to", fixtures="events",
         teach=["city-hall.html", "riverside-arts.html"], learn="night-owl.html", after_rename="city-hall-2.html",
         rename=("Event Name", "Event Title"),
-        expect=lambda e: {"Event Name": e["name"], "Starts": e["starts"], "Location": e["location"]},
-        answers={"Starts": "startDate"}),
+        expect=lambda e: {"Event Name": e["name"], "Start Date": e["starts"], "Location": e["location"]},
+        answers={"Start Date": "startDate"}),
     "papers": Domain(
         "papers", intent="Collect papers to read", fixtures="papers",
         teach=["archive-a.html", "proceedings-b.html"], learn="preprints-c.html", after_rename="archive-a-2.html",

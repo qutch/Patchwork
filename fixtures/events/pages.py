@@ -37,9 +37,9 @@ PAGES: dict[str, dict[str, Any]] = {
                                       "location": "North Library Hall"}},
 }
 
-# The events form: "Starts" matches nothing by name, so TEACH asks a person where it comes from.
+# The events form: "Start Date" is a date printed on the page (JSON-LD startDate), never the day the page was sent.
 FORM_QUESTIONS = [{"label": lab, "required": lab == "Event Name"}
-                  for lab in ("Event Name", "Starts", "Location", "Link", "Date Added")]
+                  for lab in ("Event Name", "Start Date", "Location", "Link", "Date Added")]
 FORM_TITLE, FORM_BLURB = "Events to go to", "Every event I might go to, in one list."
 
 

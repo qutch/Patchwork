@@ -574,6 +574,9 @@ RECORD_SOURCES = {"canonical_url": "record.canonical_url", "url": "record.url", 
 TODAY = "record.captured_date"  # "today's date": the day the page was sent (the runner is AI-free and replayable)
 _URLISH = {"link", "url", "address", "page", "permalink", "href", "source"}
 _DATEISH = {"date", "day", "added", "when", "captured", "saved", "sent"}
+# A date of something the person did (when they sent the page) is today's date without asking. A date printed
+# on the page (a start, a release, a publication) is not: it is read from the page, or a person is asked.
+_CAPTURE_WORDS = {"added", "captured", "saved", "seen", "sent", "applied"}
 
 
 def is_examples_candidates(c: dict | None) -> bool:
