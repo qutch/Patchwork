@@ -41,8 +41,13 @@ def mount_ui(app: FastAPI, dist: Path | None = None) -> bool:
             await not_found(scope, receive, send)
             return
         rel = path.lstrip("/")
-        target = (root / rel).resolve() if rel else index
-        if target.is_relative_to(root) and target.is_file():
+        try:
+            target = (root / rel).resolve() if rel else index
+            servable = target.is_relative_to(root) and target.is_file()
+        except (ValueError, OSError):  # e.g. a NUL byte in the path: no such file
+            await not_found(scope, receive, send)
+            return
+        if servable:
             headers = {"Cache-Control": "no-cache"} if target == index else None
             await FileResponse(target, headers=headers)(scope, receive, send)
             return

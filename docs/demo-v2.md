@@ -51,9 +51,11 @@ Pre-flight (all must pass, in order):
 
 1. `./patchwork` is running (above). It uses the deep agent; if step 4 is slow, restart it on the scripted agent
    (see §3).
-2. Extension loaded, shortcut set (`chrome://extensions/shortcuts`, default `Alt+Shift+P`). Nothing to paste: it finds
-   Patchwork by itself (its options page says "Connected automatically to `<URL>`"). Press it once on a known posting
-   off camera: badge `✓`.
+2. Extension loaded, shortcut set (`chrome://extensions/shortcuts`, default `Alt+Shift+P`). Reload the extension
+   (`chrome://extensions` → Patchwork → reload), then click **Find Patchwork** once in its options: the installed
+   copy has `127.0.0.1:38091` saved as a manual address, and a saved address always wins. After that it finds
+   Patchwork by itself, with nothing to paste (its options page says "Connected automatically to `<URL>`"). Press the
+   shortcut once on a known posting off camera: badge `✓`.
 3. Learned layouts panel shows exactly lever, greenhouse, ashby (learned earlier, off camera, with times) and **not**
    careers.airbnb.com. Settings: AI on, learn policy `auto`.
 4. `make smoke-v2-stage` once, 60–30 minutes before the slot (`STAGE_PORT=<port> make smoke-v2-stage` if `<URL>` is
@@ -197,7 +199,7 @@ Fill the values from `bench/v2/results.json` after the final `make bench-v2`; th
 | Layouts learned and which postings triggered them | measured | `make bench-v2` (this run) |
 | Seconds per known posting (inbox → row) | measured | `make bench-v2`, fixture form (the Google Form adds ~1.3–2 s per submit, spike a) |
 | AI calls per learn | measured (earlier run) | deep-agent LEARN runs, `agents/README.md` (W3-7); `estimate` (the ≤ 8 design budget) until those exist |
-| Learn seconds on stage | measured (earlier run) | the pre-flight `make smoke-v2` timing of the learn beat |
+| Learn seconds on stage | measured (earlier run) | the pre-flight `make smoke-v2-stage` timing of the learn beat |
 | Browser-agent AI calls per posting | estimate | assumption on the chart and in `bench/v2/results.json` (≥ 1 model call per posting is a floor; we use a stated per-step count) |
 | Patchwork cumulative line past the 60 postings | extrapolated | flat unless a new layout arrives; only if the chart extends it |
 | v1 card: script silently dropped records, Patchwork caught 2/2 breaks | measured | `bench/results.json` (v1 `make bench`) |

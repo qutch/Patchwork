@@ -41,6 +41,7 @@ FALLBACK_PORTS = range(38092, 38111)
 RESERVED_PORTS = frozenset({8000, 8001, 8002, 8003, 5180})
 DEFAULT_WORKSPACE = REPO / "workspace-v2"
 PID_FILE, URL_FILE, LOG_FILE = "patchwork.pid", "patchwork.url", "patchwork.log"
+AI_RESTORE_FILE = "patchwork.ai-restore"  # --no-ai: the ai_enabled to put back when this run ends
 START_TIMEOUT_S = 60.0
 STOP_TIMEOUT_S = 10.0
 UI_INPUTS = ("src", "index.html", "package.json", "vite.config.ts")
@@ -110,13 +111,15 @@ def choose_port(preferred: int, fallback: Iterable[int], workspace: Path, *,
 
 
 def is_free(port: int, host: str = HOST) -> bool:
-    """Nothing answers on host:port, and we could listen there."""
+    """Nothing answers on host:port, and we could listen there the way uvicorn does (SO_REUSEADDR), so a socket left
+    in TIME_WAIT by the last stop does not count as taken. The connect check catches every listener."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.3)
         if s.connect_ex((host, port)) == 0:
             return False
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((host, port))
         return True
     except OSError:
@@ -216,15 +219,27 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def is_our_server(pid: int) -> bool:
-    """The pid is alive and is a control plane (not an unrelated process that reused the number)."""
-    if not pid_alive(pid):
+def is_our_server(pid: int, port: int | None) -> bool:
+    """The pid is alive and is the control plane this launcher started on `port` (its command line carries
+    `-m control.api ... --port <port>`), not an unrelated process that reused the number. If `ps` cannot say,
+    it is not ours."""
+    if port is None or not pid_alive(pid):
         return False
     try:
-        cmd = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True).stdout
-    except OSError:
-        return True
-    return "control.api" in cmd
+        done = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if done.returncode != 0:
+        return False
+    args = done.stdout.split()
+    return "control.api" in args and any(a == "--port" and b == str(port) for a, b in zip(args, args[1:]))
+
+
+def url_port(url: str | None) -> int | None:
+    try:
+        return int(str(url).rsplit(":", 1)[1].strip("/"))
+    except (IndexError, ValueError):
+        return None
 
 
 def clear_files(ws: Path, pid: int | None = None) -> None:
@@ -241,7 +256,7 @@ def clear_files(ws: Path, pid: int | None = None) -> None:
 def running(ws: Path) -> tuple[int, str] | None:
     """(pid, url) of the Patchwork this workspace's files name, if it is alive and answering."""
     pid, url = read_pid(ws), read_url(ws)
-    if pid is None or url is None or not is_our_server(pid):
+    if pid is None or url is None or not is_our_server(pid, url_port(url)):
         return None
     h = health(url)
     return (pid, url) if h and same_path(h["workspace"], ws) else None
@@ -266,13 +281,16 @@ def get_json(url: str, timeout: float = 1.0) -> dict | None:
     return body if isinstance(body, dict) else None
 
 
-def describe_ai(url: str) -> str:
-    """"on (deep agent, <model>)" from GET /api/settings (the model name, never a key)."""
+def describe_ai(url: str, ws: Path | None = None) -> str:
+    """"on (deep agent, <model>)" from GET /api/settings (the model name, never a key). "off (this run only, ...)"
+    when --no-ai turned it off for this run."""
     s = get_json(f"{url}/api/settings")
     if s is None:
         return "unknown"
     agent, model = s.get("agent", ""), s.get("model", "")
     detail = f"{agent} agent" + (f", {model}" if model and model != "scripted" else "")
+    if not s.get("ai_enabled") and ws is not None and (ws / AI_RESTORE_FILE).exists():
+        return f"off (this run only, --no-ai; {detail})"
     return ("on" if s.get("ai_enabled") else "off") + f" ({detail})"
 
 
@@ -283,7 +301,7 @@ def status_block(url: str, ws: Path, background: bool) -> str:
         f"set {url} in its options (Advanced); it finds 38091-38110 by itself"
     lines = [f"Patchwork is running at {url}",
              f"  workspace  {ws}",
-             f"  AI         {describe_ai(url)}",
+             f"  AI         {describe_ai(url, ws)}",
              f"  extension  {extension}",
              f"  stop       {'./patchwork stop' + where if background else 'Ctrl-C'}"]
     return "\n".join(lines)
@@ -319,16 +337,39 @@ def server_env(ws: Path, args: argparse.Namespace) -> dict[str, str]:
     return env
 
 
-def turn_ai_off(ws: Path) -> None:
-    """--no-ai on a workspace whose settings already say AI on: the saved switch wins over the env default,
-    so save it off (the UI's switch turns it back on)."""
-    path = ws / "settings.json"
+def _read_settings(ws: Path) -> dict:
     try:
-        data = json.loads(path.read_text())
+        data = json.loads((ws / "settings.json").read_text())
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        data = {}
+        return {}
+
+
+def turn_ai_off(ws: Path) -> None:
+    """--no-ai, for this run only. The workspace's saved switch wins over the env default, so it is saved off; the
+    value it had (or null: none saved) goes to patchwork.ai-restore, put back by restore_ai when the run ends (a
+    foreground exit, `stop`, or the next start after a crash)."""
+    data = _read_settings(ws)
+    if not (ws / AI_RESTORE_FILE).exists():
+        (ws / AI_RESTORE_FILE).write_text(json.dumps({"ai_enabled": data.get("ai_enabled")}))
     data["ai_enabled"] = False
-    path.write_text(json.dumps(data, indent=2))
+    (ws / "settings.json").write_text(json.dumps(data, indent=2))
+
+
+def restore_ai(ws: Path) -> None:
+    """Undo turn_ai_off: put the saved ai_enabled back as it was (removed if none was saved)."""
+    path = ws / AI_RESTORE_FILE
+    try:
+        before = json.loads(path.read_text()).get("ai_enabled")
+    except (OSError, ValueError, AttributeError):
+        return
+    data = _read_settings(ws)
+    if before is None:
+        data.pop("ai_enabled", None)
+    else:
+        data["ai_enabled"] = bool(before)
+    (ws / "settings.json").write_text(json.dumps(data, indent=2))
+    path.unlink(missing_ok=True)
 
 
 def wait_healthy(proc: subprocess.Popen, url: str, ws: Path, timeout: float = START_TIMEOUT_S) -> dict:
@@ -383,6 +424,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         say(f"Patchwork is already running at {current[1]} (workspace {ws}).")
         open_browser(current[1], args)
         return 0
+    restore_ai(ws)  # a --no-ai run that ended without restoring (a crash, a kill)
 
     if args.port is not None:
         choice = choose_port(args.port, (), ws, is_free=is_free, patchwork_workspace=patchwork_workspace, exact=True)
@@ -419,6 +461,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     except (LauncherError, KeyboardInterrupt) as e:
         stop_process(proc.pid)
         clear_files(ws, proc.pid)
+        restore_ai(ws)
         if isinstance(e, LauncherError) and args.background:
             raise LauncherError(f"{e}. See {ws / LOG_FILE}.") from None
         raise
@@ -440,6 +483,7 @@ def _foreground(proc: subprocess.Popen, ws: Path) -> int:
     try:
         code = proc.wait()
         clear_files(ws, proc.pid)
+        restore_ai(ws)
         if code not in (0, -signal.SIGTERM, -signal.SIGINT):
             print(f"Patchwork stopped (the control plane exited with code {code}).")
             return 1
@@ -453,6 +497,7 @@ def _foreground(proc: subprocess.Popen, ws: Path) -> int:
         except subprocess.TimeoutExpired:
             stop_process(proc.pid)
         clear_files(ws, proc.pid)
+        restore_ai(ws)
         print("Patchwork stopped.")
         return 0
 
@@ -470,15 +515,19 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
+    """Stop the server this workspace's files name, only if it is ours: alive, a control plane, and on the port in
+    patchwork.url. A pid that now belongs to anything else is left alone (the stale files are removed)."""
     ws = resolve_workspace(args)
-    pid = read_pid(ws)
-    if pid is None or not is_our_server(pid):
+    pid, url = read_pid(ws), read_url(ws)
+    if pid is None or not is_our_server(pid, url_port(url)):
         clear_files(ws)
+        restore_ai(ws)
         print(f"Patchwork is not running (workspace {ws}).")
         return 0
     if not stop_process(pid):
         raise LauncherError(f"could not stop process {pid}")
     clear_files(ws, pid)
+    restore_ai(ws)
     print(f"Patchwork stopped (workspace {ws}).")
     return 0
 
@@ -492,13 +541,16 @@ def parser() -> argparse.ArgumentParser:
     where.add_argument("--fresh", action="store_true", help="a new, empty temporary workspace (rehearsals)")
     p.add_argument("--port", type=int, metavar="N", help="exactly this port; fails if it is taken")
     p.add_argument("--no-open", action="store_true", help="don't open the browser")
-    p.add_argument("--no-ai", action="store_true", help="start with AI off")
+    p.add_argument("--no-ai", action="store_true", help="AI off for this run only (the saved switch comes back)")
     p.add_argument("--no-build", action="store_true", help="serve web/dist as it is, without rebuilding the UI")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    p = parser()
+    args = p.parse_args(argv)
+    if args.fresh and args.command in ("stop", "status"):
+        p.error(f"--fresh makes a new, empty workspace, so it has nothing to {args.command}; use --workspace PATH")
     if str(REPO) not in sys.path:
         sys.path.insert(0, str(REPO))
     try:

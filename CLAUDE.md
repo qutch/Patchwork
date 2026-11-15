@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-14, by the lead's agent (Claude), after `./patchwork` (one-command launcher).
+Last updated: 2026-11-14, by the lead's agent (Claude), after `./patchwork` review fix round 1.
 
 ## What Patchwork is
 
@@ -167,7 +167,7 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   picks 38091 or the next free port (never 8000–8003/5180), rebuilds the UI when stale, and the extension finds
   Patchwork and its token by itself (Advanced address still wins). `make stage-v2` = `./patchwork --port 38091`.
   Spec: `specs/2026-11-14-one-command-launcher-design.md`.
-- **Last full verification** (2026-11-14, with `./patchwork`): 860 passed, 9 skipped; both smokes OK; web 130 tests,
+- **Last full verification** (2026-11-14, launcher fix round 1): 869 passed, 9 skipped; both smokes OK; web 130 tests,
   typecheck and build OK.
 
 ### In progress
@@ -238,8 +238,15 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   - The extension only probes 38091–38110. A `./patchwork --port N` outside that range needs the Advanced address.
   - An extension that saved an address before this change keeps using it (a saved address wins). Click
     **Find Patchwork** in its options once to switch to automatic.
-  - `--no-ai` saves AI off in the workspace's settings (the saved switch beats the env default); turn it back on in
-    the UI. A plain `./patchwork` keeps whatever the workspace saved.
+  - `--no-ai` lasts one run: the previous switch is kept in `<ws>/patchwork.ai-restore` and put back on a
+    foreground exit, on `stop`, or on the next start after a crash. While that run is alive, turning AI on in the UI
+    is undone when it stops.
+  - Discovery trusts any local process on 38091–38110 that answers `/api/extension` with a `token`; such a process
+    would receive the pages the person sends (review Minor 4).
+  - SIGTERM or SIGHUP to a foreground launcher before the server is healthy leaves the server running; the signal
+    handlers are installed only once it is up. `./patchwork stop` cleans it up (review Minor 6).
+  - The wrapper's `python -P` needs Python 3.11+; an old `.venv` that has the packages fails with a usage error
+    instead of a clear message (review Minor 7).
   - Port choice checks then binds, so another program can take the port in between (the launcher then says the
     control plane exited; run it again).
   - `GET /api/extension` (which hands out the token) needs no auth, as before; browsers' CORS keeps other sites'
