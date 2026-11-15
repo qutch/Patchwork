@@ -188,7 +188,7 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   picks 38091 or the next free port (never 8000–8003/5180), rebuilds the UI when stale, and the extension finds
   Patchwork and its token by itself (Advanced address still wins). `make stage-v2` = `./patchwork --port 38091`.
   Spec: `specs/2026-11-14-one-command-launcher-design.md`.
-- **Last full verification** (2026-11-14, launcher merged with PR #4): PENDING
+- **Last full verification** (2026-11-14, launcher merged with PR #4): 957 passed, 15 skipped; smokes (form, Airtable, new-integration x3) OK; web 130 tests, typecheck, build and mock smoke OK.
 
 ### In progress
 
