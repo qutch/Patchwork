@@ -104,6 +104,21 @@ describe("New integration wizard", () => {
     expect(document.body.textContent).not.toMatch(JOB_WORDS);
   });
 
+  it("a teach that stops to ask shows the question, and answering it reaches the review", async () => {
+    const d = await mock.call<{ name: string }>("POST", "/api/integrations/new", { intent: "Watch some prices" });
+    await mock.call("PUT", `/api/integrations/${d.name}/destination`, { kind: "form", url: "https://forms.example.com/price-log" });
+    await sendPage(d.name, "https://shop-a.example.com/p/kettle", "Kettle - Shop A (no price)");
+    location.hash = `#/new?draft=${d.name}`;
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Teach from 1 page" }, UI_TIMEOUT));
+    await screen.findByText(/shows no readable price/, undefined, { timeout: 8000 });
+    expect(screen.getByText("Patchwork needs an answer before it can propose the mapping.")).toBeTruthy();
+    expect(screen.queryByText(/Patchwork is reading your examples/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Leave it blank for review" }));
+    await screen.findByText("✓ Approve & make it live", undefined, { timeout: 8000 });
+    expect(screen.queryByText(/shows no readable price/)).toBeNull();
+  }, 20000);
+
   it("pre-fills the last Airtable base", async () => {
     localStorage.setItem("pw-last-airtable-base", "https://airtable.com/appLAST0000000001/x");
     const d = await mock.call<{ name: string }>("POST", "/api/integrations/new", { intent: "Log trips" });

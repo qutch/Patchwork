@@ -3,6 +3,7 @@ import { api, ApiError, type ApiOperation, type DestinationCheck, type Destinati
 import { errText, useAgentThread, useApp, usePoll } from "../state";
 import { AiToggle } from "../components/AiToggle";
 import ReviewTable from "../components/ReviewTable";
+import { AskUserCard } from "../components/gates";
 import { Card, Empty, PageHead, Spinner, Tabs } from "../components/ui";
 
 const LAST_BASE = "pw-last-airtable-base";
@@ -351,6 +352,8 @@ function StepReview({ draft, threadId, aiOff, pages, retry, retryError, onRestar
     );
   }
   const pending = view.pending?.type === "request_deploy" ? view.pending : null;
+  // the agent may stop to ask before it proposes (a field no example page shows): the person answers here
+  const asking = view.pending?.type === "ask_user" ? view.pending : null;
   const decide = async (decision: "approve" | "reject", edits: ReviewEdit[]) => {
     if (!pending) return;
     setBusy(true);
@@ -363,7 +366,13 @@ function StepReview({ draft, threadId, aiOff, pages, retry, retryError, onRestar
   return (
     <Card eyebrow="Step 4" title="Review what it proposes">
       <div className="grid gap-4">
-        {!pending && !finishedWithout && (
+        {asking && threadId && (
+          <div className="grid gap-2">
+            <p className="m-0 text-[14px]">Patchwork needs an answer before it can propose the mapping.</p>
+            <AskUserCard ev={asking} threadId={threadId} />
+          </div>
+        )}
+        {!pending && !asking && !finishedWithout && (
           <div className="grid gap-2" aria-live="polite">
             <span className="inline-flex items-center gap-2 text-muted"><Spinner /> Patchwork is reading your examples…</span>
             <ol className="m-0 p-0 list-none grid gap-1 text-[14px]">

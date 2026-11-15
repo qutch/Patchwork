@@ -19,7 +19,8 @@
 //   POST /api/pages {integration: <draft>}            kept for the teach step, never run
 //   PUT  .../{name}/destination, GET /api/destinations/airtable/tables|api/operations   (Task 3)
 //   POST .../{name}/teach {page_ids}                  a build-shaped thread ending in request_deploy + review (Tasks 4-5)
-//   POST /api/agent/{id}/resume {decision, edits}     approve makes the draft live and writes 2 rows
+//                                                     an example page titled "... (no price)" makes the teach ask_user first
+//   POST /api/agent/{id}/resume {answer} | {decision, edits}  answers the question / approve makes the draft live
 //   DELETE /api/integrations/{name}?delete_rows=      removes a draft or live integration
 //   POST /api/demo/mock/credential {name, set}   mock only: pretend the value was added to (or removed from) .env
 
@@ -393,10 +394,23 @@ export function createV3(h) {
       { type: "message", agent: "supervisor", text: "Everything below is checked by code. Rows marked AI were proposed by the model; confirm the ones that need you." },
     ];
     let i = 0;
+    // as the real mapper does when a page shows no value for a field: ask the person before proposing
+    const noPrice = pages.find((p) => /\(no price\)/i.test(p.title ?? ""));
+    t.ask = noPrice ? { type: "ask_user", interrupt_id: `int-ask-${id.slice(6, 12)}`, dest_field: "Price",
+      question: `${noPrice.site} shows no readable price. What should Price be for pages like it?`,
+      options: ["Leave it blank for review", "Read it from the page title"] } : null;
     const next = () => {
       if (i < steps.length) {
         emit(t, steps[i++]);
         return h.timer(i < 3 ? 250 : 200, next);
+      }
+      if (t.ask) {
+        const ev = emit(t, t.ask);
+        t.ask = null;
+        t.pending = ev;
+        t.resumeAsk = next;
+        emit(t, { type: "status", state: "waiting", mode: "build" });
+        return;
       }
       t.review = buildReview(draft, pages);
       const ev = emit(t, { type: "request_deploy", interrupt_id: `int-${id.slice(6, 12)}`, name: draft.name, version: 1,
@@ -480,6 +494,15 @@ export function createV3(h) {
 
   function resumeTeach(t, body) {
     if (!t.pending || t.pending.interrupt_id !== body.interrupt_id) return [409, `no pending interrupt ${body.interrupt_id} on ${t.id}`];
+    if (t.pending.type === "ask_user") {
+      if (typeof body.answer !== "string" || !body.answer.trim()) return [422, "answer the question"];
+      const asked = t.pending;
+      t.pending = null;
+      emit(t, { type: "resumed", interrupt_id: asked.interrupt_id, payload: { answer: body.answer.trim() } });
+      emit(t, { type: "status", state: "running", mode: "build" });
+      h.timer(150, t.resumeAsk);
+      return [200, threadStatus(t)];
+    }
     if (!["approve", "reject"].includes(body.decision)) return [422, "decision must be approve or reject"];
     const draft = drafts.get(t.draft);
     let review = t.review;

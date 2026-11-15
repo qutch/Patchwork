@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-14, by the lead (Claude), after the Airtable token-ID hint.
+Last updated: 2026-11-14, by the lead (Claude), after the wizard started showing agent questions.
 
 ## What Patchwork is
 
@@ -150,6 +150,8 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 - **Plan A, wizard lane 3 (Tasks 10–11):** Home, IntegrationPage, NewIntegration wizard, ReviewTable,
   CredentialsDrawer. The review table hides Skip on required fields, picks choices from a list, and checks typed
   numbers, dates and links the way the backend does.
+- **Wizard shows agent questions:** if TEACH stops on `ask_user` (e.g. no example page shows a field's value),
+  step 4 shows the question with its options and a free-text answer, instead of spinning forever.
 - **Airtable token-ID hint:** if Airtable rejects `AIRTABLE_TOKEN` and the stored value is only the token's ID
   (`pat` + 14 characters, no dot), the destination check says so. Airtable's token list shows the ID; the token
   itself (ID, dot, secret) is shown only once, when the token is created or regenerated.
@@ -218,6 +220,11 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   - The scripted heuristics are tuned to the fixtures.
   - A newer answer to the same question doesn't clear an older confirmation.
   - Approving with `needs_you` rows is blocked only in the UI, not on the server.
+- **TEACH questions can offer placeholder answers:** a live Haiku run asked "What should Price be?" with the option
+  `0`. Picking it would make the price 0 on every row (labelled as the person's choice). A tool-level check should
+  refuse placeholder options (`0`, empty) for number and required fields.
+- **Pages without structured data are hard to teach:** e.g. Amazon product pages have no JSON-LD, and the first
+  `.a-offscreen` price span is empty. Prefer stores with JSON-LD `Product` data for demos.
 - **Web:** `new URL()` is stricter than Python's `urlsplit` for rare hosts (a port above 65535, an invalid IPv4).
 - **Delete:** destination rows can't be deleted yet; this waits on owner decision 6.
 
