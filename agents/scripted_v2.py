@@ -104,6 +104,18 @@ def _existing_columns(spec: dict) -> dict[str, str]:
     return out
 
 
+def _expected_kinds(spec: dict, row_names: list[str]) -> dict[str, dict[str, Any]]:
+    """What an existing parser makes of each row field: `{"cast": "int"}`, `{"clean": "money"}` or `{}` (text)."""
+    out: dict[str, dict[str, Any]] = {}
+    for p in (spec.get("extract") or {}).get("parsers") or []:
+        for name, f in ((p.get("rows") or {}).get("fields") or {}).items():
+            if name in row_names and name not in out and isinstance(f, dict):
+                clean = f.get("clean")
+                out[name] = ({"cast": "int"} if f.get("cast") == "int" else
+                             {"clean": "money"} if clean == "money" or (isinstance(clean, dict) and "money" in clean) else {})
+    return out
+
+
 def _labels_of(spec: dict, name: str) -> list[str]:
     """The words a field is labelled with: its own name, then the leading words of the regexes existing parsers use."""
     labels = [" ".join(w for w in re.split(r"[^A-Za-z0-9]+", name) if w)]
@@ -279,23 +291,30 @@ class ScriptedV2Mixin:
             names = [_group_name(w, taken) for w in existing]
         else:
             names = [_group_name(f"c{x}", taken) for x in range(k + 1)]
-        mapping = {}
+        match = "^(?P<%s>.+?)" % names[0] + "".join(rf"\s+(?P<{g}>{_NUM})" for g in names[1:]) + "$"
+        cells: dict[str, list[str]] = {g: [] for g in names}
+        for ln in lines[first:last + 1]:
+            m = re.match(match, ln)
+            for g in names:
+                cells[g].append((m.group(g) if m else "") or "")
+        mapping: dict[str, str] = {}
         for f in row_names:
             g = next((x for x in names if _norm(x) == _norm(f) or _norm(x) == _norm(hints.get(f, ""))), None)
-            if g is None:
-                return None
-            mapping[f] = g
-        match = "^(?P<%s>.+?)" % names[0] + "".join(rf"\s+(?P<{g}>{_NUM})" for g in names[1:]) + "$"
+            if g is not None:
+                mapping[f] = g
+        if len(mapping) != len(row_names):  # no names to go by: match each field to a group with the same kind of cells
+            kinds, mapping, used = _expected_kinds(spec, row_names), {}, set()
+            for f in row_names:
+                g = next((x for x in names if x not in used and _kind_of(cells[x]) == kinds.get(f, {})), None)
+                if g is None:
+                    return None
+                mapping[f] = g
+                used.add(g)
         sel: dict[str, str] = {"match": match}
         if heading:
             sel["after"] = "^" + re.escape(heading[0]) + r"\b"
         if last + 1 < len(lines):
             sel["before"] = "^" + re.escape(lines[last + 1].split()[0]) + r"\b"
-        cells = {g: [] for g in names}
-        for ln in lines[first:last + 1]:
-            m = re.match(match, ln)
-            for g in names:
-                cells[g].append((m.group(g) if m else "") or "")
         return {"select": {"lines": sel},
                 "fields": {f: {"column": g, **_kind_of(cells[g])} for f, g in mapping.items()}}
 

@@ -515,7 +515,8 @@ def evidence(record: dict, fields: dict, validate: list[dict], parser: dict | No
     items = []
     for name, value in fields.items():
         spec = ((parser or {}).get("fields") or {}).get(name) or {}
-        forms = value_forms(value, spec) if doc else ([normalize_ws(str(value))] if value is not None else [])
+        cleaned = doc or spec.get("clean") is not None  # a cleaned value (1299.0 from `$1,299.00`) is not literal text
+        forms = value_forms(value, spec) if cleaned else ([normalize_ws(str(value))] if value is not None else [])
         where = None
         if forms:
             if any(f in text for f in forms):
@@ -524,8 +525,8 @@ def evidence(record: dict, fields: dict, validate: list[dict], parser: dict | No
                 where = "table"
             elif doc and any(f in stacks["meta"] for f in forms):
                 where = "meta"
-            elif doc and isinstance(value, (int, float)) and not isinstance(value, bool) and any(
-                    abs(n - float(value)) < 1e-9 for n in _numbers_in(text + "\n" + stacks["table"])):
+            elif cleaned and isinstance(value, (int, float)) and not isinstance(value, bool) and any(
+                    abs(n - float(value)) < 1e-9 for n in _numbers_in(text + "\n" + stacks.get("table", ""))):
                 where = "text"
             else:
                 if "jsonld" not in lazy:
@@ -862,7 +863,8 @@ def d2_decision(*, policy: str, tests_passed: bool, evidence_ok: bool, all_corro
 
 def _meta_lines(record: dict) -> list[str]:
     meta = record.get("meta") or {}
-    lines = [f"document {record.get('id')} · kind {record.get('kind')} · site {record.get('site')}",
+    kind = record.get("kind") or ("page" if str(record.get("id") or "").startswith("pg-") else "?")
+    lines = [f"document {record.get('id')} · kind {kind} · site {record.get('site')}",
              f"file: {json.dumps(_clip(str(record.get('name') or ''), 120))}"]
     for key in ("from", "subject"):
         if meta.get(key):

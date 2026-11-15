@@ -309,3 +309,21 @@ def test_a_page_learn_still_deploys_without_a_cross_check(workspace, monkeypatch
     h = Harness(monkeypatch, "greenhouse-1")
     out = h.tools["save_parser"](parser={"id": "greenhouse", "fields": READERS["greenhouse"]}, reason="new site")
     assert out.startswith("deployed v2 automatically")
+
+
+# ---- a page whose integration reads rows is judged like a document ----------------------------------------
+
+def test_a_cleaned_value_on_a_page_is_evidenced_by_its_forms():
+    page = {"id": "pg-000001", "text": "Total 1,299.00", "html": "<p>Total 1,299.00</p>", "title": ""}
+    spec = {"fields": {"t": {"regex": r"Total\s+(\S+)", "clean": "money"}}}
+    assert learn.evidence(page, {"t": 1299.0}, [], parser=spec)[0]["ok"] is True
+    assert learn.evidence(page, {"t": 1299.0}, [], parser={"fields": {"t": {"regex": r"Total\s+(\S+)"}}})[0]["ok"] is False
+
+
+def test_get_page_shows_text_lines_for_a_page_when_the_integration_reads_rows(workspace, monkeypatch):
+    page = doc(doc_id="pg-000003")
+    for key in ("tables", "kind", "meta"):
+        page.pop(key)  # a page record has none of these
+    h = DocHarness(monkeypatch, page)
+    out = h.tools["get_page"]()
+    assert "kind page" in out and "L2: Item Qty Each Line" in out and "row fields (exactly these" in out

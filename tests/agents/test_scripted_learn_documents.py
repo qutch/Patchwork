@@ -106,3 +106,16 @@ def test_scripted_learn_that_finds_nothing_leaves_the_document_held(workspace, m
     wait_for(svc, tid, "failed")
     assert "no checked reader" in next(e for e in svc.events(tid) if e["type"] == "error")["message"]
     assert Store().active_version(NAME) == 1
+
+
+def test_scripted_maps_lines_groups_by_kind_when_nothing_names_them(scripted):
+    """No heading words and no `column` names to go by: the text group is the item, the whole numbers the quantity,
+    the money the line, as the existing parsers read their columns."""
+    spec = rows_spec()
+    spec["extract"]["parsers"][0]["rows"] = {"select": {"css": "li"}, "fields": {
+        "item": {"css": "b"}, "qty": {"css": "i", "cast": "int"}, "line": {"css": "u", "clean": "money"}}}
+    rec = pdf_rec("Ref R-9\nHat 3 $15.00\nScarf 1 $12.50\nGloves 2 $10.00\nSum $37.50")
+    p = scripted.propose_rows_parser(rec, spec)
+    assert p["rows"]["fields"] == {"item": {"column": "c0"}, "qty": {"column": "c1", "cast": "int"},
+                                   "line": {"column": "c2", "clean": "money"}}
+    assert [r.fields["item"] for r in extract_rows(rec, p["rows"], "w")] == ["Hat", "Scarf", "Gloves"]

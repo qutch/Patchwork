@@ -2049,7 +2049,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                     f"{k} ({v.get('type')}{', required' if v.get('required') else ''})" for k, v in dest.items())
             except Exception:  # noqa: BLE001 - the outline is still useful without them
                 pass
-        doc = learn.is_document(rec)
+        doc = learn.is_document(rec) or _has_rows(spec)  # rows are read from tables and text lines, not JSON-LD
         outline = (learn.document_outline(rec) if doc
                    else learn.page_outline(rec, prefer_types=learn.integration_jsonld_types(spec)))
         if _has_rows(spec):
@@ -2154,7 +2154,7 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         new["extract"]["parsers"].append(p)
         additive = learn.additive_parser_patch(active, new)
         policy = ctx.learn_policy()
-        is_doc = learn.is_document(rec)
+        is_doc = learn.is_document(rec) or p.get("rows") is not None  # rows: a cross-check, not a title, confirms
         pre_auto, _ = learn.d2_decision(policy=policy, tests_passed=True, evidence_ok=True,
                                         all_corroborated=checks["all_corroborated"], ambiguous=ambiguous,
                                         additive=additive, is_document=is_doc,
