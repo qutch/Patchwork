@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-14, by Satvik's agent, after the PR #4 review fixes (outcomes per document).
+Last updated: 2026-11-14, after re-reviewing PR #4 and merging current main.
 
 ## What Patchwork is
 
@@ -181,15 +181,13 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   - G7: `fixtures/tables/` and `tests/control/test_rows_e2e.py`: a CSV becomes one row per data row (a re-upload
     writes nothing), a file or page that does not fit is held with nothing written, a new page layout is learned
     once and its rows written. Real control plane, compiler and runner subprocess, SQLite destination, no model.
-- **Last full verification** (2026-11-14, PR #4 head): 921 passed, 15 skipped; both smokes 9/9 OK. The web checks were
+- **Last full verification** (2026-11-14, PR #4 with current main): 928 passed, 15 skipped; both smokes 9/9 OK. The web checks were
   not re-run (no `web/` change in that PR); the last web run was 129 tests, typecheck and build OK.
 
 ### In progress
 
 - **`./patchwork` launcher** (lead's agent): one command, one port, auto port choice, the extension finds it.
   It is used for the demo. Design: `docs/superpowers/specs/2026-11-14-one-command-launcher-design.md`.
-- **PR #4 (Satvik, G4–G7):** the review's blocking item (outcomes per document in the tracker) and its Minor items are
-  fixed and pushed to the same branch; waiting for the lead's re-review.
 - **Satvik:** teammate Task 1 (`fixtures/emails/`) and Task 2 (`runner/documents.py`, which adds `pypdf` and
   `openpyxl`). G4–G7 are done against a stand-in reader (`tests/control/standin_readers.py`); once Task 2 lands, run
   `tests/control/test_rows_e2e.py` again: its real-reader variants, the `.xlsx` test and the HTML-table page test
@@ -200,9 +198,6 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 - **Plan A:** a final whole-plan review, which triages the deferred minors below. Then Task 12: a live, timed
   rehearsal on the Airtable Products table with Haiku. Needs the owner.
 - **Generalized input:**
-  - G4: document inbox (V17)
-  - G5–G6: LEARN and agents on documents
-  - G7: tables proof
   - G8–G12: PDF line items, the fixture emails end to end, the four email kinds, the invoices-from-email demo beat
   - G13 (table sources): optional, cut first
   - G14–G15: documents in the wizard
