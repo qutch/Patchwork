@@ -68,6 +68,14 @@ smoke-v2-offline:
 smoke-v2-airtable-offline:
 	$(PY) scripts/smoke_v2.py --sink airtable --in-process
 
+# smoke-new-integration-offline (plan A Task 9): the New integration wizard, one flow for three unrelated domains
+# (products -> fake Airtable, events -> fixture form, papers -> fake papers API), each on an own in-process stack:
+# new -> destination -> 2 example pages -> teach -> approve -> rows -> a third site learned -> rename, held, repaired.
+NEW_INTEGRATION_DOMAINS ?= products events papers
+.PHONY: smoke-new-integration-offline
+smoke-new-integration-offline:
+	@for d in $(NEW_INTEGRATION_DOMAINS); do $(PY) scripts/smoke_v2.py --new-integration $$d --in-process || exit 1; done
+
 # v2 stage (I-2): control plane on :38091 over workspace-v2/ (gitignored; holds the TEACH + Greenhouse/Ashby baseline
 # built on the demo Google Form), deep agent. Never touches 8000-8003/5180. smoke-v2-stage runs the 2-minute script
 # against it on the demo Form + Sheet: it pauses for you to rename "Company" -> "Employer" in the Form editor.

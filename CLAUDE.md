@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-14, by Satvik's agent, after G4–G7 (documents inbox, LEARN on documents, tables proof).
+Last updated: 2026-11-14, by Satvik's agent, after the PR #4 review fixes (outcomes per document).
 
 ## What Patchwork is
 
@@ -150,6 +150,15 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 - **Plan A, wizard lane 3 (Tasks 10–11):** Home, IntegrationPage, NewIntegration wizard, ReviewTable,
   CredentialsDrawer. The review table hides Skip on required fields, picks choices from a list, and checks typed
   numbers, dates and links the way the backend does.
+- **Plan A Task 9, three-domain smoke:** `smoke_v2.py --new-integration {products,events,papers} --in-process`
+  (and `make smoke-new-integration-offline`) walks the wizard API with zero model calls:
+  - new, destination, 2 pages, teach, approve;
+  - rows written;
+  - a third site is learned;
+  - a destination rename is held, repaired and written.
+
+  The scripted mapper now maps only capture dates (added, captured, saved, seen, sent, applied) to today. Any
+  other date is read from the page, or the person is asked.
 - **Wizard shows agent questions:** if TEACH stops on `ask_user` (e.g. no example page shows a field's value),
   step 4 shows the question with its options and a free-text answer, instead of spinning forever.
 - **Airtable token-ID hint:** if Airtable rejects `AIRTABLE_TOKEN` and the stored value is only the token's ID
@@ -177,8 +186,10 @@ If you need to change a file someone else owns, say so in your PR or commit mess
 
 ### In progress
 
-- **Plan A Task 9** (lead's agent): the three-domain end-to-end smoke. Products → Airtable, events → a form,
-  papers → an API, via `smoke_v2.py --new-integration <domain>`. Not on `main` yet.
+- **`./patchwork` launcher** (lead's agent): one command, one port, auto port choice, the extension finds it.
+  It is used for the demo. Design: `docs/superpowers/specs/2026-11-14-one-command-launcher-design.md`.
+- **PR #4 (Satvik, G4–G7):** the review's blocking item (outcomes per document in the tracker) and its Minor items are
+  fixed and pushed to the same branch; waiting for the lead's re-review.
 - **Satvik:** teammate Task 1 (`fixtures/emails/`) and Task 2 (`runner/documents.py`, which adds `pypdf` and
   `openpyxl`). G4–G7 are done against a stand-in reader (`tests/control/standin_readers.py`); once Task 2 lands, run
   `tests/control/test_rows_e2e.py` again: its real-reader variants, the `.xlsx` test and the HTML-table page test
@@ -242,6 +253,15 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   refuse placeholder options (`0`, empty) for number and required fields.
 - **Pages without structured data are hard to teach:** e.g. Amazon product pages have no JSON-LD, and the first
   `.a-offscreen` price span is empty. Prefer stores with JSON-LD `Product` data for demos.
+- **Task 9 follow-ups:**
+  - Capture words match without a date word ("Coupon Applied" → today; it is labelled AI).
+  - Rename pairing can swap fields or pair on type alone; the deploy approval still gates this.
+  - Parser ids collide for `*.example.*` / `*.co.uk` sites.
+  - `MusicEvent`-style subtypes get no alternatives.
+  - The API repair question still uses v1 wording.
+  - The fake Airtable table is always "Applications".
+- **Flaky under load:** `test_drafts.py::test_delete_is_refused_while_an_agent_thread_is_active`. Its fixture's
+  `wait_idle` has a 30 s budget, which ran out once while three suites ran in parallel.
 - **Web:** `new URL()` is stricter than Python's `urlsplit` for rare hosts (a port above 65535, an invalid IPv4).
 - **Delete:** destination rows can't be deleted yet; this waits on owner decision 6.
 
