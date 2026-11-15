@@ -911,6 +911,63 @@ A label-keyed sink (V14's shape) whose destination is a table in a local databas
   `sendActiveTab()`); the toolbar click no longer sends directly. The choice is `integration` in
   `chrome.storage.local` (absent = default); the options page has the same list.
 
+## V17. The document inbox (`/api/documents`, `control/documents.py`)
+
+Files and emails become records the document integrations read, the way pages do (V1). The readers are the
+teammate's (`runner.documents.read_any(data, name, content_type) -> Document`); this contract is what the control
+plane does with a `Document`. Nothing here knows what a document is about: field names and meaning come from the spec.
+
+### The record
+
+`{id, parent_id, kind, integration, site, name, text, html, tables, meta, flags, sha256, received_at, received_date,
+is_leaf}`. Ids are `doc-%06d` (`seq` is an AUTOINCREMENT, so an id is never reused, even after `clear()`).
+
+- `kind`, `name`, `text`, `meta` are copied from the `Document`; `html` is `""` when there is none.
+- `tables` is `[{header, rows, where}]`, all cells strings.
+- `site` is the routing key (`route_by: site`): the domain of the sender address in `meta["from"]` (bare or
+  `Name <addr>`, lower-cased), inherited by an email's attachments; `"upload"` for a file sent by hand. A caller may
+  override it (`add_bytes(..., site=)`, used by table connectors).
+- A child inherits its parent's `meta` keys that it does not have.
+- `flags`, fixed names: `no_text_layer` (from `meta.no_text_layer == "true"`), `encrypted` (from
+  `meta.encrypted == "true"`), `unreadable` (the inbox sets it when `read_any` raises). A flagged document is held by
+  `runner.pipeline.process_document` with a plain reason and is **never sent to LEARN**
+  (`PageHooks.maybe_learn`). For `unreadable` the error text is in `meta.error` (what the pipeline reads) and
+  `meta.problem`.
+- `is_leaf`: a child of kind `pdf`, `sheet`, `html` or `text`, or the parent when it has no such child. Only leaves
+  are served to the runner; the parent email is kept for audit and is never written as a row.
+
+### The inbox (`DocumentInbox`, same method names as `PageInbox`)
+
+- Store `$PATCHWORK_WORKSPACE/documents.db`; originals under `$PATCHWORK_WORKSPACE/documents/` (never logged).
+- `add_bytes(data, name, content_type, integration, received_at=None, site=None, meta=None)` reads, stores the parent
+  and children in one transaction and returns the parent record plus `leaves: [ids]` and `duplicate`. The same
+  bytes (`sha256`) for one integration return the existing record with `duplicate: true` and store nothing.
+- `list(since, limit, integration, leaves_only=True)`, `get`, `summaries`, `count`, `clear(integration=None)`,
+  `add_learn`/`learns` (learn threads of documents, keyed by document id).
+- `control.inboxes.inbox_for(record_id)` returns the page inbox for `pg-…` and the document inbox for `doc-…`
+  (`ToolContext.get_page_record` uses it).
+
+### API (`control/api/documents.py`)
+
+- `POST /api/documents`: multipart `file` + `integration`, token as for `POST /api/pages` (401), at most 25 MB (413).
+  The multipart body is parsed with the standard library (no extra dependency).
+  - 201 with `{id, kind, name, site, flags, meta, sha256, integration, leaves, duplicate, run_id, queued}`; 200 when
+    the bytes were already there (no second run). No body text is returned.
+  - 422 when `integration` is missing or names neither a document integration nor a wizard draft; 422 for a missing
+    `file` or a non-multipart body; 503 when `runner.documents` is not importable (the upload is not lost: nothing is
+    stored, so it can be sent again).
+  - A new leaf starts a run (`AutoRunner.request`), except for a wizard draft, whose documents wait.
+- `GET /api/documents?since=&integration=&limit=&leaves_only=true`: the runner's source (no token: localhost only).
+- `GET /api/documents/{id}`; `GET /api/documents/stream?after=&integration=`: SSE `document` events, one per new
+  leaf, without `text`, `html` or `tables`.
+
+### Specs
+
+`control.autorun.is_document_spec(spec)`: `source.base_url == patchwork://control` and `source.list.path ==
+/api/documents`. `is_page_spec` is the same source without that path, so a document spec is never a page spec.
+`is_inbox_spec` / `is_inbox_integration` mean either; run-on-arrival, learn triggers and the replay after a deploy
+(`PageHooks`) use the inbox variants.
+
 ## V18. Rows, `clean`, cross-check rules, per-row records (generalized input)
 
 One input document (an HTML table page, a CSV/XLSX sheet, the text lines of a PDF) becomes many checked records. All

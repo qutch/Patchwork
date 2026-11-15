@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from control.autorun import AutoRunner, default_page_integration, is_page_integration, is_page_spec, version_spec
+from control.autorun import AutoRunner, default_page_integration, is_inbox_integration, is_inbox_spec, version_spec
 from runner.html import platform_of
 from runner.store import Store
 
@@ -29,11 +29,27 @@ DEPLOY_WAIT_S = 120
 
 class PageHooks:
     def __init__(self, inbox: Any, auto: AutoRunner, ai_enabled: Callable[[], bool],
-                 get_agent: Callable[[], Any]):
+                 get_agent: Callable[[], Any], documents: Any | None = None):
         self.inbox, self.auto = inbox, auto
+        self._documents = documents
         self.ai_enabled, self.get_agent = ai_enabled, get_agent
         self._lock = threading.Lock()
         self._attached: set[int] = set()
+
+    @property
+    def documents(self) -> Any:
+        """The document inbox (contracts V17), built on first use: it follows the workspace like the page inbox."""
+        if self._documents is None:
+            from control.documents import DocumentInbox
+
+            self._documents = DocumentInbox()
+        return self._documents
+
+    def _inbox_of(self, record_id: str) -> Any:
+        return self.documents if str(record_id).startswith("doc-") else self.inbox
+
+    def _learns(self, name: str) -> dict[str, dict]:
+        return {**self.inbox.learns(name), **self.documents.learns(name)}
 
     # ---- agent events --------------------------------------------------------------------------
     def attach(self, agent: Any) -> None:
@@ -63,7 +79,7 @@ class PageHooks:
 
     def _after_deploy(self, name: str, thread_id: str) -> None:
         try:
-            if not is_page_integration(name):
+            if not is_inbox_integration(name):
                 return
             agent = self.get_agent()
             deadline = time.monotonic() + DEPLOY_WAIT_S
@@ -84,7 +100,7 @@ class PageHooks:
         if run.get("dry_run"):
             return []
         name = run["integration"]
-        if not is_page_spec(version_spec(name, run["version"])):
+        if not is_inbox_spec(version_spec(name, run["version"])):
             return []
         store = Store()
         try:
@@ -119,13 +135,15 @@ class PageHooks:
         started = []
         default = default_page_integration()
         with self._lock:  # one decision at a time, so two finishing runs can't both start a site's learn
-            learns = self.inbox.learns(name)
+            learns = self._learns(name)
             for pid in page_ids:
                 if pid in learns:
                     continue  # a page is learned from at most once
-                page = self.inbox.get(pid)
+                page = self._inbox_of(pid).get(pid)
                 if page is None:
                     continue
+                if page.get("flags"):
+                    continue  # contracts V17: a flagged document (no text layer, unreadable) is held, never learned
                 if (page.get("integration") or default or name) != name:
                     continue  # V15: a page is learned only for the integration it was sent to
                 site = page["site"]
@@ -138,7 +156,7 @@ class PageHooks:
                 except Exception:  # noqa: BLE001 - the model being down must not break the run watcher
                     log.exception("start_learn(%s) failed", pid)
                     continue
-                self.inbox.add_learn(pid, tid, site, name)
+                self._inbox_of(pid).add_learn(pid, tid, site, name)
                 learns[pid] = {"page_id": pid, "thread_id": tid, "site": site, "integration": name}
                 started.append(tid)
         return started

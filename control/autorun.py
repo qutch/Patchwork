@@ -24,6 +24,8 @@ from runner.store import Store
 log = logging.getLogger("patchwork.autorun")
 
 PAGE_SOURCE = "patchwork://control"
+PAGE_PATH = "/api/pages"
+DOCUMENT_PATH = "/api/documents"
 BUSY_RETRY_S = 0.1
 BUSY_GIVE_UP_S = ops.RUN_TIMEOUT_S + 60
 
@@ -168,14 +170,49 @@ def version_manifest(name: str, version: int) -> dict[str, Any]:
         return {}
 
 
+def _source_path(spec: dict[str, Any] | None) -> str:
+    return str((((spec or {}).get("source") or {}).get("list") or {}).get("path") or "")
+
+
+def is_document_spec(spec: dict[str, Any] | None) -> bool:
+    """contracts V17: the source is the control plane's document inbox."""
+    return bool(spec) and (spec.get("source") or {}).get("base_url") == PAGE_SOURCE and _source_path(spec) == DOCUMENT_PATH
+
+
 def is_page_spec(spec: dict[str, Any] | None) -> bool:
-    return bool(spec) and ((spec.get("source") or {}).get("base_url") == PAGE_SOURCE)
+    """The source is the control plane's page inbox. A spec that names no list path keeps meaning "pages"
+    (specs compiled before documents existed), but a document spec is never a page spec."""
+    return bool(spec) and (spec.get("source") or {}).get("base_url") == PAGE_SOURCE and not is_document_spec(spec)
 
 
 def is_page_integration(name: str, store: Store | None = None) -> bool:
     store = store or Store()
     v = store.active_version(name)
     return v is not None and is_page_spec(version_spec(name, v))
+
+
+def is_inbox_spec(spec: dict[str, Any] | None) -> bool:
+    """The source is a control-plane inbox, pages or documents: runs follow arrivals, new layouts are learned."""
+    return bool(spec) and (spec.get("source") or {}).get("base_url") == PAGE_SOURCE
+
+
+def is_inbox_integration(name: str, store: Store | None = None) -> bool:
+    store = store or Store()
+    v = store.active_version(name)
+    return v is not None and is_inbox_spec(version_spec(name, v))
+
+
+def is_document_integration(name: str, store: Store | None = None) -> bool:
+    store = store or Store()
+    v = store.active_version(name)
+    return v is not None and is_document_spec(version_spec(name, v))
+
+
+def document_integrations(store: Store | None = None) -> list[str]:
+    """Integrations whose **active** spec reads the document inbox."""
+    store = store or Store()
+    return sorted(i["name"] for i in store.integrations()
+                  if i["active_version"] is not None and is_document_spec(version_spec(i["name"], i["active_version"])))
 
 
 def page_integrations(store: Store | None = None) -> list[str]:

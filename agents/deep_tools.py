@@ -256,14 +256,14 @@ class ToolContext:
         return ops.fetch_airtable_contract(base_id, table, credential)
 
     def get_page_record(self, page_id: str) -> dict:
-        """A V1 page record from the control plane's page inbox."""
+        """A V1 page record (`pg-…`) or a V17 document record (`doc-…`) from the control plane's inbox."""
         try:
-            from control.pages import PageInbox  # type: ignore[import-not-found]  # W4a
+            from control.inboxes import inbox_for  # type: ignore[import-not-found]
         except ImportError as e:
             raise KeyError(f"page inbox not available ({e})") from None
-        rec = PageInbox().get(page_id)
+        rec = inbox_for(page_id).get(page_id)
         if rec is None:
-            raise KeyError(f"page {page_id} not found")
+            raise KeyError(f"{'document' if str(page_id).startswith('doc-') else 'page'} {page_id} not found")
         return rec
 
     def platform_pages(self, platform: str, exclude: str | None = None, limit: int = 5) -> list[dict]:

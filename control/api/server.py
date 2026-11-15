@@ -19,11 +19,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
 from control import drafts, ops
-from control.api import credentials, demo, drafts as drafts_api, pages, recordings, sse
+from control.api import credentials, demo, documents as documents_api, drafts as drafts_api, pages, recordings, sse
 from control.api.runs import CredentialMissing, RunManager, RunStartError
 from control.api.settings import Settings, load_dotenv
 from control.autorun import AutoRunner, Busy
 from control.page_hooks import PageHooks
+from control.documents import DocumentInbox
 from control.pages import PageInbox
 from runner.store import Store, workspace_dir
 
@@ -628,6 +629,7 @@ def create_app(*, agent: Any | None = None, dotenv: bool = True) -> FastAPI:
     app.state.control_url = None
     # v2: page inbox, run on arrival (one run + one queued follow-up per integration), learn trigger
     app.state.inbox = PageInbox()
+    app.state.documents = DocumentInbox()  # contracts V17: files and emails, served at /api/documents
 
     def auto_start(name: str, kind: str) -> int:
         try:
@@ -639,7 +641,7 @@ def create_app(*, agent: Any | None = None, dotenv: bool = True) -> FastAPI:
 
     app.state.auto = AutoRunner(auto_start, runs.wait)
     app.state.hooks = PageHooks(app.state.inbox, app.state.auto, lambda: app.state.settings.ai_enabled,
-                                lambda: resolve_agent(app.state))
+                                lambda: resolve_agent(app.state), app.state.documents)
     runs.on_finish(app.state.hooks.on_run_finished)
     if agent is not None:
         app.state.hooks.attach(agent)
@@ -652,6 +654,7 @@ def create_app(*, agent: Any | None = None, dotenv: bool = True) -> FastAPI:
     app.include_router(recordings.router)
     app.include_router(demo.router)
     app.include_router(pages.router)
+    app.include_router(documents_api.router)
     app.include_router(credentials.router)
     app.include_router(drafts_api.router)
     return app
