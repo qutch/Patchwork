@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from playwright.sync_api import expect
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from tests.conftest import _Server
+from tests.conftest import _Server, _free_port
 
 REPO = Path(__file__).resolve().parents[2]
 EXT = REPO / "extension"
@@ -76,7 +76,7 @@ class Stub:
 def stub():
     s = Stub()
     with _Server(s.app) as server:
-        s.url = server.url
+        s.url, s.port = server.url, server.port
         yield s
 
 
@@ -96,7 +96,7 @@ def browser_ext(tmp_path_factory):
 @pytest.fixture
 def ext(browser_ext, stub):
     ctx, sw = browser_ext
-    sw.evaluate("chrome.storage.local.remove('integration')")
+    sw.evaluate("chrome.storage.local.remove(['integration', 'autoUrl', 'discoverPorts'])")
     sw.evaluate("o => chrome.storage.local.set(o)", {"controlUrl": stub.url, "token": TOKEN})
     with stub.lock:
         stub.integrations = None
@@ -182,30 +182,109 @@ def test_nothing_is_sent_without_a_press(ext, stub):
     assert stub.posts == []
 
 
+def _stored(sw) -> dict:
+    """chrome.storage.local without the test-only `discoverPorts`."""
+    got = sw.evaluate("chrome.storage.local.get(null)")
+    got.pop("discoverPorts", None)
+    return got
+
+
 def test_options_persist(ext, stub):
     ctx, sw = ext
     sw.evaluate("chrome.storage.local.clear()")
+    # Automatic by default: point discovery at a closed port (tests never probe the owner's 38091-38110).
+    sw.evaluate("p => chrome.storage.local.set({discoverPorts: [p]})", _free_port())
     ext_id = sw.url.split("/")[2]
     page = ctx.new_page()
     page.goto(f"chrome-extension://{ext_id}/options.html")
     # options.js fills the inputs after an async chrome.storage read. Wait with expect(): the extension
     # page's CSP forbids eval, so a polling wait_for_function(<string>) fails whenever it has to poll.
-    expect(page.locator("#controlUrl")).to_have_value("http://127.0.0.1:8000")  # the default
+    expect(page.locator("#connection")).to_have_text(re.compile("not running.*./patchwork"))
+    expect(page.locator("#controlUrl")).to_have_value("")  # the default: automatic
     page.fill("#controlUrl", "http://127.0.0.1:38080/")
     page.fill("#token", "  tok-typed  ")
     page.click("#save")
     expect(page.locator("#status")).to_have_text(re.compile(r"^Saved"))
-    assert sw.evaluate("chrome.storage.local.get(null)") == {"controlUrl": "http://127.0.0.1:38080",
-                                                             "token": "tok-typed"}
+    assert _stored(sw) == {"controlUrl": "http://127.0.0.1:38080", "token": "tok-typed"}
     page.reload()
     expect(page.locator("#token")).to_have_value("tok-typed")
+    expect(page.locator("#connection")).to_have_text(re.compile("address set below"))
 
     # "Get token from Patchwork" reads GET /api/extension at the address typed.
     page.fill("#controlUrl", stub.url)
     page.click("#fetch")
     expect(page.locator("#status")).to_have_text(re.compile(r"^Connected"))
-    assert sw.evaluate("chrome.storage.local.get(null)") == {"controlUrl": stub.url, "token": TOKEN}
+    assert _stored(sw) == {"controlUrl": stub.url, "token": TOKEN}
     page.close()
+
+
+# ---- finding Patchwork by itself (one-command launcher design) ----------------------------------------
+
+def _auto(sw, ports, **extra):
+    """Automatic mode, probing only `ports` (never the owner's 38091-38110)."""
+    sw.evaluate("chrome.storage.local.remove(['controlUrl', 'token', 'autoUrl'])")
+    sw.evaluate("o => chrome.storage.local.set(o)", {"discoverPorts": ports, **extra})
+
+
+def test_auto_finds_patchwork_and_sends(ext, stub):
+    ctx, sw = ext
+    _auto(sw, [_free_port(), stub.port])
+    _open_job(ctx, stub)
+    result = sw.evaluate("sendActiveTab()")
+    assert result["ok"] and result["state"] == "code", result
+    assert stub.posts[-1]["token"] == TOKEN
+    assert _stored(sw) == {"autoUrl": stub.url, "token": TOKEN}  # cached for the next press
+
+
+def test_auto_finds_again_after_a_401_or_a_network_failure(ext, stub):
+    ctx, sw = ext
+    _auto(sw, [stub.port], autoUrl=stub.url, token="stale")  # Patchwork restarted with another token
+    _open_job(ctx, stub)
+    result = sw.evaluate("sendActiveTab()")
+    assert result["ok"], result
+    assert [p["token"] for p in stub.posts] == ["stale", TOKEN]
+    assert _stored(sw)["token"] == TOKEN
+
+    _auto(sw, [stub.port], autoUrl=f"http://127.0.0.1:{_free_port()}", token=TOKEN)  # it moved port
+    result = sw.evaluate("sendActiveTab()")
+    assert result["ok"], result
+    assert _stored(sw)["autoUrl"] == stub.url
+
+
+def test_auto_says_how_to_start_patchwork(ext, stub):
+    ctx, sw = ext
+    _auto(sw, [_free_port()])
+    _open_job(ctx, stub)
+    result = sw.evaluate("sendActiveTab()")
+    assert not result["ok"] and "./patchwork" in result["error"]
+    assert sw.evaluate(BADGE_OF_ACTIVE_TAB)["text"] == "!"
+    assert stub.posts == []
+
+
+def test_a_manual_address_wins(ext, stub):
+    ctx, sw = ext
+    sw.evaluate("p => chrome.storage.local.set({discoverPorts: [p], controlUrl: 'http://127.0.0.1:9'})", stub.port)
+    _open_job(ctx, stub)
+    result = sw.evaluate("sendActiveTab()")
+    assert not result["ok"] and "not reachable at http://127.0.0.1:9" in result["error"]
+    assert stub.posts == []  # never rediscovered past the address the person set
+
+
+def test_options_and_popup_show_the_automatic_connection(ext, stub):
+    ctx, sw = ext
+    stub.integrations = INTEGRATIONS
+    _auto(sw, [stub.port])
+    ext_id = sw.url.split("/")[2]
+    page = ctx.new_page()
+    page.goto(f"chrome-extension://{ext_id}/options.html")
+    expect(page.locator("#connection")).to_have_text(f"Connected automatically to {stub.url}")
+    expect(page.locator("#integration option")).to_have_count(3)
+    expect(page.locator("#controlUrl")).to_have_value("")
+    page.close()
+    popup = ctx.new_page()
+    popup.goto(f"chrome-extension://{ext_id}/popup.html")
+    expect(popup.locator("#integration option")).to_have_count(3)
+    popup.close()
 
 
 def test_manifest_is_minimal():

@@ -7,6 +7,12 @@ setup:
 	uv pip install -p $(PY) -r pyproject.toml --extra dev --extra agents --extra capture
 	$(PY) -m playwright install chromium
 
+# One command: the API and the built UI on one port (38091, else the next free one up to 38110), browser opened,
+# Ctrl-C stops it. The extension finds it by itself. First run sets up .venv and the UI. Options: ./patchwork --help.
+.PHONY: patchwork
+patchwork:
+	./patchwork
+
 test:
 	$(PY) -m pytest -q
 
@@ -76,8 +82,8 @@ NEW_INTEGRATION_DOMAINS ?= products events papers
 smoke-new-integration-offline:
 	@for d in $(NEW_INTEGRATION_DOMAINS); do $(PY) scripts/smoke_v2.py --new-integration $$d --in-process || exit 1; done
 
-# v2 stage (I-2): control plane on :38091 over workspace-v2/ (gitignored; holds the TEACH + Greenhouse/Ashby baseline
-# built on the demo Google Form), deep agent. Never touches 8000-8003/5180. smoke-v2-stage runs the 2-minute script
+# v2 stage (I-2): ./patchwork on :38091 (API + built UI on one port) over workspace-v2/ (gitignored; holds the TEACH +
+# Greenhouse/Ashby baseline built on the demo Google Form), deep agent. Never touches 8000-8003/5180. smoke-v2-stage runs the 2-minute script
 # against it on the demo Form + Sheet: it pauses for you to rename "Company" -> "Employer" in the Form editor.
 DEMO_FORM_URL ?= https://docs.google.com/forms/d/e/1FAIpQLSeJSRbMx1pr9nMwj4n1E5vOUxmz2Zo19-lJXyz0-8HhmfeNoQ/viewform
 DEMO_SHEET_CSV ?= https://docs.google.com/spreadsheets/d/1sEDvJMO4sQN3RJxo1JKFqqfrDfQTjZrNL2Ztlz0j60M/gviz/tq?tqx=out:csv&sheet=Form%20Responses%201
@@ -88,10 +94,10 @@ STAGE_AGENT ?= deep
 STAGE_MODEL ?=
 .PHONY: stage-v2 web-stage smoke-v2-stage
 stage-v2:
-	PATCHWORK_WORKSPACE=$(CURDIR)/workspace-v2 PATCHWORK_AGENT=$(STAGE_AGENT) \
-	$(if $(STAGE_MODEL),PATCHWORK_MODEL=$(STAGE_MODEL)) \
-	PATCHWORK_AI_ENABLED=1 $(PY) -m control.api --port $(STAGE_PORT)
+	PATCHWORK_AGENT=$(STAGE_AGENT) $(if $(STAGE_MODEL),PATCHWORK_MODEL=$(STAGE_MODEL)) \
+	./patchwork --port $(STAGE_PORT) --no-open --workspace $(CURDIR)/workspace-v2
 
+# UI development only (hot reload on :5181 against the stage). The demo needs only ./patchwork (it serves the UI).
 web-stage:
 	test -d web/node_modules || (cd web && npm ci)
 	cd web && PATCHWORK_API=http://127.0.0.1:$(STAGE_PORT) npm run dev -- --port 5181

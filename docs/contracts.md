@@ -682,8 +682,14 @@ id `fixture-jobs` in the control plane, recorded against `fixtures/pages/lever-1
 
 Extension (`extension/`, Chrome MV3): command `send-page` (default `Alt+Shift+P`); takes the active tab's URL,
 `document.title` and `document.documentElement.outerHTML` via `chrome.scripting`, `POST {controlUrl}/api/pages` with
-`X-Patchwork-Token`; options in `chrome.storage.local`: `controlUrl` (default `http://127.0.0.1:8000`), `token`. Badge:
+`X-Patchwork-Token`; options in `chrome.storage.local`: `controlUrl` (default `auto`), `token`. Badge:
 `…` sending, `✓` code, `AI` learned now, `!` held or failed (polls `GET /api/pages/{id}` up to 30 s).
+- Additive (one-command launcher, 2026-11-14): with `controlUrl` `auto` (or absent) the extension finds Patchwork by
+  itself (`extension/discover.js`): `GET http://127.0.0.1:{38091..38110}/api/extension`, all at once with a short
+  timeout, and the first port in that order that answers with a `token` wins. The address is cached as `autoUrl`
+  and the token as `token`. After a network failure or a 401 it looks again once and retries. A `controlUrl` set by
+  hand (options, "Advanced") always wins and is never replaced. `discoverPorts` (a list of ports) replaces the
+  range; only tests set it.
 
 ## V12. Proof (W5)
 

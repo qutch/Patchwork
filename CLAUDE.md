@@ -8,7 +8,7 @@ and the live status board.
 - Push straight to `main`. Pull first: `git pull --rebase origin main`.
 - Keep entries short; link to plans and specs instead of copying them.
 
-Last updated: 2026-11-14, after re-reviewing PR #4 and merging current main.
+Last updated: 2026-11-14, by the lead (Claude), after merging `./patchwork` onto main with PR #4.
 
 ## What Patchwork is
 
@@ -88,6 +88,8 @@ route → extract → validate → dedupe → map → send → verify.
 ## Commands
 
 ```bash
+./patchwork                         # start everything (API + UI on one port, 38091 or next free), opens the browser
+./patchwork --background | status | stop   # detached; --fresh, --workspace PATH, --port N, --no-open, --no-ai
 make setup                          # uv venv (Python 3.12) + deps + playwright chromium
 .venv/bin/python -m pytest -q       # full suite, ~6 min
 make smoke-v2-offline               # smoke into the demo form, in-process
@@ -96,7 +98,8 @@ cd web && npm run -s typecheck && npx vitest run && npm run -s build && node moc
 make web-mock                       # UI against the mock backend
 ```
 
-Don't run `make stage-v2` or anything else on port 38091 unless the owner asks.
+Don't run `make stage-v2`, a bare `./patchwork` or anything else on port 38091 unless the owner asks. Agents run
+`./patchwork --port <free high port> --workspace <tmp> --no-open`; tests set `PATCHWORK_PORT_RANGE` (e.g. 47100-47120).
 
 ## Plans and specs
 
@@ -181,13 +184,16 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   - G7: `fixtures/tables/` and `tests/control/test_rows_e2e.py`: a CSV becomes one row per data row (a re-upload
     writes nothing), a file or page that does not fit is held with nothing written, a new page layout is learned
     once and its rows written. Real control plane, compiler and runner subprocess, SQLite destination, no model.
-- **Last full verification** (2026-11-14, PR #4 with current main): 928 passed, 15 skipped; both smokes 9/9 OK. The web checks were
-  not re-run (no `web/` change in that PR); the last web run was 129 tests, typecheck and build OK.
+- **One command (`./patchwork`):** the control plane serves the built UI (`web/dist`) on its own port, the launcher
+  picks 38091 or the next free port (never 8000–8003/5180), rebuilds the UI when stale, and the extension finds
+  Patchwork and its token by itself (Advanced address still wins). `make stage-v2` = `./patchwork --port 38091`.
+  Spec: `specs/2026-11-14-one-command-launcher-design.md`.
+- **Last full verification** (2026-11-14, launcher merged with PR #4): PENDING
 
 ### In progress
 
-- **`./patchwork` launcher** (lead's agent): one command, one port, auto port choice, the extension finds it.
-  It is used for the demo. Design: `docs/superpowers/specs/2026-11-14-one-command-launcher-design.md`.
+- **Placeholder answers (lead's agent):** `ask_user` refuses AI-offered placeholder options (`0`, empty) for number
+  and required fields.
 - **Satvik:** teammate Task 1 (`fixtures/emails/`) and Task 2 (`runner/documents.py`, which adds `pypdf` and
   `openpyxl`). G4–G7 are done against a stand-in reader (`tests/control/standin_readers.py`); once Task 2 lands, run
   `tests/control/test_rows_e2e.py` again: its real-reader variants, the `.xlsx` test and the HTML-table page test
@@ -259,6 +265,23 @@ If you need to change a file someone else owns, say so in your PR or commit mess
   `wait_idle` has a 30 s budget, which ran out once while three suites ran in parallel.
 - **Web:** `new URL()` is stricter than Python's `urlsplit` for rare hosts (a port above 65535, an invalid IPv4).
 - **Delete:** destination rows can't be deleted yet; this waits on owner decision 6.
+- **Launcher:**
+  - The extension only probes 38091–38110. A `./patchwork --port N` outside that range needs the Advanced address.
+  - An extension that saved an address before this change keeps using it (a saved address wins). Click
+    **Find Patchwork** in its options once to switch to automatic.
+  - `--no-ai` lasts one run: the previous switch is kept in `<ws>/patchwork.ai-restore` and put back on a
+    foreground exit, on `stop`, or on the next start after a crash. While that run is alive, turning AI on in the UI
+    is undone when it stops.
+  - Discovery trusts any local process on 38091–38110 that answers `/api/extension` with a `token`; such a process
+    would receive the pages the person sends (review Minor 4).
+  - SIGTERM or SIGHUP to a foreground launcher before the server is healthy leaves the server running; the signal
+    handlers are installed only once it is up. `./patchwork stop` cleans it up (review Minor 6).
+  - The wrapper's `python -P` needs Python 3.11+; an old `.venv` that has the packages fails with a usage error
+    instead of a clear message (review Minor 7).
+  - Port choice checks then binds, so another program can take the port in between (the launcher then says the
+    control plane exited; run it again).
+  - `GET /api/extension` (which hands out the token) needs no auth, as before; browsers' CORS keeps other sites'
+    pages from reading it, but any local program can.
 
 ## How to finish a task
 
