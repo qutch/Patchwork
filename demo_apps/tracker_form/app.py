@@ -29,6 +29,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 TITLE = "Job tracker"
+BLURB = "Track every job I apply to."
 CONFIRMATION = "Your response has been recorded."
 REQUIRED_ALERT = "This is a required question"
 DEFAULT_QUESTIONS: list[dict[str, Any]] = [
@@ -89,12 +90,12 @@ def _question_html(i: int, q: dict[str, Any], value: str, error: bool) -> str:
 
 
 def render_form(questions: list[dict[str, Any]], values: dict[int, str] | None = None,
-                errors: set[int] | None = None) -> str:
+                errors: set[int] | None = None, *, title: str = TITLE, blurb: str = BLURB) -> str:
     values, errors = values or {}, errors or set()
     items = "".join(_question_html(i, q, values.get(i, ""), i in errors) for i, q in enumerate(questions))
     body = (f'<form id="f" method="post" action="/submit" novalidate>'
-            f'<div class="card"><div role="heading" aria-level="1" style="font-size:28px">{TITLE}</div>'
-            f'<div>Track every job I apply to.</div></div>'
+            f'<div class="card"><div role="heading" aria-level="1" style="font-size:28px">{html.escape(title)}</div>'
+            f'<div>{html.escape(blurb)}</div></div>'
             f'<div role="list">{items}</div>'
             '<div class="buttons">'
             '<div role="button" tabindex="0" class="submit" aria-label="Submit" '
@@ -103,17 +104,18 @@ def render_form(questions: list[dict[str, Any]], values: dict[int, str] | None =
             '<div role="button" tabindex="0" class="clear" aria-label="Clear form" '
             'onclick="document.getElementById(\'f\').reset()"><span>Clear form</span></div>'
             '</div></form>')
-    return _PAGE.format(title=TITLE, body=body)
+    return _PAGE.format(title=html.escape(title), body=body)
 
 
-def render_confirmation() -> str:
-    body = (f'<div class="card"><div role="heading" aria-level="1" style="font-size:28px">{TITLE}</div>'
+def render_confirmation(*, title: str = TITLE) -> str:
+    body = (f'<div class="card"><div role="heading" aria-level="1" style="font-size:28px">{html.escape(title)}</div>'
             f'<div class="confirm">{CONFIRMATION}</div>'
             '<a href="/">Submit another response</a></div>')
-    return _PAGE.format(title=TITLE, body=body)
+    return _PAGE.format(title=html.escape(title), body=body)
 
 
-def create_app(questions: list[dict[str, Any]] | None = None) -> FastAPI:
+def create_app(questions: list[dict[str, Any]] | None = None, *, title: str = TITLE, blurb: str = BLURB) -> FastAPI:
+    """The form with `questions` (default: the job tracker's), headed `title` and `blurb`."""
     defaults = []
     for q in questions or DEFAULT_QUESTIONS:
         item = Question(**q).model_dump()
@@ -127,7 +129,7 @@ def create_app(questions: list[dict[str, Any]] | None = None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def form() -> str:
         with lock:
-            return render_form(state["questions"])
+            return render_form(state["questions"], title=title, blurb=blurb)
 
     @app.post("/submit")
     async def submit(request: Request):
@@ -140,7 +142,7 @@ def create_app(questions: list[dict[str, Any]] | None = None) -> FastAPI:
             qs = state["questions"]
             errors = {i for i, q in enumerate(qs) if q["required"] and not answers.get(i, "").strip()}
             if errors:
-                return HTMLResponse(render_form(qs, answers, errors))
+                return HTMLResponse(render_form(qs, answers, errors, title=title, blurb=blurb))
             row = {q["label"]: answers.get(i, "") for i, q in enumerate(qs)}
             row["_ts"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
             state["rows"].append(row)
@@ -148,7 +150,7 @@ def create_app(questions: list[dict[str, Any]] | None = None) -> FastAPI:
 
     @app.get("/formResponse", response_class=HTMLResponse)
     def confirmation() -> str:
-        return render_confirmation()
+        return render_confirmation(title=title)
 
     @app.get("/admin/rows")
     def rows() -> list[dict[str, Any]]:

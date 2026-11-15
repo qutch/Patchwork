@@ -2,6 +2,9 @@
 
 archive-a.html (papers.open-archive.example.org): Highwire `citation_*` meta, og: meta and ScholarlyArticle JSON-LD.
 proceedings-b.html (proceedings.hub.example.net): `citation_*` and og: meta only, no JSON-LD and no <h1>.
+preprints-c.html (preprints.lowtide.example.com): `citation_*` meta and an <h1>, no og: and no JSON-LD; a third
+site the wizard's integration learns after TEACH (scripts/smoke_v2.py --new-integration papers).
+archive-a-2.html: a second archive-a page, sent after the API renamed a field.
 
     page_record(file, seq)  -> a V1 page record of fixtures/papers/<file>
     PAGES                   -> url and expected values per file
@@ -25,6 +28,12 @@ PAGES: dict[str, dict[str, Any]] = {
     "proceedings-b.html": {"url": "https://proceedings.hub.example.net/wfa-2024/paper/17",
                            "expected": {"title": "Counting Birds with Cheap Microphones", "year": 2024,
                                         "venue": "Workshop on Field Acoustics"}},
+    "preprints-c.html": {"url": "https://preprints.lowtide.example.com/p/0088?v=2",
+                         "expected": {"title": "Soil Moisture from Phone Barometers", "year": 2026,
+                                      "venue": "Letters in Improvised Sensing"}},
+    "archive-a-2.html": {"url": "https://papers.open-archive.example.org/abs/2601.04410",
+                         "expected": {"title": "Cheap Labels for Noisy Sensors", "year": 2026,
+                                      "venue": "Journal of Synthetic Learning"}},
 }
 
 
