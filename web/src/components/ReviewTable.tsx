@@ -25,25 +25,45 @@ function altValue(a: ReviewSource, id: string) {
  * accepts the edit (contracts V15 number/date/url rules, a choice field's allowed values).
  */
 export function constProblem(row: { type?: string; values_allowed?: string[] }, text: string): string | null {
+  if (!text.trim()) return null;
+  // a choice is compared exactly as the backend does, and sent as picked (`typedValue`)
+  if (row.values_allowed?.length) return row.values_allowed.includes(text) ? null : `Choose one of: ${row.values_allowed.join(", ")}`;
   const s = text.trim();
-  if (!s) return null;
   const kind = row.type ?? "text";
-  if (row.values_allowed?.length) return row.values_allowed.includes(s) ? null : `Choose one of: ${row.values_allowed.join(", ")}`;
   if (kind === "number" || kind === "integer") {
-    const n = Number(s.replace(/,/g, ""));
+    // Python float() after removing commas: digits (underscores between them), an optional point and exponent
+    const t = s.replace(/,/g, "").replace(/(\d)_(?=\d)/g, "$1");
+    const n = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(t) ? Number(t) : NaN;
     if (!Number.isFinite(n)) return "Expected a number";
     if (kind === "integer" && !Number.isInteger(n)) return "Expected a whole number";
   }
   if (kind === "date") {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-    const d = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-    if (!m || !d || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return "Expected a date YYYY-MM-DD";
+    const d = m && +m[1] >= 1 ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
+    if (d && m) d.setUTCFullYear(+m[1]); // Date.UTC maps years 0-99 to 1900-1999
+    if (!m || !d || d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return "Expected a date YYYY-MM-DD";
   }
-  if (kind === "url" && !/^https?:\/\/[^\s/?#]+[^\s]*$/i.test(s)) return "Expected a link starting with http:// or https://";
+  if (kind === "url") {
+    let host = "";
+    try {
+      host = /^https?:\/\/\S+$/i.test(s) ? new URL(s).hostname : "";
+    } catch {
+      host = "";
+    }
+    if (!host) return "Expected a link starting with http:// or https://";
+  }
   return null;
 }
 
-type Pick ={ kind: "unset" } | { kind: "keep" } | { kind: "alt"; i: number } | { kind: "const"; text: string } | { kind: "skip" };
+/** The value an edit sends: a choice exactly as picked, anything typed without surrounding spaces. */
+export const typedValue = (row: { values_allowed?: string[] }, text: string) => (row.values_allowed?.length ? text : text.trim());
+
+/** The row's proposed source leaves the field out. */
+const isSkip = (s: ReviewSource) => (typeof s === "string" ? /^skip(ped)?$/i.test(s.trim()) : !!s.skip);
+/** A person must choose this row before approving: it needs them, or it would leave out a required field. */
+const mustChoose = (r: ReviewRow) => r.status === "needs_you" || (!!r.required && isSkip(r.source));
+
+type Pick = { kind: "unset" } | { kind: "keep" } | { kind: "alt"; i: number } | { kind: "const"; text: string } | { kind: "skip" };
 const KEEP = "keep", CONST = "const", SKIP = "skip", UNSET = "unset";
 const valueOf = (p: Pick) => (p.kind === "alt" ? `alt:${p.i}` : p.kind);
 
@@ -54,7 +74,7 @@ export function editsFor(rows: ReviewRow[], picks: Record<string, Pick>): Review
     const p = picks[r.dest_field];
     if (!p) continue;
     if (p.kind === "alt") out.push({ dest_field: r.dest_field, choice: r.alternatives[p.i] });
-    else if (p.kind === "const" && p.text.trim()) out.push({ dest_field: r.dest_field, choice: { const: p.text.trim() } });
+    else if (p.kind === "const" && p.text.trim()) out.push({ dest_field: r.dest_field, choice: { const: typedValue(r, p.text) } });
     else if (p.kind === "skip") out.push({ dest_field: r.dest_field, choice: { skip: true } });
   }
   return out;
@@ -74,7 +94,7 @@ export default function ReviewTable({ rows, pages, busy = false, onDecide }: {
 }) {
   const pageIds = useMemo(() => [...new Set(rows.flatMap((r) => Object.keys(r.values)))], [rows]);
   const [picks, setPicks] = useState<Record<string, Pick>>(() =>
-    Object.fromEntries(rows.map((r) => [r.dest_field, r.status === "needs_you" ? { kind: "unset" } : { kind: "keep" }])) as Record<string, Pick>);
+    Object.fromEntries(rows.map((r) => [r.dest_field, mustChoose(r) ? { kind: "unset" } : { kind: "keep" }])) as Record<string, Pick>);
   const set = (f: string, p: Pick) => setPicks((x) => ({ ...x, [f]: p }));
   const typedText = (f: string) => { const p = picks[f]; return p?.kind === "const" ? p.text : null; };
   const unresolved = rows.filter((r) => {
@@ -97,7 +117,7 @@ export default function ReviewTable({ rows, pages, busy = false, onDecide }: {
           <tbody>
             {rows.map((r) => {
               const p = picks[r.dest_field] ?? { kind: KEEP };
-              const needs = r.status === "needs_you" && (p.kind === "unset");
+              const needs = mustChoose(r) && p.kind === "unset";
               return (
                 <tr key={r.dest_field}>
                   <td className="font-semibold">
@@ -122,8 +142,8 @@ export default function ReviewTable({ rows, pages, busy = false, onDecide }: {
                         else set(r.dest_field, { kind: "unset" });
                       }}
                     >
-                      {r.status === "needs_you" && <option value={UNSET}>Choose…</option>}
-                      <option value={KEEP}>{r.status === "needs_you" ? "Use as proposed" : "As proposed"}</option>
+                      {mustChoose(r) && <option value={UNSET}>Choose…</option>}
+                      {!(r.required && isSkip(r.source)) && <option value={KEEP}>{r.status === "needs_you" ? "Use as proposed" : "As proposed"}</option>}
                       {r.alternatives.map((a, i) => <option key={i} value={`alt:${i}`}>{sourceLabel(a)}</option>)}
                       <option value={CONST}>Type a value…</option>
                       {!r.required && <option value={SKIP}>Skip</option>}

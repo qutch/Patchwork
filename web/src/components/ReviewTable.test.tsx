@@ -129,6 +129,41 @@ describe("ReviewTable", () => {
     expect(constProblem({ type: "text" }, "anything")).toBeNull();
   });
 
+  it("matches the backend on edge cases: Python float(), real dates, links with a host, exact choices", () => {
+    for (const ok of ["12.", "1e3", "-.5", "1_000", "1,299.50", " 7 "]) expect(constProblem({ type: "number" }, ok)).toBeNull();
+    for (const bad of ["0x10", "0b1", "0o7", "Infinity", "NaN", "1__0", "_1", "1e"]) expect(constProblem({ type: "number" }, bad)).toBe("Expected a number");
+    expect(constProblem({ type: "date" }, "0000-01-01")).toBe("Expected a date YYYY-MM-DD");
+    expect(constProblem({ type: "date" }, "0099-03-01")).toBeNull();
+    for (const bad of ["http://:80", "http://[::1", "http://u:p@/x", "https://"]) expect(constProblem({ type: "url" }, bad)).toMatch(/http/);
+    expect(constProblem({ type: "one_of", values_allowed: [" X "] }, " X ")).toBeNull();
+    expect(constProblem({ type: "one_of", values_allowed: [" X "] }, "X")).toMatch(/Choose one of/);
+  });
+
+  it("sends a typed value trimmed, and a picked choice exactly", () => {
+    const onDecide = vi.fn();
+    const rows: ReviewRow[] = [{ ...ROWS[2], type: "number" }, { ...ROWS[2], dest_field: "Channel", type: "one_of", values_allowed: [" X ", "Y"] }];
+    render(<ReviewTable rows={rows} pages={PAGES} onDecide={onDecide} />);
+    fireEvent.change(screen.getByLabelText("Source for Store"), { target: { value: "const" } });
+    fireEvent.change(screen.getByLabelText("Value for Store"), { target: { value: " 5 " } });
+    fireEvent.change(screen.getByLabelText("Source for Channel"), { target: { value: "const" } });
+    fireEvent.change(screen.getByLabelText("Value for Channel"), { target: { value: " X " } });
+    fireEvent.click(screen.getByRole("button", { name: /Approve/ }));
+    expect(onDecide).toHaveBeenCalledWith("approve", [
+      { dest_field: "Store", choice: { const: "5" } },
+      { dest_field: "Channel", choice: { const: " X " } },
+    ]);
+  });
+
+  it("a required field proposed as skipped must be chosen: no 'as proposed', approval blocked", () => {
+    const rows: ReviewRow[] = [{ ...ROWS[0], source: { skip: true }, status: "checked", required: true, ai_proposed: true }];
+    render(<ReviewTable rows={rows} pages={PAGES} onDecide={() => {}} />);
+    const opts = [...(screen.getByLabelText("Source for Product") as HTMLSelectElement).options].map((o) => o.value);
+    expect(opts).not.toContain("keep");
+    expect(opts).not.toContain("skip");
+    expect((screen.getByRole("button", { name: /Approve/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("needs you")).toBeTruthy();
+  });
+
   it("shows numeric example values", () => {
     const rows: ReviewRow[] = [{ ...ROWS[1], values: { p1: 328, p2: 0 } }];
     render(<ReviewTable rows={rows} pages={PAGES} onDecide={() => {}} />);

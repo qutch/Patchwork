@@ -93,6 +93,12 @@ describe("wizard API (mock)", () => {
     const resume = (edits: unknown) => api.resume(thread_id, { interrupt_id: pending!.interrupt_id, decision: "approve", edits: edits as never });
     expect(await status(resume([{ dest_field: required.dest_field, choice: { skip: true } }]))).toBe(422);
     expect(await status(resume([{ dest_field: numeric.dest_field, choice: { const: "about ten" } }]))).toBe(422);
+    expect(await status(resume([{ dest_field: numeric.dest_field, choice: { const: "0x10" } }]))).toBe(422);
+    const dated = review.find((r) => r.type === "date");
+    if (dated) expect(await status(resume([{ dest_field: dated.dest_field, choice: { const: "2026-02-30" } }]))).toBe(422);
+    const linked = review.find((r) => r.type === "url");
+    if (linked) expect(await status(resume([{ dest_field: linked.dest_field, choice: { const: "http://:80" } }]))).toBe(422);
     expect((await api.thread(thread_id)).pending?.interrupt_id).toBe(pending!.interrupt_id);
+    expect(await status(resume([{ dest_field: numeric.dest_field, choice: { const: "1,299.50" } }]))).toBe(200);
   });
 });

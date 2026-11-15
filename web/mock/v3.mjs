@@ -335,14 +335,26 @@ export function createV3(h) {
       return { dest_field: n, source: "skipped", values: byPage(() => null), ai_proposed: false, status: "checked", alternatives: [] };
     }
   }
-  /** Why a typed value does not fit the row's field (the backend's V15 rule checks), or null. */
+  /** Why a typed value does not fit the row's field (the backend's V15 rule checks, as ReviewTable's constProblem), or null. */
   function constProblem(row, v) {
+    if (!String(v).trim()) return "a constant must not be empty";
+    if (row.type === "one_of" && row.values_allowed?.length) return row.values_allowed.includes(String(v)) ? null : `not one of ${row.values_allowed.join(", ")}`;
     const s = String(v).trim();
-    if (!s) return "a constant must not be empty";
-    if (row.values_allowed?.length) return row.values_allowed.includes(s) ? null : `not one of ${row.values_allowed.join(", ")}`;
-    if ((row.type === "number" || row.type === "integer") && !Number.isFinite(Number(s.replace(/,/g, "")))) return `expected a number, got '${s}'`;
-    if (row.type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(s)) return `expected a date YYYY-MM-DD, got '${s}'`;
-    if (row.type === "url" && !/^https?:\/\/\S+$/i.test(s)) return `expected an absolute http(s) URL, got '${s}'`;
+    if (row.type === "number" || row.type === "integer") {
+      const t = s.replace(/,/g, "").replace(/(\d)_(?=\d)/g, "$1");
+      if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(t) || !Number.isFinite(Number(t))) return `expected a number, got '${s}'`;
+    }
+    if (row.type === "date") {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+      const d = m && +m[1] >= 1 ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
+      if (d && m) d.setUTCFullYear(+m[1]);
+      if (!m || !d || d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return `expected a date YYYY-MM-DD, got '${s}'`;
+    }
+    if (row.type === "url") {
+      let host = "";
+      try { host = /^https?:\/\/\S+$/i.test(s) ? new URL(s).hostname : ""; } catch { host = ""; }
+      if (!host) return `expected an absolute http(s) URL, got '${s}'`;
+    }
     return null;
   }
   function startTeach(draft) {
