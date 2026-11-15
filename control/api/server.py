@@ -22,6 +22,7 @@ from control import drafts, ops
 from control.api import credentials, demo, drafts as drafts_api, pages, recordings, sse
 from control.api.runs import CredentialMissing, RunManager, RunStartError
 from control.api.settings import Settings, load_dotenv
+from control.api.ui import mount_ui
 from control.autorun import AutoRunner, Busy
 from control.page_hooks import PageHooks
 from control.pages import PageInbox
@@ -654,4 +655,5 @@ def create_app(*, agent: Any | None = None, dotenv: bool = True) -> FastAPI:
     app.include_router(pages.router)
     app.include_router(credentials.router)
     app.include_router(drafts_api.router)
+    mount_ui(app)  # the built UI (web/dist) on this port, when there is one; /api is untouched
     return app
