@@ -27,6 +27,53 @@ confirmed by the owner**. Build to them, but change course if the owner overrule
 5. *(Default, to confirm)* **2-3 real invoice PDFs are OK for rehearsal only.** Keep them outside the repo (never commit real personal or
    company data) and put made-up look-alikes in `fixtures/`.
 
+## Update (2026-11-14, evening): G4–G7 are yours now
+
+The owner moved G4–G7 from the lead's agents to you (and your agents). The task text is in
+`docs/superpowers/plans/2026-11-14-generalized-input.md` (Task G4 onwards); read its Global Constraints and Review
+Focus first. Lane G (G1–G3) and the whole New integration wizard (plan A lanes 1–3) are on `main`.
+
+**Ownership change.** For G4–G7 you may edit the files those tasks name, including `control/*.py`, `control/api/`,
+`agents/` and `runner/pipeline.py`. The "Your files" list under Rules below still applies to tasks 1–7 of this
+file. `web/` and plan A Task 9 (`scripts/smoke_v2.py`, `fixtures/events/`, `fixtures/papers/`,
+`demo_apps/fake_papers_api/`) stay with the lead.
+
+**What is already built, and what to reuse:**
+- `runner/pipeline.py` `process_document(integ, record, http, store)`: one document → many rows. Every row is
+  validated and its body built before the first send; a failed declared check (`sum_equals`, …) holds the whole
+  document (`VALIDATION_FAILED`, both numbers in the detail) and writes nothing. Don't write a second one.
+- `runner/rows.py` reads tables from `record["tables"]` when present (a list of `{header, rows, where}`), else from
+  `record["html"]` via `runner.documents.read_html`. Two G2 tests skip until `runner/documents.py` exists.
+- `runner/clean.py`: the cleaners (`money`, `number`, `date`, …). Ambiguous values are refused, never guessed.
+- `docs/contracts.md` V18 (rows, `clean`, cross-checks, per-row records) is the last section of the file: put V17
+  (the document record and inbox) above it.
+
+**Fixed names (the code already depends on them):**
+- Document flags on a record: `no_text_layer`, `encrypted`, `unreadable`. `runner/documents.py` and G4 must use
+  exactly these. For `unreadable`, the error text is read from `meta["error"]`.
+- The sender address is `meta["from"]` (bare, lower-cased), as Task 2 above says; G4 routes by its domain.
+
+**Known gaps to handle in G4–G6:**
+- **Per-record vs per-document.** `store.latest_outcomes` (the tracker and UI) still keys on record id, so one
+  document can show as held (`doc-1`) and as written rows (`doc-1#2`). Re-running held documents already groups by
+  document (`quarantined_raw(name, id_field=RECORD_ID)`); make G4's inbox and the outcomes it reports do the same.
+- **Footer rows in tables.** A table select has no declared `skip`, so a footer row that is not a sum ("Tax",
+  "Shipping") holds every such document. Safe, but LEARN (G5–G6) must know: propose a `skip` pattern or a `require`
+  on a numeric column that footers leave empty.
+- **Rows that look like a total are held.** A kept row whose numeric cells equal the sum of the other rows holds
+  the document, even when it is real data (e.g. quantities 1, 1, 2). Expect some holds on single-number tables.
+- **`lines` selects without `after`.** Any text above the first item must be blank or matched by `skip`, or the
+  document is held. Give LEARN's line readers an `after` anchor (the column-heading line).
+- **`number` vs `money`.** Only `money` refuses an ambiguous `1.299`; `number` follows the declared decimal mark.
+- **`json_path` + `regex`** is now a valid refine (the regex runs on the JSON value). Agent code that treated a
+  regex next to `json_path` as a primary text regex may need checking.
+- **Runs of one integration never overlap** (`runner/run.py` `run_lock`). A run waits for the other; don't start
+  two runs of one integration from a test and expect them to interleave.
+
+**Overlap with the lead.** Plan A Task 9 may make small changes to `agents/scripted_v2.py` or `agents/learn.py`,
+which G5–G6 also touch. Pull `main` before you start on those two files; the lead pushes Task 9 as soon as its
+review passes.
+
 ## Rules (same as the rest of the project)
 
 - **No AI, no network:** everything you write is plain code (`runner/` is AI-free and must stay that way). No
