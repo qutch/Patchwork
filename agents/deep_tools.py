@@ -127,6 +127,50 @@ def is_page_integration(spec: dict | None) -> bool:
     return bool(spec) and (spec.get("source") or {}).get("base_url") == CONTROL_SOURCE
 
 
+def source_fields(spec: dict) -> tuple[str, str]:
+    """The record fields a spec's readers use: (html_field, text_field)."""
+    src = spec.get("source") or {}
+    return src.get("html_field") or "html", src.get("text_field") or "text"
+
+
+def check_candidate(parser: dict, rec: dict, spec: dict) -> dict:
+    """Run a candidate parser and every LEARN check on one page or document. Pure: no events, no I/O. Shared by
+    `test_page_parser`, `save_parser`, `add_site_parser` and the scripted agent (plan G5).
+
+    Returns `{"error", "fields"}` when the candidate does not read the record, else `{fields, rows, skipped,
+    evidence, rows_checks, ambiguous, evidence_ok, rows_ok, all_corroborated, cross_checks_passed}`. For a page
+    `rows` and `rows_checks` are empty and `rows_ok` is true: the result is what the page checks always gave."""
+    html_field, text_field = source_fields(spec)
+    validate = spec.get("validate") or []
+    doc = learn.is_document(rec) or bool((parser or {}).get("rows"))
+    if doc:
+        out = learn.run_document_parser(parser, rec, html_field, text_field)
+        if "error" in out:
+            return {"error": out["error"], "fields": out.get("fields", {})}
+        fields, rows, skipped = out["fields"], out["rows"], out["skipped"]
+    else:
+        out = learn.run_page_parser(parser, rec, html_field, text_field)
+        if "error" in out:
+            return {"error": out["error"], "fields": out.get("fields", {})}
+        fields, rows, skipped = out, [], []
+    ev = learn.evidence(rec, fields, validate, parser=parser, html_field=html_field, text_field=text_field)
+    for item in ev:  # a value written into the regex is not read from the page (`About Us (Visa)`)
+        fixed = learn.literal_capture(str(((parser.get("fields") or {}).get(item["name"]) or {}).get("regex") or ""))
+        if fixed is not None:
+            item["ok"] = False
+            item["detail"] = (f"the regex captures the fixed text {fixed!r}: it would write {fixed!r} for every "
+                              "page. Read the value from the page instead (a JSON-LD field, a heading, a meta tag)")
+    for item in ev:
+        item["corroborated"] = learn.corroborated(rec, item["value"], html_field)
+    amb = learn.ambiguity(rec, parser, html_field)
+    checks = (learn.rows_checks(rec, parser, rows, validate, skipped=skipped, doc_fields=fields,
+                                html_field=html_field, text_field=text_field) if parser.get("rows") else [])
+    return {"fields": fields, "rows": rows, "skipped": skipped, "evidence": ev, "rows_checks": checks,
+            "ambiguous": amb, "evidence_ok": all(i["ok"] for i in ev), "rows_ok": all(c["ok"] for c in checks),
+            "all_corroborated": all(i["corroborated"] for i in ev),
+            "cross_checks_passed": sum(1 for c in checks if c.get("cross") and c["ok"])}
+
+
 class ToolContext:
     """Per-thread state shared by the tools.
 
@@ -1130,6 +1174,19 @@ def _port_plus_one(url: str) -> str:
 # ---- the tools ---------------------------------------------------------------------------
 
 # Descriptions the tools are registered with (the model reads these). Domain-free: no field or subject is assumed.
+_ROWS_HINT = (
+    "\nrows: one record per row of the document. The parser also needs `rows` (checked in code):\n"
+    "  select: {table: {columns: [<header names>]}} | {css: \"<one row element>\"} | {lines: {after: <regex of the "
+    "line before the first row>, before: <regex of the line after the last row>, match: <regex with a named group "
+    "per cell>, skip?: <regex of lines to ignore>}}\n"
+    "  fields: {<row field>: {column: <header or group name>} | {index: N} | {css: <relative selector>, attr?} | "
+    "{regex: <one group>}}, each with optional cast and clean (money, number, {date: [<formats>]}, {split: "
+    "{sep, part}}, strip, upper, lower)\n"
+    "  require: [fields a real row always has; a footer or total row leaves one empty]\n"
+    "row fields (exactly these, one value per row): {row_fields}\n"
+    "A footer, a repeated heading or a total must be skipped for a reason the code can see; a declared "
+    "cross-check (sum, product or count) must hold on this document.")
+
 TOOL_DOCS: dict[str, str] = {
     "propose_mapping": (
         "Map EVERY destination field to where its value comes from, checked in code on the first example page. "
@@ -1827,39 +1884,39 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         common = set.intersection(*(set(p.get("fields") or {}) for p in parsers))
         return [f for f in parsers[0]["fields"] if f in common]
 
+    def _has_rows(spec: dict) -> bool:
+        parsers = (spec.get("extract") or {}).get("parsers") or []
+        return bool(parsers) and all(isinstance(p.get("rows"), dict) for p in parsers)
+
+    def _row_fields_wanted(spec: dict) -> list[str]:
+        """The row fields every parser of a rows spec reads (the destination gets document fields + these)."""
+        if not _has_rows(spec):
+            return []
+        parsers = (spec.get("extract") or {}).get("parsers") or []
+        common = set.intersection(*(set(p["rows"].get("fields") or {}) for p in parsers))
+        return [f for f in parsers[0]["rows"]["fields"] if f in common]
+
     def _fields_of(spec: dict) -> tuple[str, str]:
-        src = spec.get("source") or {}
-        return src.get("html_field") or "html", src.get("text_field") or "text"
+        return source_fields(spec)
 
     def _typed(parser: dict, rec: dict, spec: dict) -> dict:
         """V15: every jsonld reader carries an explicit jsonld_type, filled from this page when missing."""
         return learn.with_jsonld_types(parser, rec.get(_fields_of(spec)[0]) or "")
 
     def _check(parser: dict, rec: dict, spec: dict) -> dict:
-        """Run a candidate and every LEARN check on one page. Pure, apart from the evidence event."""
-        html_field, text_field = _fields_of(spec)
-        out = learn.run_page_parser(parser, rec, html_field, text_field)
-        if "error" in out:
-            return {"error": out["error"], "fields": out.get("fields", {})}
-        ev = learn.evidence(rec, out, spec.get("validate") or [], parser=parser, html_field=html_field,
-                            text_field=text_field)
-        for item in ev:  # a value written into the regex is not read from the page (`About Us (Visa)`)
-            fixed = learn.literal_capture(str(((parser.get("fields") or {}).get(item["name"]) or {}).get("regex") or ""))
-            if fixed is not None:
-                item["ok"] = False
-                item["detail"] = (f"the regex captures the fixed text {fixed!r}: it would write {fixed!r} for every "
-                                  "page. Read the value from the page instead (a JSON-LD field, a heading, a meta tag)")
-        for item in ev:
-            item["corroborated"] = learn.corroborated(rec, item["value"], html_field)
-        amb = learn.ambiguity(rec, parser, html_field)
-        return {"fields": out, "evidence": ev, "ambiguous": amb,
-                "evidence_ok": all(i["ok"] for i in ev), "all_corroborated": all(i["corroborated"] for i in ev)}
+        """Run a candidate and every LEARN check on one page or document (`check_candidate`)."""
+        return check_candidate(parser, rec, spec)
 
     def _emit_evidence(rec: dict, parser: dict, checks: dict) -> None:
+        extra = {}
+        if parser.get("rows") is not None:  # V18: the rows and the checks that were run on them
+            extra["rows"] = {"count": len(checks.get("rows") or []),
+                             "checks": [{k: c[k] for k in ("name", "ok", "detail") if k in c}
+                                        for c in checks.get("rows_checks", [])]}
         ctx.svc.emit(ctx.t, "evidence", page_id=rec.get("id"), parser_id=parser.get("id") or "candidate",
                      fields=[{k: i[k] for k in ("name", "value", "ok", "where", "extractor", "corroborated")}
                              for i in checks.get("evidence", [])],
-                     ok=bool(checks.get("evidence_ok")))
+                     ok=bool(checks.get("evidence_ok")) and bool(checks.get("rows_ok", True)), **extra)
 
     def _vet_parser(parser: Any, rec: dict, spec: dict, *, default_id: str) -> tuple[dict, dict, str] | str:
         """The checks every parser for a page passes before it is written (save_parser, add_site_parser):
@@ -1888,6 +1945,16 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         if sorted(p["fields"]) != sorted(wanted):
             return (f"REFUSED: parser fields {sorted(p['fields'])} must be exactly the integration's fields "
                     f"{sorted(wanted)} (every parser feeds the same destination fields)")
+        if _has_rows(spec):  # V18: the integration writes one record per row
+            if not isinstance(p.get("rows"), dict):
+                return ("REFUSED: this integration reads many rows from one document: the parser needs `rows` "
+                        "({select, fields, require?, hold?}) next to its document `fields`")
+            row_wanted = _row_fields_wanted(spec)
+            if sorted(p["rows"].get("fields") or {}) != sorted(row_wanted):
+                return (f"REFUSED: parser rows.fields {sorted(p['rows'].get('fields') or {})} must be exactly the "
+                        f"integration's row fields {sorted(row_wanted)}")
+        elif p.get("rows") is not None:
+            return "REFUSED: this integration reads one record per document; a parser with `rows` does not fit it"
         checks = _check(p, rec, spec)
         if "error" in checks:
             return f"REFUSED: the parser does not read this page: {checks['error']}"
@@ -1895,6 +1962,9 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         if not checks["evidence_ok"]:
             bad = [f"{i['name']}={i['value']!r} ({i.get('detail')})" for i in checks["evidence"] if not i["ok"]]
             return f"REFUSED: evidence check failed, nothing compiled: {'; '.join(bad)}"
+        if not checks["rows_ok"]:
+            bad = next(c for c in checks["rows_checks"] if not c["ok"])
+            return f"REFUSED: rows check {bad['name']} failed: {bad.get('detail') or 'see the check'}"
         # Platform or company? A tenant of a multi-tenant platform (visa.wd5.myworkdayjobs.com) gets the platform
         # match (*.myworkdayjobs.com) if the parser also reads at least half of the other companies' stored pages
         # there (newest page per host). A company it misses is held (PARSE_NO_MATCH, never a wrong row) and learns
@@ -1956,7 +2026,15 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                     f"{k} ({v.get('type')}{', required' if v.get('required') else ''})" for k, v in dest.items())
             except Exception:  # noqa: BLE001 - the outline is still useful without them
                 pass
-        return (learn.page_outline(rec, prefer_types=learn.integration_jsonld_types(spec))
+        doc = learn.is_document(rec)
+        outline = (learn.document_outline(rec) if doc
+                   else learn.page_outline(rec, prefer_types=learn.integration_jsonld_types(spec)))
+        if _has_rows(spec):
+            hint += _ROWS_HINT.replace("{row_fields}", ", ".join(_row_fields_wanted(spec)) or "?")
+            shown = [f"{p['id']}: {json.dumps(p['rows'], ensure_ascii=False)[:600]}"
+                     for p in (spec.get("extract") or {}).get("parsers") or []][:3]
+            hint += "\nhow existing parsers select rows: " + "; ".join(shown)
+        return (outline
                 + f"\n\nintegration: {ctx.name}" + (f" ({intent})" if intent else "")
                 + f"\nfields to extract (exactly these): {', '.join(wanted) or '?'}"
                 f"\nvalidation: {', '.join(rules) or 'none'}\nexisting parsers: {', '.join(known) or 'none'}"
@@ -1994,9 +2072,19 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
                                          **({"problem": i["detail"]} if i.get("detail") else {})}
                              for i in checks["evidence"]},
                   "ambiguous": checks["ambiguous"]}
+        if parser.get("rows") is not None:
+            report["rows"] = {"count": len(checks["rows"]),
+                              "checks": {c["name"]: c["ok"] for c in checks["rows_checks"]},
+                              "failed": {c["name"]: c.get("detail", "") for c in checks["rows_checks"] if not c["ok"]},
+                              "first": [r.fields for r in checks["rows"][:3]]}
+            if checks["skipped"]:
+                report["rows"]["skipped"] = [{k: x[k] for k in ("text", "reason")} for x in checks["skipped"][:5]]
         if wanted and set(checks["fields"]) != set(wanted):
             report["problem"] = f"the parser must extract exactly {wanted}"
-        verdict = "OK" if checks["evidence_ok"] and "problem" not in report else "FAILED"
+        row_wanted = _row_fields_wanted(spec)
+        if row_wanted and set((parser.get("rows") or {}).get("fields") or {}) != set(row_wanted):
+            report["problem"] = f"rows.fields must be exactly {row_wanted}"
+        verdict = "OK" if checks["evidence_ok"] and checks["rows_ok"] and "problem" not in report else "FAILED"
         hint = ("save it with save_parser" if verdict == "OK" and not checks["ambiguous"] else
                 "an ambiguous selector reads several values: use a more specific one" if checks["ambiguous"] else
                 "fix the failing fields")
@@ -2043,9 +2131,11 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
         new["extract"]["parsers"].append(p)
         additive = learn.additive_parser_patch(active, new)
         policy = ctx.learn_policy()
+        is_doc = learn.is_document(rec)
         pre_auto, _ = learn.d2_decision(policy=policy, tests_passed=True, evidence_ok=True,
                                         all_corroborated=checks["all_corroborated"], ambiguous=ambiguous,
-                                        additive=additive)
+                                        additive=additive, is_document=is_doc,
+                                        cross_checks_passed=checks["cross_checks_passed"])
         p["origin"]["approved_by"] = "auto" if pre_auto else "human"
         text = _ydump(new, sort_keys=False, width=200)
         errors = ctx.validate_spec_text(text)
@@ -2053,26 +2143,42 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             return "REFUSED (nothing saved):\n" + "\n".join(f"- {e}" for e in errors)
         ctx.spec_path.write_text(text)
         ctx.svc.emit(ctx.t, "artifact", kind="spec", name=ctx.name, version=None, path=str(ctx.spec_path))
-        # golden example: this page and the row it must produce (values already evidenced above)
-        body = {}
-        for k, vs in sink_values(new).items():
-            try:
-                v = eval_value(vs, values, rec)
-            except (KeyError, ValueError, TypeError, Quarantine) as e:
-                return f"ERROR: cannot compute {k} for the golden example: {e}"
-            body[k] = str(v) if sink_kind(new) == "form" and v is not None else v
-        if _typing_module(sink_kind(new)) is not None:  # typed per the active version's table snapshot (V14, V16)
-            try:
-                convert_body = _typing_module(sink_kind(new)).convert_body
-                snap = workspace_dir() / "integrations" / ctx.name / f"v{Store().active_version(ctx.name)}" / "contract" / "openapi.json"
-                if snap.exists():
-                    body = convert_body(json.loads(snap.read_text()), body, drop_empty=False)
-            except (Quarantine, KeyError, ValueError) as e:
-                return f"ERROR: cannot type {list(body)} for the golden example: {e}"
+        # golden example: this page and the row(s) it must produce (values already evidenced above)
+        def golden_body(fields: dict, record: dict) -> dict | str:
+            body: dict = {}
+            for k, vs in sink_values(new).items():
+                try:
+                    v = eval_value(vs, fields, record)
+                except (KeyError, ValueError, TypeError, Quarantine) as e:
+                    return f"ERROR: cannot compute {k} for the golden example: {e}"
+                body[k] = str(v) if sink_kind(new) == "form" and v is not None else v
+            if _typing_module(sink_kind(new)) is not None:  # typed per the active version's table snapshot (V14, V16)
+                try:
+                    convert_body = _typing_module(sink_kind(new)).convert_body
+                    snap = workspace_dir() / "integrations" / ctx.name / f"v{Store().active_version(ctx.name)}" / "contract" / "openapi.json"
+                    if snap.exists():
+                        body = convert_body(json.loads(snap.read_text()), body, drop_empty=False)
+                except (Quarantine, KeyError, ValueError) as e:
+                    return f"ERROR: cannot type {list(body)} for the golden example: {e}"
+            return body
+
+        if p.get("rows") is not None:  # V18: one body per row, each computed with that row's number and count
+            bodies = []
+            for row in checks["rows"]:
+                b = golden_body({**values, **row.fields}, {**rec, "row_no": row.no, "row_count": len(checks["rows"])})
+                if isinstance(b, str):
+                    return b
+                bodies.append(b)
+            expect: dict = {"rows": bodies}
+        else:
+            b = golden_body(values, rec)
+            if isinstance(b, str):
+                return b
+            expect = {"body": b}
         ex_path = ctx.wd / "examples.yaml"
         examples = (_yload(ex_path.read_text()) if ex_path.exists() else None) or []
         ex_name = re.sub(r"[^a-z0-9]+", "_", f"learned_{p['id']}_{rec.get('id')}".lower())
-        examples = [e for e in examples if e.get("name") != ex_name] + [{"name": ex_name, "record": rec, "expect": {"body": body}}]
+        examples = [e for e in examples if e.get("name") != ex_name] + [{"name": ex_name, "record": rec, "expect": expect}]
         ex_path.write_text(_ydump(examples, sort_keys=False, width=200))
         try:
             built = ctx.compile_and_test(ctx.spec_path)
@@ -2087,7 +2193,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             return f"FAILED: v{version} compiled but its tests failed; not deployed:\n{built['tests_summary'][-1500:]}"
         auto, reasons = learn.d2_decision(policy=policy, tests_passed=tests_passed, evidence_ok=True,
                                           all_corroborated=checks["all_corroborated"], ambiguous=ambiguous,
-                                          additive=additive)
+                                          additive=additive, is_document=is_doc,
+                                          cross_checks_passed=checks["cross_checks_passed"])
         base = {"integration": ctx.name, "parser_id": p["id"], "site": site, "version": version}
         ctx.learn_result = {"page_id": rec.get("id"), "parser_id": p["id"], "site": site, "version": version,
                             "deployed": False, "approval": "pending"}
@@ -2100,7 +2207,9 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
             ctx.deploy_result = {"deployed": True, "version": version}
             ctx.learn_result.update(deployed=True, approval="auto")
             ctx.svc.emit(ctx.t, "learned", **base, deployed=True, approval="auto",
-                         reason="every check passed (evidence, corroboration, no ambiguity, one parser added, tests)")
+                         reason=("every check passed (evidence, a declared cross-check, no ambiguity, one parser added, tests)"
+                                 if is_doc else
+                                 "every check passed (evidence, corroboration, no ambiguity, one parser added, tests)"))
             ctx.svc.emit(ctx.t, "deployed", name=ctx.name, version=version, previous_version=result["previous_version"])
             return (f"deployed v{version} automatically: parser {p['id']} for {p['match'].get(route_key, site)}{scope_note} "
                     "passed every check. Done: report the result in one sentence.")

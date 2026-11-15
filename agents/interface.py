@@ -58,7 +58,8 @@ EVENT_TYPES = {
     "done": ["result"],
     "error": ["message"],
     # v2 (contracts V10). UIs ignore types they don't know.
-    "evidence": ["page_id", "parser_id", "fields", "ok"],  # fields: [{name, value, ok, where, extractor}]
+    "evidence": ["page_id", "parser_id", "fields", "ok"],  # fields: [{name, value, ok, where, extractor}];
+    #   a rows parser (V18) adds `rows: {count, checks: [{name, ok, detail?}]}`
     "learned": ["integration", "parser_id", "site", "version", "deployed", "approval", "reason"],  # auto|human|pending
     # TEACH from examples (wizard A). request_deploy also carries `review` (empty outside that mode):
     # [{dest_field, source, values: {page_id: value}, ai_proposed, status: checked|needs_you, alternatives: [source]}].
