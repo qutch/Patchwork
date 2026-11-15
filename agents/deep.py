@@ -386,9 +386,11 @@ class DeepAgentService(ThreadedAgentService):
         subagents = []
         if learn:  # V15: the learner is told this integration's intent and fields, never a fixed domain
             spec = ctx.spec_dict() if ctx.spec_path.exists() else {}
-            subagent_defs = {**subagent_defs, "learner": (prompts.learner_description(spec),
-                                                          prompts.learner_prompt(spec, ctx.name),
-                                                          subagent_defs["learner"][2])}
+            document = str(ctx.page_id or "").startswith("doc-")  # contracts V17: a document, not a page
+            subagent_defs = {**subagent_defs, "learner": (
+                prompts.learner_description(spec),
+                prompts.document_learner_prompt(spec) if document else prompts.learner_prompt(spec, ctx.name),
+                subagent_defs["learner"][2])}
         for sname, (desc, prompt, tool_names) in subagent_defs.items():
             subagents.append({
                 "name": sname, "description": desc, "system_prompt": prompt,

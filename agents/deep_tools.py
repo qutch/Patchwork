@@ -1188,6 +1188,29 @@ _ROWS_HINT = (
     "cross-check (sum, product or count) must hold on this document.")
 
 TOOL_DOCS: dict[str, str] = {
+    "get_page": (
+        "The page or document to learn, as a compact outline. A page: title, headings, meta tags, JSON-LD, each line "
+        "with an extractor that reads it ({css: …}, {css: …, attr: content}, {jsonld: …}). A document: its meta lines "
+        "(sender, subject, file), its tables (`T<n> columns` and the first rows) and its numbered text lines "
+        "(`L<n>`). Also the fields every parser of this integration must extract (and, when it reads many rows from "
+        "one document, the row fields and how to select rows), its validation rules including the declared "
+        "cross-checks, and the parsers it already has."),
+    "test_page_parser": (
+        "Test a candidate parser on the page or document: {\"id\": \"<site_name>\", \"fields\": {\"<field>\": "
+        "{\"css\": \"h1\"}, \"<other field>\": {\"jsonld\": \"<path>\", \"jsonld_type\": \"<@type>\"}}}, one entry "
+        "per field get_page lists. Extractors: {css, attr?, regex?} | {jsonld, jsonld_type, regex?} | {regex} | "
+        "{json_path, regex?} (regex = refine, group 1), each with optional `clean` and `cast`. Returns each value with "
+        "its evidence (where it occurs), whether the page title/meta/JSON-LD corroborate it, and ambiguous "
+        "selectors. A parser for a document that reads many rows also has `rows`: {select, fields, require?, hold?}; "
+        "the result then lists the rows read, every rows check (`values_in_own_row`, `required_present`, "
+        "`no_duplicate_rows`, `skips_explained`, `row_count`, `rules_hold`, and one per declared cross-check) and why "
+        "one failed. `page_id`: another page or document than the thread's."),
+    "save_parser": (
+        "Add the tested parser to the integration for this page's or document's site, compile and test the new "
+        "version. Deployed automatically only if every code check passes (evidence, corroboration, no ambiguity, "
+        "only one parser added, tests, learn policy); otherwise a person is asked. A rows parser is refused when any "
+        "rows check fails (`REFUSED: rows check <name> failed: <why>`), and a document is deployed automatically "
+        "only when a declared cross-check also passed on it."),
     "propose_mapping": (
         "Map EVERY destination field to where its value comes from, checked in code on the first example page. "
         "`mapping` is {<destination field>: <source>}, one source per field:\n"
@@ -2506,6 +2529,8 @@ def tool_functions(ctx: ToolContext) -> dict[str, Any]:
 
     propose_mapping.__doc__ = TOOL_DOCS["propose_mapping"]
     add_site_parser.__doc__ = TOOL_DOCS["add_site_parser"]
+    for _tool in (get_page, test_page_parser, save_parser):  # one description for both agents (V18)
+        _tool.__doc__ = TOOL_DOCS[_tool.__name__]
     fns = {
         "propose_mapping": propose_mapping, "add_site_parser": add_site_parser,
         "get_page": get_page, "test_page_parser": test_page_parser, "save_parser": save_parser,

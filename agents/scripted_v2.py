@@ -12,6 +12,7 @@ parsers already use, then the field's name as a JSON-LD path on the page's types
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -60,6 +61,60 @@ def generic_candidates(name: str, spec: dict, rec: dict) -> list[dict]:
     return uniq
 
 
+# ---- documents with rows (contracts V17, V18): the choices a model would make, as fixed rules ----------------
+_NUM = r"[\(\-]?[$€£]?\d[\d,]*(?:\.\d+)?\)?"  # one number-like token (no capture group)
+_NUM_TOKEN = re.compile("^" + _NUM + "$")
+_MONEYISH = re.compile(r"^\(?-?[$€£]\s?\d[\d,]*(?:\.\d+)?\)?$|^\(?-?\d[\d,]*\.\d{2}\)?$")
+_INTISH = re.compile(r"^\d+$")
+
+
+def _norm(s: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(s).lower()).strip()
+
+
+def _group_name(word: str, taken: set[str]) -> str:
+    base = re.sub(r"[^a-z0-9]+", "_", word.lower()).strip("_") or "c"
+    base = base if base[0].isalpha() else f"c_{base}"
+    name, n = base, 2
+    while name in taken:
+        name, n = f"{base}_{n}", n + 1
+    taken.add(name)
+    return name
+
+
+def _kind_of(cells: list[str]) -> dict[str, Any]:
+    """`cast: int` for a column of whole numbers, `clean: money` when at least 80% of its cells look like money."""
+    cells = [c.strip() for c in cells if str(c).strip()]
+    if not cells:
+        return {}
+    if all(_INTISH.match(c) for c in cells):
+        return {"cast": "int"}
+    if sum(1 for c in cells if _MONEYISH.match(c)) / len(cells) >= 0.8:
+        return {"clean": "money"}
+    return {}
+
+
+def _existing_columns(spec: dict) -> dict[str, str]:
+    """Row field -> the column (or group) name an existing parser reads it from."""
+    out: dict[str, str] = {}
+    for p in (spec.get("extract") or {}).get("parsers") or []:
+        for name, f in ((p.get("rows") or {}).get("fields") or {}).items():
+            if isinstance(f, dict) and f.get("column"):
+                out.setdefault(name, str(f["column"]))
+    return out
+
+
+def _labels_of(spec: dict, name: str) -> list[str]:
+    """The words a field is labelled with: its own name, then the leading words of the regexes existing parsers use."""
+    labels = [" ".join(w for w in re.split(r"[^A-Za-z0-9]+", name) if w)]
+    for p in (spec.get("extract") or {}).get("parsers") or []:
+        f = (p.get("fields") or {}).get(name)
+        m = re.match(r"\^?([A-Za-z][A-Za-z ]*[A-Za-z])", str(f.get("regex") or "")) if isinstance(f, dict) else None
+        if m:
+            labels.append(m.group(1))
+    return [x for x in dict.fromkeys(labels) if x]
+
+
 def _ok(out: str) -> bool:
     from agents.deep_tools import FAIL_PREFIXES
     s = out.lstrip()
@@ -87,6 +142,8 @@ class ScriptedV2Mixin:
         evidenced, corroborated and unambiguous on this page. None if a field has no such candidate."""
         from agents.deep_tools import site_parser_id
         parsers = (spec.get("extract") or {}).get("parsers") or []
+        if learn.is_document(rec) or any(isinstance(p.get("rows"), dict) for p in parsers):
+            return self.propose_rows_parser(rec, spec)  # V18: a document, or an integration that reads rows
         wanted = [f for f in (parsers[0]["fields"] if parsers else {}) if all(f in p["fields"] for p in parsers)]
         html_field = (spec.get("source") or {}).get("html_field") or "html"
         fields = {}
@@ -103,6 +160,144 @@ class ScriptedV2Mixin:
             else:
                 return None
         return {"id": site_parser_id(rec.get("site") or ""), "fields": fields}
+
+    # ---- LEARN on documents with rows ----------------------------------------------------------------
+    def propose_rows_parser(self, rec: dict, spec: dict) -> dict | None:
+        """The parser a model would write for a document (V18): readers for the document fields, and for the rows the
+        table whose header best matches the row fields, else a `lines` selector over the text. Every proposal is run
+        through `check_candidate` (evidence, rows checks, declared cross-checks); None when it does not pass, and the
+        document stays held."""
+        from agents.deep_tools import check_candidate, site_parser_id
+        parsers = (spec.get("extract") or {}).get("parsers") or []
+        doc_names = [f for f in (parsers[0].get("fields") or {}) if all(f in (p.get("fields") or {}) for p in parsers)] \
+            if parsers else []
+        rowed = bool(parsers) and all(isinstance(p.get("rows"), dict) for p in parsers)
+        row_names = [f for f in parsers[0]["rows"]["fields"]
+                     if all(f in p["rows"]["fields"] for p in parsers)] if rowed else []
+        fields = self._document_fields(rec, spec, doc_names)
+        if fields is None:
+            return None
+        pid = site_parser_id(rec.get("site") or "")
+        if not rowed:
+            probe = {"id": pid, "fields": fields}
+            res = check_candidate(probe, rec, spec)
+            return probe if "error" not in res and res["evidence_ok"] else None
+        block = self._table_block(rec, row_names, _existing_columns(spec)) or self._lines_block(
+            rec, spec, row_names, _existing_columns(spec))
+        if block is None:
+            return None
+        for require in row_names:  # a footer or a heading leaves one field empty; take the first that passes
+            parser = {"id": pid, "fields": fields, "rows": {**block, "require": [require]}}
+            res = check_candidate(parser, rec, spec)
+            if "error" not in res and res["evidence_ok"] and res["rows_ok"]:
+                return parser
+        return None
+
+    def _document_fields(self, rec: dict, spec: dict, names: list[str]) -> dict | None:
+        html_field = (spec.get("source") or {}).get("html_field") or "html"
+        text_field = (spec.get("source") or {}).get("text_field") or "text"
+        parsers = (spec.get("extract") or {}).get("parsers") or []
+        out: dict[str, dict] = {}
+        for name in names:
+            own = [dict(p["fields"][name]) for p in parsers if isinstance(p["fields"].get(name), dict)]
+            carry = {k: v for k, v in (own[0] if own else {}).items() if k in ("clean", "cast")}
+            by_label = [{"regex": "(?i)" + re.escape(lab).replace("\\ ", r"\s+") + r"\s*[:#]?\s*(\S+)", **carry}
+                        for lab in _labels_of(spec, name)]
+            for cand in own + by_label:
+                probe = {"id": "probe", "fields": {name: cand}}
+                got = learn.run_page_parser(probe, rec, html_field, text_field)
+                if "error" in got:
+                    continue
+                ev = learn.evidence(rec, got, spec.get("validate") or [], parser=probe, html_field=html_field,
+                                    text_field=text_field)
+                if ev[0]["ok"] and not learn.ambiguity(rec, probe, html_field):
+                    out[name] = cand
+                    break
+            else:
+                return None
+        return out
+
+    @staticmethod
+    def _table_block(rec: dict, row_names: list[str], hints: dict[str, str]) -> dict | None:
+        """The first table whose header has a column for every row field (the existing parsers' column, else the
+        field's own name), as a `rows` block without `require`."""
+        for t in rec.get("tables") or []:
+            header = [str(h) for h in t.get("header") or []]
+            mapping: dict[str, int] = {}
+            for f in row_names:
+                wanted = [x for x in (hints.get(f), " ".join(re.split(r"[^A-Za-z0-9]+", f))) if x]
+                idx = next((i for w in wanted for i, h in enumerate(header) if _norm(h) == _norm(w)), None)
+                if idx is None:
+                    idx = next((i for i, h in enumerate(header) if len(_norm(h)) >= 3 and (
+                        _norm(h) in _norm(wanted[-1]) or _norm(wanted[-1]) in _norm(h))), None)
+                if idx is None:
+                    break
+                mapping[f] = idx
+            if len(mapping) != len(row_names):
+                continue
+            first = mapping[row_names[0]]
+            body = [r for r in t.get("rows") or [] if first < len(r) and str(r[first]).strip()]
+            return {"select": {"table": {"columns": list(dict.fromkeys(header[i] for i in mapping.values()))}},
+                    "fields": {f: {"column": header[i], **_kind_of([r[i] for r in body if i < len(r)])}
+                               for f, i in mapping.items()}}
+        return None
+
+    @staticmethod
+    def _lines_block(rec: dict, spec: dict, row_names: list[str], hints: dict[str, str]) -> dict | None:
+        """A `lines` selector over the text: the rows are the longest run of consecutive lines with the same count
+        of number-like tokens at the end; `after` and `before` are the escaped first words of the lines around the
+        run (never their values); `match` has one named group per cell."""
+        text = rec.get((spec.get("source") or {}).get("text_field") or "text") or ""
+        lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
+        shapes = []
+        for ln in lines:
+            toks = ln.split()
+            k = 0
+            while k < len(toks) and _NUM_TOKEN.match(toks[len(toks) - 1 - k]):
+                k += 1
+            shapes.append(k if k >= 1 and len(toks) - k >= 1 else 0)
+        best, i = (0, 0, 0), 0
+        while i < len(lines):
+            if not shapes[i]:
+                i += 1
+                continue
+            j = i
+            while j + 1 < len(lines) and shapes[j + 1] == shapes[i]:
+                j += 1
+            best = max(best, (j - i + 1, i, j))
+            i = j + 1
+        n, first, last = best
+        if n < 2:
+            return None
+        k = shapes[first]
+        heading = lines[first - 1].split() if first > 0 else []
+        existing = [v for v in (hints.get(f) for f in row_names) if v]
+        taken: set[str] = set()
+        if len(heading) == k + 1:
+            names = [_group_name(w, taken) for w in heading]
+        elif len(existing) == len(row_names) == k + 1:
+            names = [_group_name(w, taken) for w in existing]
+        else:
+            names = [_group_name(f"c{x}", taken) for x in range(k + 1)]
+        mapping = {}
+        for f in row_names:
+            g = next((x for x in names if _norm(x) == _norm(f) or _norm(x) == _norm(hints.get(f, ""))), None)
+            if g is None:
+                return None
+            mapping[f] = g
+        match = "^(?P<%s>.+?)" % names[0] + "".join(rf"\s+(?P<{g}>{_NUM})" for g in names[1:]) + "$"
+        sel: dict[str, str] = {"match": match}
+        if heading:
+            sel["after"] = "^" + re.escape(heading[0]) + r"\b"
+        if last + 1 < len(lines):
+            sel["before"] = "^" + re.escape(lines[last + 1].split()[0]) + r"\b"
+        cells = {g: [] for g in names}
+        for ln in lines[first:last + 1]:
+            m = re.match(match, ln)
+            for g in names:
+                cells[g].append((m.group(g) if m else "") or "")
+        return {"select": {"lines": sel},
+                "fields": {f: {"column": g, **_kind_of(cells[g])} for f, g in mapping.items()}}
 
     def _run_learn(self, t: _Thread, page_id: str, integration: str) -> Any:
         from agents.deep_tools import ToolContext, seed_learn_workdir, tool_functions
