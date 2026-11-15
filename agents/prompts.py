@@ -206,6 +206,8 @@ def learner_prompt(spec: dict | None, name: str = "") -> str:
 
 def learn_task(*, page_id: str, name: str, site: str, active: int | None, spec: dict | None = None) -> str:
     msg = LEARN_TASK.format(page_id=page_id, name=name, site=site, active=active)
+    if str(page_id).startswith("doc-"):
+        msg += "\n" + DOCUMENT_LEARN_NOTE
     fields, _ = _spec_parts(spec)
     intent = _intent(spec)
     if intent:
@@ -213,6 +215,68 @@ def learn_task(*, page_id: str, name: str, site: str, active: int | None, spec: 
     if fields:
         msg += f" Fields every parser reads: {', '.join(fields)}."
     return msg
+
+
+# ---- LEARN on documents (contracts V17, V18): one document, one parser with rows ---------------------------
+# Domain-free on purpose: the integration's own intent, fields (document and row) and declared checks fill the
+# gaps. Same events and tools as page LEARN; the budget is 6 model calls.
+
+DOCUMENT_LEARNER = """You are the learner for the integration <<name>><<intent_part>>. A document arrived (a file, or
+an email attachment) whose layout no parser reads. Write ONE parser for it: <<field_list>>.
+Call tools, don't describe them, and use as few calls as possible:
+1. get_page() — an outline of the document: its meta lines (sender, subject, file), its tables (`T<n> columns`
+   and the first rows), its numbered text lines (`L<n>`), and the fields to extract.
+2. Write the parser from that outline:
+   - fields: one reader per document field. Read a value from a text line with
+     {"regex": "Label\\s*[:#]?\\s*(\\S+)"} (one capture group; the label is written in the document). Add "clean"
+     (money, number, {"date": ["%d %b %Y"]}) to turn the text into the value.
+   - rows.select: {"table": {"columns": ["<header>", ...]}} when get_page shows the rows as a table;
+     {"css": "<one row element>"} for repeated blocks of HTML; otherwise a {"lines": {"after": "^<first word of
+     the heading line>", "before": "^<first word of the line after the last row>", "match": "^(?P<name>.+?)\\s+(?P<n>NUMBER)$"}}
+     over the text lines, with one named group per cell.
+   - rows.fields: one per row field, {"column": "<header or group name>"} (plus cast, clean).
+   - rows.require: the fields every real row has. A footer, a repeated heading or a total leaves one of them
+     empty, so it is skipped, and the code insists that every skip is explained.
+   Never write a value into a regex: read it from the document.
+3. test_page_parser(parser={"id": "<short sender name>", "fields": {...}, "rows": {...}}). It runs every check on
+   this document in code<<rules_part>>.
+4. If it says OK, call save_parser with the SAME parser right away (it checks everything again, compiles, and
+   either deploys or asks a person; that is not your decision). If it FAILED, fix only what the failing check
+   names and test again (at most twice).
+5. Reply with one sentence: parser id, how many rows it read, and what save_parser said."""
+
+DOCUMENT_LEARN_NOTE = ("The record is a document (a file or an email attachment), not a web page: read its meta, "
+                       "tables and text lines.")
+
+
+def _rows_parts(spec: dict | None) -> tuple[list[str], list[str], list[str]]:
+    """(document fields, row fields, declared cross-check rules as words) of an integration's spec."""
+    parsers = ((spec or {}).get("extract") or {}).get("parsers") or []
+    doc = [f for f in (parsers[0].get("fields") or {}) if all(f in (p.get("fields") or {}) for p in parsers)] if parsers else []
+    rows: list[str] = []
+    if parsers and all(isinstance(p.get("rows"), dict) for p in parsers):
+        rows = [f for f in parsers[0]["rows"].get("fields") or {}
+                if all(f in (p["rows"].get("fields") or {}) for p in parsers)]
+    rules = [f"{r['rule']} on {r['field']}" for r in (spec or {}).get("validate") or []
+             if r.get("rule") in ("sum_equals", "product_equals", "count_equals")]
+    return doc, rows, rules
+
+
+def document_learner_prompt(spec: dict | None) -> str:
+    """The learner's system prompt for a document integration. It names only the spec's intent, fields (document
+    and row) and declared checks."""
+    doc, rows, rules = _rows_parts(spec)
+    intent = _intent(spec)
+    parts = []
+    if doc:
+        parts.append("the document fields " + ", ".join(f"`{f}`" for f in doc))
+    if rows:
+        parts.append("and, for every row of the document, the row fields " + ", ".join(f"`{f}`" for f in rows))
+    field_list = " ".join(parts) + " (every one of them, nothing else)" if parts else "the fields get_page lists"
+    return (DOCUMENT_LEARNER.replace("<<name>>", str((spec or {}).get("name") or "?"))
+            .replace("<<intent_part>>", f' ("{intent}")' if intent else "")
+            .replace("<<field_list>>", field_list)
+            .replace("<<rules_part>>", f", including the declared cross-checks ({'; '.join(rules)})" if rules else ""))
 
 
 def learner_description(spec: dict | None) -> str:

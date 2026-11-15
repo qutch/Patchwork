@@ -25,8 +25,11 @@ from selectolax.lexbor import LexborHTMLParser
 
 from runner.html import (canonical_url, css_all, css_first, jsonld_objects, normalize_ws, site_of,
                          visible_text)
+from runner.clean import clean_cast
 from runner.lib import (Quarantine, cast, extract_between, extract_css, extract_json_path, extract_jsonld,
-                        extract_regex, refine_regex, rule_problem_date, rule_problem_number, rule_problem_url)
+                        extract_product, extract_regex, refine_regex, rule_problem_date, rule_problem_number,
+                        rule_problem_url)
+from runner.rows import Row, check_cross, explain_skip, extract_rows, select_rows
 
 PAGE_METHODS = ("css", "jsonld")
 
@@ -305,28 +308,36 @@ def extractor_label(f: dict) -> str:
 
 
 def extract_field(f: dict, record: dict, where: str, html_field: str = "html", text_field: str = "text") -> Any:
-    """One field, exactly as the generated parser does it (runner.lib helpers only)."""
+    """One field, exactly as the generated parser does it (runner.lib / runner.clean helpers only): css, jsonld,
+    json_path, regex or between, then the refine regex (a regex next to css, jsonld or json_path), then `clean`
+    and `cast` (contracts V18)."""
     html = record.get(html_field) or ""
     if not isinstance(f, dict):
         raise Quarantine("PARSE_NO_MATCH", f"{where}: extractor must be a mapping")
+    to = f.get("cast", "str")
+    if f.get("combine") == "product" and f.get("regex") is not None:
+        return extract_product(page_text(record, text_field), re.compile(f["regex"]), to, where)
+    refine = False
     if f.get("css") is not None:
         value: Any = extract_css(html, str(f["css"]), f.get("attr"), where)
+        refine = True
     elif f.get("jsonld") is not None:
         value = extract_jsonld(html, str(f["jsonld"]), f.get("jsonld_type") or "JobPosting", where)
+        refine = True
     elif f.get("attr") is not None or f.get("jsonld_type") is not None:
         raise Quarantine("PARSE_NO_MATCH", f"{where}: attr needs css and jsonld_type needs jsonld")
-    elif f.get("regex") is not None:
-        value = extract_regex(page_text(record, text_field), re.compile(f["regex"]), where)
-        return cast(value, f.get("cast", "str"), where)
     elif f.get("json_path") is not None:
         value = extract_json_path(record, f["json_path"], where)
+        refine = True
+    elif f.get("regex") is not None:
+        value = extract_regex(page_text(record, text_field), re.compile(f["regex"]), where)
     elif f.get("between") is not None:
         value = extract_between(page_text(record, text_field), f["between"][0], f["between"][1], where)
     else:
         raise Quarantine("PARSE_NO_MATCH", f"{where}: no extract method (use css, jsonld, regex, json_path or between)")
-    if f.get("regex") is not None:
+    if refine and f.get("regex") is not None:
         value = refine_regex(str(value), re.compile(f["regex"]), where)
-    return cast(value, f.get("cast", "str"), where)
+    return clean_cast(value, f.get("clean"), to, where)
 
 
 def run_page_parser(parser: dict, record: dict, html_field: str = "html", text_field: str = "text") -> dict:
@@ -432,36 +443,106 @@ def literal_capture(pattern: str) -> str | None:
     return "".join(chr(av) for _, av in body)
 
 
+_NUM_TOKEN = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+_EU_NUM_TOKEN = re.compile(r"-?\d[\d.]*,\d+")
+
+
+def is_document(record: dict) -> bool:
+    """A V17 document record (`doc-…`), as opposed to a V1 page."""
+    return str(record.get("id") or "").startswith("doc-") or "tables" in record
+
+
+def _numbers_in(text: str) -> list[float]:
+    out = []
+    for tok in _NUM_TOKEN.findall(text):
+        try:
+            out.append(float(tok.replace(",", "")))
+        except ValueError:
+            pass
+    for tok in _EU_NUM_TOKEN.findall(text):
+        try:
+            out.append(float(tok.replace(".", "").replace(",", ".")))
+        except ValueError:
+            pass
+    return out
+
+
+def value_forms(value: Any, spec: dict | None = None) -> list[str]:
+    """The strings a value read from a document may have been written as. A cleaned number (`$1,299.00` ->
+    1299.0) or date (`03 Nov 2026` -> `2026-11-03`) is not literally in the text, so the forms it could have taken
+    are tried: the value itself, a number with 0 or 2 decimals and thousands separators, and an ISO date in each of
+    the formats the field's `clean: {date: [...]}` declares."""
+    forms = [normalize_ws(str(value))] if value is not None else []
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        forms += [f"{value:,.2f}", f"{value:.2f}", f"{value:,}", f"{value}"]
+        if float(value).is_integer():
+            forms += [f"{int(value):,}", str(int(value))]
+    clean = (spec or {}).get("clean")
+    if isinstance(value, str) and isinstance(clean, dict) and isinstance(clean.get("date"), list):
+        try:
+            day = datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            day = None
+        for fmt in clean["date"] if day else []:
+            text = day.strftime(fmt)
+            forms += [text, re.sub(r"(?<!\d)0(\d)", r"\1", text)]
+    return list(dict.fromkeys(f for f in forms if f))
+
+
+def _document_haystacks(record: dict) -> dict[str, str]:
+    """`table`: every table cell and header; `meta`: every string in the record's meta (sender, subject, …)."""
+    cells = []
+    for t in record.get("tables") or []:
+        cells += [normalize_ws(str(c)) for c in (t.get("header") or [])]
+        for row in t.get("rows") or []:
+            cells += [normalize_ws(str(c)) for c in row]
+    meta = [normalize_ws(str(v)) for v in (record.get("meta") or {}).values() if isinstance(v, (str, int, float))]
+    return {"table": "\n".join(c for c in cells if c), "meta": "\n".join(m for m in meta if m)}
+
+
 def evidence(record: dict, fields: dict, validate: list[dict], parser: dict | None = None,
              html_field: str = "html", text_field: str = "text") -> list[dict]:
-    """V10 evidence items: {name, value, ok, where: text|jsonld|html|None, extractor}. A value is
+    """V10 evidence items: {name, value, ok, where: text|table|meta|jsonld|html|None, extractor}. A value is
     evidenced if it occurs (whitespace-normalised) in the visible text, a JSON-LD string, an attribute
-    value or the <title>, and it passes the spec's validation rules. record.* values never reach here."""
+    value or the <title>, and it passes the spec's validation rules. record.* values never reach here.
+    V17/V18: on a document record a value may also occur in a table cell or a `meta` string, and a cleaned number
+    or date counts when one of the forms it could have been written as (`value_forms`) occurs."""
     html = record.get(html_field) or ""
     text = normalize_ws(page_text(record, text_field))
+    doc = is_document(record)
+    stacks = _document_haystacks(record) if doc else {}
     lazy: dict[str, list[str]] = {}
     items = []
     for name, value in fields.items():
-        v = normalize_ws(str(value)) if value is not None else ""
+        spec = ((parser or {}).get("fields") or {}).get(name) or {}
+        cleaned = doc or spec.get("clean") is not None  # a cleaned value (1299.0 from `$1,299.00`) is not literal text
+        forms = value_forms(value, spec) if cleaned else ([normalize_ws(str(value))] if value is not None else [])
         where = None
-        if v:
-            if v in text:
+        if forms:
+            if any(f in text for f in forms):
+                where = "text"
+            elif doc and any(f in stacks["table"] for f in forms):
+                where = "table"
+            elif doc and any(f in stacks["meta"] for f in forms):
+                where = "meta"
+            elif cleaned and isinstance(value, (int, float)) and not isinstance(value, bool) and any(
+                    abs(n - float(value)) < 1e-9 for n in _numbers_in(text + "\n" + stacks.get("table", ""))):
                 where = "text"
             else:
                 if "jsonld" not in lazy:
                     lazy["jsonld"] = _jsonld_strings(html)
-                if any(v in s for s in lazy["jsonld"]):
+                if any(f in s for f in forms for s in lazy["jsonld"]):
                     where = "jsonld"
                 else:
                     if "html" not in lazy:
                         lazy["html"] = _attr_values(html) + [t for t in css_all(html, "head title") if t]
-                    if any(v in s for s in lazy["html"]):
+                    if any(f in s for f in forms for s in lazy["html"]):
                         where = "html"
         rule_problem = _check_rules(name, value, validate)
         item = {"name": name, "value": value, "ok": where is not None and rule_problem is None, "where": where,
-                "extractor": extractor_label((parser or {}).get("fields", {}).get(name) or {})}
+                "extractor": extractor_label(spec)}
         if where is None:
-            item["detail"] = "value does not occur on the page"
+            item["detail"] = "value does not occur on the page" if not doc else "value does not occur in the document"
         elif rule_problem:
             item["detail"] = f"fails validation: {rule_problem}"
         items.append(item)
@@ -532,6 +613,18 @@ def ambiguity(record: dict, parser: dict, html_field: str = "html") -> dict[str,
                         break
                 if isinstance(cur, (str, int, float)):
                     values.append(normalize_ws(str(cur)))
+        elif is_document(record) and f.get("regex") is not None and f.get("json_path") is None \
+                and f.get("between") is None:
+            # V18: a document-level regex that matches twice with different values reads two things
+            try:
+                pat = re.compile(f["regex"])
+            except re.error:
+                continue
+            found = [normalize_ws(m.group(1)) for m in pat.finditer(page_text(record)) if m.groups() and m.group(1)]
+            distinct = list(dict.fromkeys(v for v in found if v))
+            if len(distinct) > 1:
+                out[name] = distinct[:6]
+            continue
         else:
             continue
         if f.get("regex") is not None:
@@ -741,8 +834,11 @@ def additive_parser_patch(active_spec: dict, new_spec: dict) -> bool:
 
 
 def d2_decision(*, policy: str, tests_passed: bool, evidence_ok: bool, all_corroborated: bool,
-                ambiguous: dict[str, list[str]] | list[str] | None, additive: bool) -> tuple[bool, list[str]]:
-    """The D2 rule (contracts V10). Returns (auto_deploy, reasons a person has to decide)."""
+                ambiguous: dict[str, list[str]] | list[str] | None, additive: bool,
+                is_document: bool = False, cross_checks_passed: int = 0) -> tuple[bool, list[str]]:
+    """The D2 rule (contracts V10). Returns (auto_deploy, reasons a person has to decide).
+    A document has no title or meta tags to corroborate it (V18): it needs at least one declared cross-check to
+    have passed on this document instead, so a layout with no total to check always goes to a person."""
     reasons = []
     if policy != "auto":
         reasons.append(f"learn_policy is {policy!r}")
@@ -750,7 +846,11 @@ def d2_decision(*, policy: str, tests_passed: bool, evidence_ok: bool, all_corro
         reasons.append("the version's tests did not pass")
     if not evidence_ok:
         reasons.append("an extracted value has no evidence on the page")
-    if not all_corroborated:
+    if is_document:
+        if cross_checks_passed < 1:
+            reasons.append("no declared cross-check (a sum, product or count) passed on this document, so nothing "
+                           "confirms the rows add up")
+    elif not all_corroborated:
         reasons.append("a value is not corroborated by the page title, meta tags or JSON-LD")
     if ambiguous:
         reasons.append(f"ambiguous: {', '.join(sorted(ambiguous))}")
@@ -759,6 +859,187 @@ def d2_decision(*, policy: str, tests_passed: bool, evidence_ok: bool, all_corro
     return not reasons, reasons
 
 
+# ---- documents and rows (contracts V17, V18) ------------------------------------------------------------
+
+def _meta_lines(record: dict) -> list[str]:
+    meta = record.get("meta") or {}
+    kind = record.get("kind") or ("page" if str(record.get("id") or "").startswith("pg-") else "?")
+    lines = [f"document {record.get('id')} · kind {kind} · site {record.get('site')}",
+             f"file: {json.dumps(_clip(str(record.get('name') or ''), 120))}"]
+    for key in ("from", "subject"):
+        if meta.get(key):
+            lines.append(f"{key}: {json.dumps(_clip(normalize_ws(str(meta[key])), 160))}")
+    others = [k for k in meta if k not in ("from", "subject", "error", "problem") and isinstance(meta[k], (str, int))]
+    if others:
+        lines.append("meta keys: " + ", ".join(sorted(str(k) for k in others)[:12]))
+    for flag in record.get("flags") or []:
+        lines.append(f"flag: {flag}")
+    return lines
+
+
+def document_outline(record: dict, max_chars: int = 4000) -> str:
+    """The compact view of a document the learner gets instead of its bytes: the meta lines (sender, subject,
+    file), the text lines numbered L1.., each table (`T<n> columns: [...] rows: N` and its first 3 rows) and, when
+    there is HTML, the page outline. Never the whole document (the learner's budget is ~6 model calls)."""
+    parts = ["\n".join(_meta_lines(record))]
+    tables = record.get("tables") or []
+    for n, t in enumerate(tables, start=1):
+        head = t.get("header") or []
+        rows = t.get("rows") or []
+        block = [f"T{n} columns: {json.dumps(head, ensure_ascii=False)} rows: {len(rows)}"
+                 + (f" ({t['where']})" if t.get("where") else "")]
+        block += [f"  r{i}: {json.dumps(r, ensure_ascii=False)}" for i, r in enumerate(rows[:3], start=1)]
+        parts.append("\n".join(block))
+    text_lines = [ln for ln in str(record.get("text") or "").splitlines() if ln.strip()]
+    if text_lines:
+        parts.append("text lines (L<n>: a `lines` select reads these):\n" + "\n".join(
+            f"  L{i}: {_clip(ln.strip(), 140)}" for i, ln in enumerate(text_lines[:60], start=1))
+            + ("\n  …" if len(text_lines) > 60 else ""))
+    out = "\n".join(parts)
+    if (record.get("html") or "").strip() and len(out) < max_chars - 400:
+        out += "\n" + page_outline({**record, "id": record.get("id"), "text": ""}, max_chars=max_chars - len(out) - 1)
+    return out[:max_chars]
+
+
+def run_document_parser(parser: dict, record: dict, html_field: str = "html", text_field: str = "text") -> dict:
+    """A candidate on one document: `{"fields": {...}, "rows": [Row...], "skipped": [...]}`, or
+    `{"error": "...", "fields": <the document fields that worked>}`. The document fields are read like a page's;
+    the rows by `runner.rows.extract_rows`, the code the compiled parser runs."""
+    if not isinstance(parser, dict):
+        return {"error": "parser must be an object with `fields` and `rows`"}
+    out = run_page_parser(parser, record, html_field, text_field)
+    if "error" in out:
+        return out
+    result: dict[str, Any] = {"fields": out, "rows": [], "skipped": []}
+    spec = parser.get("rows")
+    if spec is None:
+        return result
+    skipped: list[dict] = []
+    try:
+        result["rows"] = extract_rows(record, spec, f"{parser.get('id') or 'parser'}.rows", html_field, text_field,
+                                      skipped)
+    except Quarantine as q:
+        return {"error": q.detail or q.code, "fields": out}
+    except (KeyError, TypeError, ValueError, re.error) as e:
+        return {"error": f"{parser.get('id') or 'parser'}.rows: {type(e).__name__}: {e}", "fields": out}
+    result["skipped"] = skipped
+    return result
+
+
+def _cross_rules(validate: list[dict]) -> list[dict]:
+    return [r for r in validate or [] if r.get("rule") in ("sum_equals", "product_equals", "count_equals")]
+
+
+def _in_row(value: Any, spec: dict, row: Row) -> bool:
+    """The value was read from this row: the text it was cleaned from occurs in the row's text or one of its
+    cells, case-insensitively, or (a number) some number in the row equals it."""
+    if value in (None, ""):
+        return True
+    if spec.get("attr") is not None:
+        return True  # an attribute (a link) is not in the row's text
+    hay = normalize_ws(row.text + " " + " ".join(str(c) for c in row.cells.values())).lower()
+    if any(f.lower() in hay for f in value_forms(value, spec)):
+        return True
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return any(abs(n - float(value)) < 1e-9 for n in _numbers_in(hay))
+    return False
+
+
+def rows_checks(record: dict, parser: dict, rows: list[Row], validate: list[dict], *,
+                skipped: list[dict] | None = None, doc_fields: dict | None = None,
+                html_field: str = "html", text_field: str = "text") -> list[dict]:
+    """The checks a rows parser passes before it is saved, in code. One item `{name, ok, detail}` each:
+
+    - `values_in_own_row`  every value occurs in the row it was read from (not in another row, not made up)
+    - `required_present`   at least 95% of the rows have each required field (`rows.require`, `required` rules)
+    - `no_duplicate_rows`  no two rows have identical values
+    - `skips_explained`    every skipped row is blank, a repeated header or an aggregate (and every dropped line is
+      blank, repeated or declared `skip`); none is silently dropped
+    - `row_count`          the selected region's rows minus the explained skips equal the rows read
+    - `rules_hold`         the spec's per-row validation rules hold for every row
+    - one item per declared cross-check rule (`sum_equals`, `product_equals`, `count_equals`), run on this
+      document's fields (`doc_fields`, read from the parser when not given) and rows"""
+    spec = parser.get("rows") or {}
+    specs = spec.get("fields") or {}
+    out: list[dict] = []
+
+    def item(name: str, ok: bool, detail: str = "") -> None:
+        out.append({"name": name, "ok": bool(ok), **({"detail": detail} if detail else {})})
+
+    bad = next(((r, f, r.fields.get(f)) for r in rows for f in specs
+                if not _in_row(r.fields.get(f), specs[f], r)), None)
+    item("values_in_own_row", bad is None,
+         "" if bad is None else f"row {bad[0].no}: {bad[1]}={bad[2]!r} does not occur in that row ({_clip(bad[0].text, 80)!r})")
+
+    required = list(dict.fromkeys([*(spec.get("require") or [next(iter(specs), "")]),
+                                   *(r["field"] for r in validate or [] if r.get("rule") == "required")]))
+    missing = []
+    for f in [f for f in required if f in specs]:
+        n = sum(1 for r in rows if r.fields.get(f) not in (None, ""))
+        if rows and n / len(rows) < 0.95:
+            missing.append(f"{f} is empty in {len(rows) - n} of {len(rows)} rows")
+    item("required_present", not missing, "; ".join(missing))
+
+    seen: dict[tuple, int] = {}
+    dup = None
+    for r in rows:
+        key = tuple(sorted((k, str(v)) for k, v in r.fields.items()))
+        if key in seen:
+            dup = (seen[key], r.no)
+            break
+        seen[key] = r.no
+    item("no_duplicate_rows", dup is None, "" if dup is None else f"rows {dup[0]} and {dup[1]} have identical values")
+
+    if skipped is None:
+        skipped = []
+        try:
+            extract_rows(record, spec, f"{parser.get('id') or 'parser'}.rows", html_field, text_field, skipped)
+        except Quarantine as q:
+            item("skips_explained", False, q.detail or q.code)
+            skipped = None
+    if skipped is not None:
+        dropped = [x for x in skipped if "row" in x]
+        by_reason: dict[str, int] = {}
+        for x in skipped:
+            by_reason[x["reason"]] = by_reason.get(x["reason"], 0) + 1
+        item("skips_explained", all(x.get("reason") for x in skipped),
+             "; ".join(f"{n} {why}" for why, n in by_reason.items()) if by_reason else "")
+        try:
+            selected = len(select_rows(record, spec["select"], html_field, text_field,
+                                       f"{parser.get('id') or 'parser'}.rows"))
+        except Quarantine:
+            selected = len(rows) + len(dropped)
+        item("row_count", selected - len(dropped) == len(rows),
+             f"{selected} selected - {len(dropped)} skipped = {selected - len(dropped)}, but {len(rows)} rows were read")
+
+    broken = None
+    for r in rows:
+        for f, v in r.fields.items():
+            problem = _check_rules(f, v, [x for x in validate or [] if x.get("rule") not in
+                                          ("sum_equals", "product_equals", "count_equals")])
+            if problem and broken is None:
+                broken = f"row {r.no}: {f}={v!r} fails validation: {problem}"
+    item("rules_hold", broken is None, broken or "")
+    if _cross_rules(validate):
+        if doc_fields is None:
+            got = run_page_parser(parser, record, html_field, text_field)
+            doc_fields = got if "error" not in got else got.get("fields", {})
+        out += cross_check_items(doc_fields, rows, validate)
+    return out
+
+
+def cross_check_items(parser_fields: dict, rows: list[Row], validate: list[dict]) -> list[dict]:
+    """One `{name, ok, detail}` per declared cross-check rule on this document (the plan's `sum_equals` etc.)."""
+    items = []
+    rules = _cross_rules(validate)
+    for rule in rules:
+        problem = check_cross(rule, parser_fields, rows)
+        name = rule["rule"] if sum(1 for r in rules if r["rule"] == rule["rule"]) == 1 else f"{rule['rule']}:{rule['field']}"
+        items.append({"name": name, "ok": problem is None, "cross": True, **({"detail": problem} if problem else {})})
+    return items
+
+
 __all__ = ["reader_candidates", "check_reader", "type_rules", "guess_reader", "integration_fields", "integration_jsonld_types", "known_readers", "rule_label", "page_outline", "jsonld_types", "infer_jsonld_type", "with_jsonld_types", "run_page_parser", "evidence", "corroborated", "ambiguity", "additive_parser_patch",
            "d2_decision", "make_page_record", "page_text", "extractor_label", "extract_field", "css_path",
-           "corroboration_sources", "PAGE_METHODS"]
+           "corroboration_sources", "PAGE_METHODS", "document_outline", "run_document_parser", "rows_checks",
+           "cross_check_items", "is_document", "value_forms"]

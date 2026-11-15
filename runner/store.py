@@ -96,6 +96,47 @@ def workspace_dir() -> Path:
     return Path(os.environ.get("PATCHWORK_WORKSPACE", "workspace")).resolve()
 
 
+
+def document_key(record_id: str) -> str:
+    """contracts V18: the document an outcome belongs to. `<id>#<n>` (one row of a document) -> `<id>`; any other
+    record id is its own document."""
+    base, sep, n = str(record_id).rpartition("#")
+    return base if sep and base and n.isdigit() else str(record_id)
+
+
+def _row_no(record_id: str) -> int:
+    n = str(record_id).rpartition("#")[2]
+    return int(n) if n.isdigit() else 0
+
+
+def summarize_document(rows: list[dict]) -> dict:
+    """One outcome for a document, from its outcomes of one run: a plain record (`<id>`) is returned unchanged; the
+    rows of a document (`<id>#<n>`) become one record with the document's id and:
+
+    - `status` `quarantined` (with the first held row's reason and detail) when any row is held, else `duplicate`
+      when every row is a duplicate, else `success`;
+    - `rows`: `{success, duplicate, quarantined}` counts;
+    - the other fields (parser, version, run, sink body) from the first written row, else the first row."""
+    rows = sorted(rows, key=lambda r: _row_no(r["record_id"]))
+    if len(rows) == 1 and document_key(rows[0]["record_id"]) == str(rows[0]["record_id"]):
+        return dict(rows[0])
+    held = [r for r in rows if r["status"] == "quarantined"]
+    dups = [r for r in rows if r["status"] == "duplicate"]
+    done = [r for r in rows if r["status"] == "success"]
+    base = dict(done[0] if done else rows[0])
+    base["record_id"] = document_key(rows[0]["record_id"])
+    if held:
+        first = held[0]
+        base.update(status="quarantined", reason=first.get("reason"),
+                    detail=f"row {_row_no(first['record_id'])}: {first.get('detail')}"
+                    if _row_no(first["record_id"]) else first.get("detail"))
+    elif len(dups) == len(rows):
+        base.update(status="duplicate", reason=None, detail=None)
+    else:
+        base.update(status="success", reason=None, detail=None)
+    base["rows"] = {"success": len(done), "duplicate": len(dups), "quarantined": len(held)}
+    return base
+
 class Store:
     def __init__(self, path: str | Path | None = None):
         path = Path(path) if path else workspace_dir() / "patchwork.db"
@@ -252,23 +293,36 @@ class Store:
             r["raw"] = json.loads(r["raw"])
         return rows
 
-    def quarantined_raw(self, name: str, id_field: str = "id") -> list[dict]:
-        """Raw source records whose latest live outcome is quarantined (the input of a replay).
-
-        contracts V18: a document gives one outcome per row (`<id>#<n>`) or one for the whole document (`<id>`),
-        all with the document as `raw`. They are grouped by the raw record's `id_field` (the integration's
-        `source.record_id`; the runner passes it), and the document is replayed once when any outcome of its
-        latest run is quarantined (so rows written later supersede an earlier hold)."""
+    def latest_outcomes_by_document(self, name: str, id_field: str = "id") -> dict[str, list[dict]]:
+        """`latest_outcomes` grouped by document (contracts V18): `<id>` and `<id>#<n>` under `<id>`. A group holds only
+        the outcomes of the document's latest run, so rows written later supersede an earlier hold and a later hold
+        supersedes earlier rows. The document is the raw record's `id_field` (the integration's `source.record_id`)
+        when the outcome has one, else the id with its `#<n>` stripped."""
         groups: dict[str, list[dict]] = {}
         for r in self.latest_outcomes(name):
             raw_id = r["raw"].get(id_field) if isinstance(r["raw"], dict) else None
             rid = str(r["record_id"])
             of_doc = raw_id is not None and (rid == str(raw_id) or rid.startswith(f"{raw_id}#"))
-            groups.setdefault(str(raw_id) if of_doc else rid, []).append(r)
-        out = []
-        for rows in groups.values():
+            groups.setdefault(str(raw_id) if of_doc else document_key(rid), []).append(r)
+        out = {}
+        for key, rows in groups.items():
             last = max(r["run_id"] for r in rows)
-            held = [r for r in rows if r["run_id"] == last and r["status"] == "quarantined"]
+            out[key] = [r for r in rows if r["run_id"] == last]
+        return out
+
+    def latest_document_outcomes(self, name: str, id_field: str = "id") -> list[dict]:
+        """One outcome per document (`summarize_document`): what a person asks about, as opposed to one per row."""
+        return [summarize_document(rows) for rows in self.latest_outcomes_by_document(name, id_field).values()]
+
+    def quarantined_raw(self, name: str, id_field: str = "id") -> list[dict]:
+        """Raw source records whose latest live outcome is quarantined (the input of a replay).
+
+        contracts V18: a document gives one outcome per row (`<id>#<n>`) or one for the whole document (`<id>`),
+        all with the document as `raw`. They are grouped by document (`latest_outcomes_by_document`), and the
+        document is replayed once when any outcome of its latest run is quarantined."""
+        out = []
+        for rows in self.latest_outcomes_by_document(name, id_field).values():
+            held = [r for r in rows if r["status"] == "quarantined"]
             if held:
                 out.append(held[0]["raw"])
         return out

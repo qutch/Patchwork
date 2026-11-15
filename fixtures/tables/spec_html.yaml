@@ -1,0 +1,41 @@
+spec_version: 1
+name: order_lines
+intent: "Copy every line of each order page into the Lines table"
+source:
+  kind: api
+  base_url: patchwork://control
+  list: {method: GET, path: /api/pages, params: {since: "{cursor}", integration: order_lines}}
+  record_id: id
+  text_field: text
+  html_field: html
+  cursor_field: seq
+extract:
+  route_by: site
+  parsers:
+    - id: shop_a
+      match: {site: a.example}
+      fields:
+        ref: {regex: 'Ref\s+(\S+)'}
+        total: {regex: 'Sum\s+(\S+)', clean: money}
+      rows:
+        select: {table: {columns: [Item, Qty]}}
+        fields:
+          item: {column: Item}
+          qty: {column: Qty, cast: int}
+          line: {column: Line, clean: money}
+validate:
+  - {field: ref, rule: required}
+  - {field: qty, rule: positive_int}
+  - {rule: sum_equals, rows_field: line, field: total}
+dedupe: {key: [ref, record.row_no]}
+sink:
+  kind: sqlite
+  path: lines.db
+  table: Lines
+  fields:
+    Ref: {from: ref}
+    N: {from: record.row_no}
+    Item: {from: item}
+    Qty: {from: qty}
+    Line: {from: line}
+  verify: {read_back: true}

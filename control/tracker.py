@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Any
 
 from control.autorun import page_filter, version_manifest, version_spec
-from runner.store import Store
+from runner.store import Store, document_key, summarize_document
 
 LABELS = ("code", "learned_now", "held", "duplicate")
 ACTIVE_THREAD_STATES = ("running", "waiting")
@@ -71,11 +71,20 @@ class _View:
         rows = self.store.db.execute(
             f"SELECT {sel}, u.version AS run_version, u.kind AS run_kind FROM records r JOIN runs u ON u.id = r.run_id "
             "WHERE u.integration = ? AND u.dry_run = 0 ORDER BY r.run_id", (self.integration,)).fetchall()
-        out: dict[str, dict[str, Any]] = {}
+        latest: dict[str, dict[str, Any]] = {}
         for row in rows:
             d = dict(row)
             d["sink_body"] = json.loads(d["sink_body"]) if d.get("sink_body") else None
-            out[d["record_id"]] = d
+            latest[d["record_id"]] = d
+        # contracts V18: a document gives `<id>#<n>` per row (or `<id>` when it is held as a whole). Group them under
+        # the document, the document's latest run winning, so a page whose rows were written is not "pending".
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for rid, d in latest.items():
+            groups.setdefault(document_key(rid), []).append(d)
+        out: dict[str, dict[str, Any]] = {}
+        for key, group in groups.items():
+            last = max(r["run_id"] for r in group)
+            out[key] = summarize_document([r for r in group if r["run_id"] == last])
         return out
 
     def version(self, v: int | None) -> tuple[dict, dict]:
@@ -153,6 +162,8 @@ class _View:
         }
         if rec is not None:
             v = rec.get("run_version")
+            if rec.get("rows") is not None:  # a document with rows: how many were written, repeated or held
+                row["rows"] = rec["rows"]
             row.update(parser=rec.get("parser"), version=v, routed_by=rec.get("routed_by"), run_id=rec["run_id"],
                        reason=rec.get("reason"), detail=rec.get("detail"),
                        parser_origin=self.parser_origin(v, rec.get("parser")))

@@ -911,6 +911,67 @@ A label-keyed sink (V14's shape) whose destination is a table in a local databas
   `sendActiveTab()`); the toolbar click no longer sends directly. The choice is `integration` in
   `chrome.storage.local` (absent = default); the options page has the same list.
 
+## V17. The document inbox (`/api/documents`, `control/documents.py`)
+
+Files and emails become records the document integrations read, the way pages do (V1). The readers are the
+teammate's (`runner.documents.read_any(data, name, content_type) -> Document`); this contract is what the control
+plane does with a `Document`. Nothing here knows what a document is about: field names and meaning come from the spec.
+
+### The record
+
+`{id, parent_id, kind, integration, site, name, text, html, tables, meta, flags, sha256, received_at, received_date,
+is_leaf}`. Ids are `doc-%06d` (`seq` is an AUTOINCREMENT, so an id is never reused, even after `clear()`).
+
+- `kind`, `name`, `text`, `meta` are copied from the `Document`; `html` is `""` when there is none.
+- `tables` is `[{header, rows, where}]`, all cells strings.
+- `site` is the routing key (`route_by: site`): the domain of the sender address in `meta["from"]` (bare or
+  `Name <addr>`, lower-cased), inherited by an email's attachments; `"upload"` for a file sent by hand. A caller may
+  override it (`add_bytes(..., site=)`, used by table connectors).
+- A child inherits its parent's `meta` keys that it does not have.
+- `flags`, fixed names: `no_text_layer` (from `meta.no_text_layer == "true"`), `encrypted` (from
+  `meta.encrypted == "true"`), `unreadable` (the inbox sets it when `read_any` raises, and the adapter sets it when
+  a reader marks an attachment with `meta.unreadable == "true"` or a non-empty `meta.error` instead of raising). A flagged document is held by
+  `runner.pipeline.process_document` with a plain reason and is **never sent to LEARN**
+  (`PageHooks.maybe_learn`). For `unreadable` the error text is in `meta.error` (what the pipeline reads) and
+  `meta.problem`.
+- `is_leaf`: a child of kind `pdf`, `sheet`, `html` or `text`, or the parent when it has no such child. Only leaves
+  are served to the runner; the parent email is kept for audit and is never written as a row.
+
+### The inbox (`DocumentInbox`, same method names as `PageInbox`)
+
+- Store `$PATCHWORK_WORKSPACE/documents.db`; originals under `$PATCHWORK_WORKSPACE/documents/` (never logged).
+- `add_bytes(data, name, content_type, integration, received_at=None, site=None, meta=None)` reads, stores the parent
+  and children in one transaction and returns the parent record plus `leaves: [ids]` and `duplicate`. The same
+  bytes (`sha256`) for one integration return the existing record with `duplicate: true` and store nothing; a unique
+  index on `(integration, sha256)` for parents makes two simultaneous uploads one document. The insert is one
+  transaction (`BEGIN IMMEDIATE`), so a parent never exists without its leaves. The stored file name is bounded (no
+  directory part, no NUL, at most 100 characters on disk).
+- `list(since, limit, integration, leaves_only=True)`, `get`, `summaries`, `count`, `clear(integration=None)`,
+  `add_learn`/`learns` (learn threads of documents, keyed by document id).
+- `control.inboxes.inbox_for(record_id)` returns the page inbox for `pg-…` and the document inbox for `doc-…`
+  (`ToolContext.get_page_record` uses it).
+
+### API (`control/api/documents.py`)
+
+- `POST /api/documents`: multipart `file` + `integration`, token as for `POST /api/pages` (401), at most 25 MB (413).
+  The multipart body is parsed with the standard library (no extra dependency).
+  - 201 with `{id, kind, name, site, flags, meta, sha256, integration, leaves, duplicate, run_id, queued}`; 200 when
+    the bytes were already there (no second run). No body text is returned.
+  - 422 when `integration` is missing or names neither a document integration nor a wizard draft; 422 for a missing
+    `file` or a non-multipart body; 503 when `runner.documents` is not importable (the upload is not lost: nothing is
+    stored, so it can be sent again).
+  - A new leaf starts a run (`AutoRunner.request`), except for a wizard draft, whose documents wait.
+- `GET /api/documents?since=&integration=&limit=&leaves_only=true`: the runner's source (no token: localhost only).
+- `GET /api/documents/{id}`; `GET /api/documents/stream?after=&integration=`: SSE `document` events, one per new
+  leaf, without `text`, `html` or `tables`.
+
+### Specs
+
+`control.autorun.is_document_spec(spec)`: `source.base_url == patchwork://control` and `source.list.path ==
+/api/documents`. `is_page_spec` is the same source without that path, so a document spec is never a page spec.
+`is_inbox_spec` / `is_inbox_integration` mean either; run-on-arrival, learn triggers and the replay after a deploy
+(`PageHooks`) use the inbox variants.
+
 ## V18. Rows, `clean`, cross-check rules, per-row records (generalized input)
 
 One input document (an HTML table page, a CSV/XLSX sheet, the text lines of a PDF) becomes many checked records. All
@@ -1081,8 +1142,20 @@ stdlib and `runner/` only, no network, no AI, no subject words.
   `record` event per Outcome; counts are per Outcome. The cursor moves once per document. The circuit breaker counts
   consecutive `SINK_CONTRACT` Outcomes and is checked after each document. `NEW_SOURCE_FORMAT` counts only
   document-level (or record-level) `PARSE_NO_MATCH` Outcomes, as before.
-- **`Store.quarantined_raw(name, id_field="id")`** (the replay input) groups the latest live outcomes by the raw
-  record's `id_field` (record ids `<id>` and `<id>#<n>`) and returns each document once when any outcome of its
-  latest run is quarantined. `runner.run.run` passes `id_field=integ.RECORD_ID` (the spec's `source.record_id`).
-  Rows written by a later run supersede an earlier document-level hold. Records whose raw has no such field are one
-  group per record id, as before.
+- **Outcomes per document.** `runner.store.document_key(record_id)` maps `<id>#<n>` to `<id>` (any other id is its
+  own document). `Store.latest_outcomes_by_document(name, id_field="id")` groups the latest live outcomes by document
+  (the raw record's `id_field` when it has one, else `document_key`) and keeps only the outcomes of the document's
+  **latest run**: rows written later supersede an earlier document-level hold, and a later hold supersedes earlier
+  rows. `summarize_document(rows)` turns one document's outcomes into one record with the document's id: `status`
+  `quarantined` (with the first held row's reason, and detail `row <n>: …`) when any row is held, else `duplicate`
+  when every row is a duplicate, else `success`, plus `rows: {success, duplicate, quarantined}`; a plain record
+  (`<id>`) is returned unchanged, so one-record pages and v1 read exactly as before.
+  `Store.latest_document_outcomes` is that, per document (the bench accuracy endpoint scores it).
+- **The tracker** (`control/tracker.py`) reports a page's row from `summarize_document`: a page whose rows were all
+  written is `success` (label `code`, or `learned_now` when the parser was learned from it), all duplicates is
+  `duplicate`, any held row or a document-level hold is `held`; the tracker row gains `rows: {success, duplicate,
+  quarantined}` for a document with rows (absent otherwise).
+- **`Store.quarantined_raw(name, id_field="id")`** (the replay input) uses `latest_outcomes_by_document` and returns
+  each document once when any outcome of its latest run is quarantined. `runner.run.run` passes
+  `id_field=integ.RECORD_ID` (the spec's `source.record_id`). Records whose raw has no such field are grouped by
+  `document_key`.
