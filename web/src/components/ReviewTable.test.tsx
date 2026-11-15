@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReviewRow } from "../api";
-import ReviewTable, { sourceLabel } from "./ReviewTable";
+import ReviewTable, { constProblem, sourceLabel } from "./ReviewTable";
 import { JOB_WORDS } from "../test/harness";
 
 afterEach(cleanup);
@@ -80,5 +80,59 @@ describe("ReviewTable", () => {
     expect(sourceLabel({ css: "h1" })).toBe("reader: h1");
     expect(sourceLabel({ record: "canonical_url" })).toBe("the page's canonical URL");
     expect(sourceLabel({ today: true })).toBe("today's date");
+  });
+
+  it("never offers Skip on a required field, and says the field is required", () => {
+    const rows: ReviewRow[] = [{ ...ROWS[0], required: true, type: "text" }, { ...ROWS[1], required: false, type: "number" }];
+    render(<ReviewTable rows={rows} pages={PAGES} onDecide={() => {}} />);
+    const opts = (label: string) => [...(screen.getByLabelText(label) as HTMLSelectElement).options].map((o) => o.value);
+    expect(opts("Source for Product")).not.toContain("skip");
+    expect(opts("Source for Price")).toContain("skip");
+    expect(screen.getByText("required")).toBeTruthy();
+  });
+
+  it("blocks approval while a typed value does not fit the field's type, and says why", () => {
+    const onDecide = vi.fn();
+    const rows: ReviewRow[] = [{ ...ROWS[2], type: "number", required: false }];
+    render(<ReviewTable rows={rows} pages={PAGES} onDecide={onDecide} />);
+    const approve = screen.getByRole("button", { name: /Approve/ }) as HTMLButtonElement;
+    fireEvent.change(screen.getByLabelText("Source for Store"), { target: { value: "const" } });
+    fireEvent.change(screen.getByLabelText("Value for Store"), { target: { value: "about ten" } });
+    expect(approve.disabled).toBe(true);
+    expect(screen.getByText("Expected a number")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Value for Store"), { target: { value: "1,299.50" } });
+    expect(approve.disabled).toBe(false);
+    fireEvent.click(approve);
+    expect(onDecide).toHaveBeenCalledWith("approve", [{ dest_field: "Store", choice: { const: "1,299.50" } }]);
+  });
+
+  it("offers only the allowed values for a choice field", () => {
+    const onDecide = vi.fn();
+    const rows: ReviewRow[] = [{ ...ROWS[2], type: "one_of", values_allowed: ["Online", "In store"] }];
+    render(<ReviewTable rows={rows} pages={PAGES} onDecide={onDecide} />);
+    fireEvent.change(screen.getByLabelText("Source for Store"), { target: { value: "const" } });
+    const pick = screen.getByLabelText("Value for Store") as HTMLSelectElement;
+    expect([...pick.options].map((o) => o.value)).toEqual(["", "Online", "In store"]);
+    expect((screen.getByRole("button", { name: /Approve/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(pick, { target: { value: "In store" } });
+    fireEvent.click(screen.getByRole("button", { name: /Approve/ }));
+    expect(onDecide).toHaveBeenCalledWith("approve", [{ dest_field: "Store", choice: { const: "In store" } }]);
+  });
+
+  it("checks typed values the way the backend does", () => {
+    expect(constProblem({ type: "number" }, "12.5")).toBeNull();
+    expect(constProblem({ type: "integer" }, "12.5")).toBe("Expected a whole number");
+    expect(constProblem({ type: "date" }, "2026-02-30")).toBe("Expected a date YYYY-MM-DD");
+    expect(constProblem({ type: "date" }, "2026-11-14")).toBeNull();
+    expect(constProblem({ type: "url" }, "example.com")).toMatch(/http/);
+    expect(constProblem({ type: "url" }, "https://example.com/a")).toBeNull();
+    expect(constProblem({ type: "text" }, "anything")).toBeNull();
+  });
+
+  it("shows numeric example values", () => {
+    const rows: ReviewRow[] = [{ ...ROWS[1], values: { p1: 328, p2: 0 } }];
+    render(<ReviewTable rows={rows} pages={PAGES} onDecide={() => {}} />);
+    expect(screen.getByText("328")).toBeTruthy();
+    expect(screen.getByText("0")).toBeTruthy();
   });
 });

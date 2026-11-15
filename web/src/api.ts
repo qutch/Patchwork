@@ -157,12 +157,18 @@ export interface ReviewRow {
   label?: string;
   /** where the value comes from, e.g. "reader: h1.product-title", "the page's canonical URL", "today's date" */
   source: ReviewSource;
-  /** example page id -> the value the source gives on that page */
-  values: Record<string, string | null>;
+  /** example page id -> the value the source gives on that page (numbers arrive as numbers) */
+  values: Record<string, string | number | null>;
   ai_proposed: boolean;
   status: "checked" | "needs_you";
   /** other sources the person may pick instead (the only ones the resume accepts besides a constant or skip) */
   alternatives: ReviewSource[];
+  /** the destination field's type: text, number, integer, date, url, one_of or array (a typed value is checked against it) */
+  type?: string;
+  /** the destination requires the field: the resume refuses a skip */
+  required?: boolean;
+  /** for a choice field, the only values the destination accepts */
+  values_allowed?: string[];
 }
 /** Task 5 resume `edits[]`: `choice` is one of the row's `alternatives`, a constant or a skip. */
 export interface ReviewEdit {

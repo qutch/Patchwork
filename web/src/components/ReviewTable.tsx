@@ -20,7 +20,30 @@ function altValue(a: ReviewSource, id: string) {
   return v ?? <span className="text-muted" title="Checked by code when you approve">recomputed on approve</span>;
 }
 
-type Pick = { kind: "unset" } | { kind: "keep" } | { kind: "alt"; i: number } | { kind: "const"; text: string } | { kind: "skip" };
+/**
+ * What is wrong with a typed value for this row, or null if it fits: the same checks the backend runs before it
+ * accepts the edit (contracts V15 number/date/url rules, a choice field's allowed values).
+ */
+export function constProblem(row: { type?: string; values_allowed?: string[] }, text: string): string | null {
+  const s = text.trim();
+  if (!s) return null;
+  const kind = row.type ?? "text";
+  if (row.values_allowed?.length) return row.values_allowed.includes(s) ? null : `Choose one of: ${row.values_allowed.join(", ")}`;
+  if (kind === "number" || kind === "integer") {
+    const n = Number(s.replace(/,/g, ""));
+    if (!Number.isFinite(n)) return "Expected a number";
+    if (kind === "integer" && !Number.isInteger(n)) return "Expected a whole number";
+  }
+  if (kind === "date") {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    const d = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    if (!m || !d || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return "Expected a date YYYY-MM-DD";
+  }
+  if (kind === "url" && !/^https?:\/\/[^\s/?#]+[^\s]*$/i.test(s)) return "Expected a link starting with http:// or https://";
+  return null;
+}
+
+type Pick ={ kind: "unset" } | { kind: "keep" } | { kind: "alt"; i: number } | { kind: "const"; text: string } | { kind: "skip" };
 const KEEP = "keep", CONST = "const", SKIP = "skip", UNSET = "unset";
 const valueOf = (p: Pick) => (p.kind === "alt" ? `alt:${p.i}` : p.kind);
 
@@ -53,7 +76,11 @@ export default function ReviewTable({ rows, pages, busy = false, onDecide }: {
   const [picks, setPicks] = useState<Record<string, Pick>>(() =>
     Object.fromEntries(rows.map((r) => [r.dest_field, r.status === "needs_you" ? { kind: "unset" } : { kind: "keep" }])) as Record<string, Pick>);
   const set = (f: string, p: Pick) => setPicks((x) => ({ ...x, [f]: p }));
-  const unresolved = rows.filter((r) => picks[r.dest_field]?.kind === "unset" || (picks[r.dest_field]?.kind === "const" && !(picks[r.dest_field] as { text: string }).text.trim()));
+  const typedText = (f: string) => { const p = picks[f]; return p?.kind === "const" ? p.text : null; };
+  const unresolved = rows.filter((r) => {
+    const t = typedText(r.dest_field);
+    return picks[r.dest_field]?.kind === "unset" || (t !== null && (!t.trim() || constProblem(r, t) !== null));
+  });
   const edits = editsFor(rows, picks);
   return (
     <div className="grid gap-3">
@@ -73,7 +100,10 @@ export default function ReviewTable({ rows, pages, busy = false, onDecide }: {
               const needs = r.status === "needs_you" && (p.kind === "unset");
               return (
                 <tr key={r.dest_field}>
-                  <td className="font-semibold">{r.dest_field}</td>
+                  <td className="font-semibold">
+                    {r.dest_field}
+                    {r.required && <span className="block text-muted text-[12px] font-normal">required</span>}
+                  </td>
                   <td className="min-w-[230px]">
                     <div className="flex flex-wrap items-center gap-2">
                       {r.ai_proposed && <span className="pill" style={{ color: "var(--accent)", background: "var(--accent-soft)" }} title="Proposed by AI, checked by code">AI</span>}
@@ -96,11 +126,24 @@ export default function ReviewTable({ rows, pages, busy = false, onDecide }: {
                       <option value={KEEP}>{r.status === "needs_you" ? "Use as proposed" : "As proposed"}</option>
                       {r.alternatives.map((a, i) => <option key={i} value={`alt:${i}`}>{sourceLabel(a)}</option>)}
                       <option value={CONST}>Type a value…</option>
-                      <option value={SKIP}>Skip</option>
+                      {!r.required && <option value={SKIP}>Skip</option>}
                     </select>
-                    {p.kind === "const" && (
-                      <input className="input mt-1.5 text-[13px]" aria-label={`Value for ${r.dest_field}`} placeholder="Value to write every time" value={p.text}
+                    {p.kind === "const" && (r.values_allowed?.length ? (
+                      <select className="input mt-1.5 text-[13px]" aria-label={`Value for ${r.dest_field}`} value={p.text}
+                        onChange={(e) => set(r.dest_field, { kind: "const", text: e.target.value })}>
+                        <option value="">Choose…</option>
+                        {r.values_allowed.map((v) => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    ) : (
+                      <input className="input mt-1.5 text-[13px]" aria-label={`Value for ${r.dest_field}`} value={p.text}
+                        type={r.type === "date" ? "date" : r.type === "url" ? "url" : "text"}
+                        inputMode={r.type === "number" || r.type === "integer" ? "decimal" : undefined}
+                        placeholder={r.type === "date" ? "YYYY-MM-DD" : r.type === "url" ? "https://…" : "Value to write every time"}
+                        aria-invalid={constProblem(r, p.text) !== null}
                         onChange={(e) => set(r.dest_field, { kind: "const", text: e.target.value })} />
+                    ))}
+                    {p.kind === "const" && constProblem(r, p.text) && (
+                      <span className="block mt-1 text-[12px]" style={{ color: "var(--val)" }}>{constProblem(r, p.text)}</span>
                     )}
                   </td>
                   {pageIds.map((id) => (

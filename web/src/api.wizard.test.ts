@@ -83,5 +83,16 @@ describe("wizard API (mock)", () => {
     }
     expect(pending?.type).toBe("request_deploy");
     expect(await status(api.resume(thread_id, { interrupt_id: pending!.interrupt_id, decision: "approve", edits: [{ dest_field: "Product", choice: { jsonld: "bogus" } }] }))).toBe(422);
+
+    // every row says its field's type and whether it is required; a skip of a required field or a typed value that
+    // does not fit is refused, and the review stays open
+    const review = (pending as { review: { dest_field: string; type?: string; required?: boolean }[] }).review;
+    expect(review.every((r) => typeof r.type === "string" && typeof r.required === "boolean")).toBe(true);
+    const required = review.find((r) => r.required)!;
+    const numeric = review.find((r) => r.type === "number")!;
+    const resume = (edits: unknown) => api.resume(thread_id, { interrupt_id: pending!.interrupt_id, decision: "approve", edits: edits as never });
+    expect(await status(resume([{ dest_field: required.dest_field, choice: { skip: true } }]))).toBe(422);
+    expect(await status(resume([{ dest_field: numeric.dest_field, choice: { const: "about ten" } }]))).toBe(422);
+    expect((await api.thread(thread_id)).pending?.interrupt_id).toBe(pending!.interrupt_id);
   });
 });

@@ -316,7 +316,10 @@ export function createV3(h) {
   /** Task 5 `request_deploy.review[]` for the examples and the destination's fields. */
   function buildReview(draft, pages) {
     const byPage = (f) => Object.fromEntries(pages.map((p) => [p.id, f(p)]));
-    return draft.destination.fields.map((f) => {
+    // the destination field's type, required flag and allowed values ride on every row (as the backend sends them)
+    const meta = (f) => ({ type: f.type ?? "text", required: !!f.required, ...(f.values?.length ? { values_allowed: f.values } : {}) });
+    return draft.destination.fields.map((f) => ({ ...rowFor(f), ...meta(f) }));
+    function rowFor(f) {
       const n = f.name;
       if (STORE.test(n))
         return { dest_field: n, source: "constant: Acme", values: byPage(() => "Acme"), ai_proposed: true, status: "needs_you",
@@ -330,7 +333,17 @@ export function createV3(h) {
       if (LINK.test(n)) return { dest_field: n, source: "the page's canonical URL", values: byPage((p) => p.canonical_url), ai_proposed: false, status: "checked", alternatives: [] };
       if (DATE.test(n)) return { dest_field: n, source: "today's date", values: byPage(() => new Date().toISOString().slice(0, 10)), ai_proposed: false, status: "checked", alternatives: [] };
       return { dest_field: n, source: "skipped", values: byPage(() => null), ai_proposed: false, status: "checked", alternatives: [] };
-    });
+    }
+  }
+  /** Why a typed value does not fit the row's field (the backend's V15 rule checks), or null. */
+  function constProblem(row, v) {
+    const s = String(v).trim();
+    if (!s) return "a constant must not be empty";
+    if (row.values_allowed?.length) return row.values_allowed.includes(s) ? null : `not one of ${row.values_allowed.join(", ")}`;
+    if ((row.type === "number" || row.type === "integer") && !Number.isFinite(Number(s.replace(/,/g, "")))) return `expected a number, got '${s}'`;
+    if (row.type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(s)) return `expected a date YYYY-MM-DD, got '${s}'`;
+    if (row.type === "url" && !/^https?:\/\/\S+$/i.test(s)) return `expected an absolute http(s) URL, got '${s}'`;
+    return null;
   }
   function startTeach(draft) {
     const id = `build-${Math.random().toString(16).slice(2, 12)}`;
@@ -391,6 +404,8 @@ export function createV3(h) {
       const row = out.find((r) => r.dest_field === e.dest_field);
       if (!row) throw new Refused(`no row ${e.dest_field}`);
       const c = e.choice;
+      if (c && typeof c === "object" && "const" in c && constProblem(row, c.const)) throw new Refused(`${e.dest_field}: the constant '${c.const}' does not fit the field (${constProblem(row, c.const)})`);
+      if (c && typeof c === "object" && c.skip === true && row.required) throw new Refused(`${e.dest_field} is required by the destination; it cannot be skipped`);
       if (c && typeof c === "object" && "const" in c) Object.assign(row, { source: `constant: ${c.const}`, values: Object.fromEntries(Object.keys(row.values).map((k) => [k, String(c.const)])), status: "checked", ai_proposed: false });
       else if (c && typeof c === "object" && c.skip === true) Object.assign(row, { source: "skipped", values: Object.fromEntries(Object.keys(row.values).map((k) => [k, null])), status: "checked", ai_proposed: false });
       else if (row.alternatives.some((a) => JSON.stringify(a) === JSON.stringify(c))) Object.assign(row, { source: c, status: "checked" });
