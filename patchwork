@@ -1,0 +1,36 @@
+#!/bin/sh
+# ./patchwork: start Patchwork (the API and the UI on one port) with one command. ./patchwork --help for options.
+# The first run sets up Python (.venv, with uv); the launcher then installs and builds the UI (npm).
+# Logic: scripts/patchwork.py. Design: docs/superpowers/specs/2026-11-14-one-command-launcher-design.md.
+set -e
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PY="$ROOT/.venv/bin/python"
+
+need() {
+  echo "patchwork: $1 is needed and is not installed. $2" >&2
+  exit 1
+}
+
+installed() {  # the packages the launcher and the demo need are importable (found, not imported: fast)
+  "$PY" -c 'import importlib.util as u, sys
+sys.exit(any(u.find_spec(m) is None for m in ("fastapi", "uvicorn", "yaml", "deepagents", "playwright")))' >/dev/null 2>&1
+}
+
+if [ ! -x "$PY" ] || ! installed; then
+  command -v uv >/dev/null 2>&1 || need uv "Install it with: brew install uv (or see https://docs.astral.sh/uv/), then run ./patchwork again."
+  echo "First run: setting up Python in .venv (Python 3.12 and Patchwork's packages, with uv). This takes a minute or two."
+  (
+    cd "$ROOT"
+    [ -x .venv/bin/python ] || uv venv -q -p 3.12 .venv
+    uv pip install -q -p .venv/bin/python -r pyproject.toml --extra dev --extra agents --extra capture
+    echo "Installing the headless browser that fills web forms (Playwright Chromium)..."
+    .venv/bin/python -m playwright install chromium
+  ) || { echo "patchwork: setup failed (see above). Fix it and run ./patchwork again (make setup does the same steps)." >&2; exit 1; }
+fi
+
+# The launcher builds the UI with npm. Say early what is missing (with an older build, that build is served instead).
+if ! command -v npm >/dev/null 2>&1 && [ ! -f "$ROOT/web/dist/index.html" ]; then
+  need "Node.js (npm)" "Install Node.js 20 or newer (brew install node, or https://nodejs.org), then run ./patchwork again."
+fi
+
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -P -m scripts.patchwork "$@"
